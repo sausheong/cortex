@@ -1026,13 +1026,69 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 
 ## Environment Variables
 
-| Variable | Default | Used By | Description |
-|----------|---------|---------|-------------|
-| `OPENAI_API_KEY` | (none) | CLI, MCP, HTTP | Enables OpenAI LLM extraction + embeddings |
-| `OPENAI_BASE_URL` | (none) | CLI, MCP, HTTP | Custom base URL for OpenAI-compatible APIs (Ollama, vLLM, Together AI, Groq, etc.) |
-| `ANTHROPIC_API_KEY` | (none) | Go API | Anthropic API key (use Go API to wire up — see Pluggable Providers) |
-| `CORTEX_DB` | `brain.db` | MCP, HTTP | Database file path |
-| `CORTEX_PORT` | `8080` | HTTP | HTTP server listen port |
+**LLM Provider:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_PROVIDER` | `openai` | LLM provider: `openai` or `anthropic` |
+| `LLM_MODEL` | (provider default) | Override the LLM model (e.g., `gpt-4o`, `claude-haiku-4-5`) |
+| `OPENAI_API_KEY` | (none) | OpenAI API key |
+| `OPENAI_BASE_URL` | (none) | Custom base URL for OpenAI-compatible APIs (Ollama, vLLM, Together AI, Groq) |
+| `ANTHROPIC_API_KEY` | (none) | Anthropic API key (required when `LLM_PROVIDER=anthropic`) |
+| `ANTHROPIC_BASE_URL` | (none) | Custom base URL for Anthropic-compatible APIs |
+
+**Embeddings:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMBEDDING_API_KEY` | falls back to `OPENAI_API_KEY` | API key for the embedding provider |
+| `EMBEDDING_BASE_URL` | falls back to `OPENAI_BASE_URL` | Base URL for the embedding provider |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `EMBEDDING_DIMS` | `1536` | Embedding vector dimensions |
+
+**Server:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORTEX_DB` | `brain.db` | Database file path (MCP, HTTP) |
+| `CORTEX_PORT` | `8080` | HTTP server listen port |
+
+### Example Configurations
+
+**OpenAI (default):**
+```bash
+export OPENAI_API_KEY=sk-...
+cortex recall "who works at Stripe"
+```
+
+**Anthropic Claude + OpenAI embeddings:**
+```bash
+export LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...           # for embeddings
+cortex recall "who works at Stripe"
+```
+
+**Ollama (fully local, no API keys):**
+```bash
+export OPENAI_API_KEY=ollama
+export OPENAI_BASE_URL=http://localhost:11434/v1
+export LLM_MODEL=llama3
+export EMBEDDING_MODEL=nomic-embed-text
+export EMBEDDING_DIMS=768
+cortex recall "who works at Stripe"
+```
+
+**Anthropic LLM + Ollama embeddings:**
+```bash
+export LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+export EMBEDDING_API_KEY=ollama
+export EMBEDDING_BASE_URL=http://localhost:11434/v1
+export EMBEDDING_MODEL=nomic-embed-text
+export EMBEDDING_DIMS=768
+cortex recall "who works at Stripe"
+```
 
 ---
 
