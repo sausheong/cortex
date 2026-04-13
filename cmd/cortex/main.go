@@ -52,6 +52,8 @@ Commands:
   remember <text>                Remember text
   recall <query>                 Recall and print results
   sync markdown <dir>            Sync markdown directory
+  sync gmail                     Sync Gmail (requires OAuth2, see README)
+  sync calendar                  Sync Google Calendar (requires OAuth2, see README)
   entity list [--type <type>]    List entities
   entity get <id>                Show entity details + relationships
   forget --source <src>          Forget by source
@@ -146,28 +148,44 @@ func cmdRecall() {
 }
 
 func cmdSync() {
-	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: cortex sync markdown <dir>")
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: cortex sync <markdown|gmail|calendar> [args]")
 		os.Exit(1)
 	}
 
 	subCmd := os.Args[2]
-	if subCmd != "markdown" {
+
+	switch subCmd {
+	case "markdown":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "usage: cortex sync markdown <dir>")
+			os.Exit(1)
+		}
+		dir := os.Args[3]
+		cx := openCortex()
+		defer cx.Close()
+
+		conn := markdown.New(dir)
+		ctx := context.Background()
+		if err := conn.Sync(ctx, cx); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Synced markdown files from %s\n", dir)
+	case "gmail":
+		fmt.Fprintln(os.Stderr, "Gmail sync requires Google OAuth2 credentials.")
+		fmt.Fprintln(os.Stderr, "Set up OAuth2 and pass credentials programmatically via the Go API.")
+		fmt.Fprintln(os.Stderr, "See README for details.")
+		os.Exit(1)
+	case "calendar":
+		fmt.Fprintln(os.Stderr, "Calendar sync requires Google OAuth2 credentials.")
+		fmt.Fprintln(os.Stderr, "Set up OAuth2 and pass credentials programmatically via the Go API.")
+		fmt.Fprintln(os.Stderr, "See README for details.")
+		os.Exit(1)
+	default:
 		fmt.Fprintf(os.Stderr, "unknown sync type: %s\n", subCmd)
 		os.Exit(1)
 	}
-
-	dir := os.Args[3]
-	cx := openCortex()
-	defer cx.Close()
-
-	conn := markdown.New(dir)
-	ctx := context.Background()
-	if err := conn.Sync(ctx, cx); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Synced markdown files from %s\n", dir)
 }
 
 func cmdEntity() {

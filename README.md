@@ -42,7 +42,10 @@ cortex/
 │   ├── llmext/              # LLM-powered extraction
 │   └── hybrid/              # Composes deterministic + LLM
 ├── connector/
-│   └── markdown/            # Markdown directory connector
+│   ├── markdown/            # Markdown directory connector
+│   ├── conversation/        # Conversation message connector
+│   ├── gmail/               # Gmail connector (OAuth2)
+│   └── calendar/            # Google Calendar connector (OAuth2)
 ├── cmd/
 │   ├── cortex/              # CLI
 │   ├── cortex-mcp/          # MCP stdio server
@@ -224,9 +227,38 @@ Implement the interface to swap in Anthropic, Ollama, or any other provider.
 | Connector | Status | Description |
 |-----------|--------|-------------|
 | Markdown | Available | Sync a directory of .md files with incremental change detection |
-| Conversation | Planned | Inline ingestion from chat messages |
-| Gmail | Planned | Email sync via Gmail API |
-| Calendar | Planned | Event sync via Google Calendar API |
+| Conversation | Available | Inline ingestion from chat messages |
+| Gmail | Available | Email sync via Gmail API (requires OAuth2) |
+| Calendar | Available | Event sync via Google Calendar API (requires OAuth2) |
+
+### Google OAuth2 Setup (Gmail & Calendar)
+
+The Gmail and Calendar connectors require a pre-built Google API service with OAuth2 credentials. The CLI cannot handle the OAuth2 flow interactively — use the Go API directly:
+
+```go
+import (
+    "context"
+    "golang.org/x/oauth2/google"
+    "google.golang.org/api/gmail/v1"
+    "google.golang.org/api/calendar/v3"
+    "google.golang.org/api/option"
+
+    gmailconn "github.com/sausheong/cortex/connector/gmail"
+    calconn "github.com/sausheong/cortex/connector/calendar"
+)
+
+// 1. Set up OAuth2 config and obtain a token (see Google's OAuth2 docs).
+// 2. Create service clients:
+gmailService, _ := gmail.NewService(ctx, option.WithTokenSource(tokenSource))
+calService, _ := calendar.NewService(ctx, option.WithTokenSource(tokenSource))
+
+// 3. Create connectors and sync:
+gmailConn := gmailconn.New(gmailService)
+gmailConn.Sync(ctx, cx)
+
+calConn := calconn.New(calService)
+calConn.Sync(ctx, cx)
+```
 
 ## Environment Variables
 
