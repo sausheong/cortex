@@ -38,27 +38,44 @@ Return ONLY valid JSON, no markdown formatting.`
 // LLMOption configures the OpenAI LLM.
 type LLMOption func(*LLM)
 
-// WithModel sets the OpenAI model to use.
+// WithModel sets the model to use.
 func WithModel(model string) LLMOption {
 	return func(l *LLM) {
 		l.model = model
 	}
 }
 
-// LLM implements the cortex.LLM interface using OpenAI's API.
-type LLM struct {
-	client *oai.Client
-	model  string
+// WithBaseURL sets a custom base URL for OpenAI-compatible APIs
+// (e.g., Ollama, vLLM, LM Studio, Together AI, Groq).
+func WithBaseURL(url string) LLMOption {
+	return func(l *LLM) {
+		l.baseURL = url
+	}
 }
 
-// NewLLM creates a new OpenAI LLM provider.
+// LLM implements the cortex.LLM interface using OpenAI's API.
+// Works with any OpenAI-compatible API by setting a custom base URL.
+type LLM struct {
+	client  *oai.Client
+	model   string
+	baseURL string
+}
+
+// NewLLM creates a new OpenAI LLM provider. Use WithBaseURL to point at
+// any OpenAI-compatible API (Ollama, vLLM, LM Studio, Together AI, Groq, etc.).
 func NewLLM(apiKey string, opts ...LLMOption) *LLM {
 	l := &LLM{
-		client: oai.NewClient(apiKey),
-		model:  oai.GPT4oMini,
+		model: oai.GPT4oMini,
 	}
 	for _, o := range opts {
 		o(l)
+	}
+	if l.baseURL != "" {
+		cfg := oai.DefaultConfig(apiKey)
+		cfg.BaseURL = l.baseURL
+		l.client = oai.NewClientWithConfig(cfg)
+	} else {
+		l.client = oai.NewClient(apiKey)
 	}
 	return l
 }

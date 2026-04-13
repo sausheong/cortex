@@ -62,12 +62,20 @@ Commands:
 
 func openCortex() *cortex.Cortex {
 	apiKey := os.Getenv("OPENAI_API_KEY")
+	baseURL := os.Getenv("OPENAI_BASE_URL")
 
 	var opts []cortex.Option
 
 	if apiKey != "" {
-		llm := oaillm.NewLLM(apiKey)
-		embedder := oaillm.NewEmbedder(apiKey)
+		var llmOpts []oaillm.LLMOption
+		var embOpts []oaillm.EmbedderOption
+		if baseURL != "" {
+			llmOpts = append(llmOpts, oaillm.WithBaseURL(baseURL))
+			embOpts = append(embOpts, oaillm.WithEmbedderBaseURL(baseURL))
+		}
+
+		llm := oaillm.NewLLM(apiKey, llmOpts...)
+		embedder := oaillm.NewEmbedder(apiKey, embOpts...)
 		det := deterministic.New()
 		llmExtractor := llmext.New(llm)
 		ext := hybrid.New(det, llmExtractor)

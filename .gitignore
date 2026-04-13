@@ -1,7 +1,7 @@
-# Binaries
-cortex
-cortex-mcp
-cortex-http
+# Binaries (root level only)
+/cortex
+/cortex-mcp
+/cortex-http
 
 # Database
 *.db
