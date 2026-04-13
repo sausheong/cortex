@@ -73,13 +73,14 @@ Without an OpenAI key, cortex still works but is limited to deterministic extrac
 git clone https://github.com/sausheong/cortex.git
 cd cortex
 
-# Build all three binaries
-go build -o cortex ./cmd/cortex/
-go build -o cortex-mcp ./cmd/cortex-mcp/
-go build -o cortex-http ./cmd/cortex-http/
+# Build all three binaries to bin/
+make
 
-# Optional: move to your PATH
-sudo mv cortex cortex-mcp cortex-http /usr/local/bin/
+# Or build individually
+make build          # cortex, cortex-mcp, cortex-http -> bin/
+
+# Optional: install to /usr/local/bin
+sudo make install
 ```
 
 ### As a Go Module
@@ -183,7 +184,7 @@ Connect cortex to Claude Code, Cursor, Windsurf, or any MCP-compatible AI tool. 
 ### Build
 
 ```bash
-go build -o cortex-mcp ./cmd/cortex-mcp/
+make build    # builds all binaries to bin/
 ```
 
 ### Claude Code Setup
@@ -245,10 +246,13 @@ The `traverse` tool's `edge_types` parameter accepts a comma-separated list of r
 ### Build and Run
 
 ```bash
-go build -o cortex-http ./cmd/cortex-http/
+make build
 
-OPENAI_API_KEY=sk-... CORTEX_DB=brain.db cortex-http
+OPENAI_API_KEY=sk-... CORTEX_DB=brain.db bin/cortex-http
 # cortex-http listening on :8080
+
+# Or use the make shortcut:
+make run-http
 ```
 
 ### Endpoints
@@ -1032,14 +1036,32 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 
 ---
 
+## Make Targets
+
+```
+make              Build all binaries to bin/
+make test         Run all tests
+make test-v       Run tests with verbose output
+make test-cover   Run tests with HTML coverage report
+make vet          Run go vet
+make tidy         Run go mod tidy
+make clean        Remove bin/ and coverage files
+make install      Copy binaries to /usr/local/bin
+make run-http     Build and run HTTP server
+make run-mcp      Build and run MCP server
+```
+
 ## Running Tests
 
 ```bash
 # Run all tests (no API key needed — uses mocks)
-go test ./...
+make test
 
 # Run with verbose output
-go test ./... -v
+make test-v
+
+# Run with coverage report
+make test-cover    # generates coverage.html
 
 # Run a specific package
 go test ./connector/markdown/ -v
@@ -1049,10 +1071,6 @@ OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
 
 # Run Anthropic integration tests (requires API key)
 ANTHROPIC_API_KEY=sk-ant-... go test ./llm/anthropic/ -v
-
-# Count total tests
-go test ./... -v 2>&1 | grep -c PASS
-# 79
 ```
 
 ---
