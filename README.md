@@ -6,23 +6,64 @@ Think of it as a digital twin that compounds knowledge over time. Agents read fr
 
 Inspired by [GBrain](https://github.com/garrytan/gbrain) (operational model), [Cognee](https://github.com/topoteretes/cognee) (graph structure), and [mem0](https://github.com/mem0ai/mem0) (memory pipeline).
 
+## How It Works
+
+```
+Signal arrives (note, email, meeting, conversation)
+  -> Hybrid extraction (deterministic + LLM)
+     -> Entities: Alice (person), Stripe (org), distributed systems (concept)
+     -> Relationships: Alice --works_at--> Stripe
+     -> Memories: "Alice is joining Stripe next month"
+  -> Store in unified graph (SQLite)
+  -> Embed for semantic search
+
+Query arrives ("What do I know about Alice?")
+  -> LLM decomposes into sub-queries
+  -> Parallel search: memories + keywords + vectors + graph traversal
+  -> Reciprocal Rank Fusion merges results
+  -> Ranked results with provenance
+```
+
+Every cycle through this loop adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. You never start from zero.
+
 ## Features
 
 - **Unified knowledge graph** — people, organizations, concepts, events, documents as first-class nodes with typed relationships
 - **Remember / Recall / Forget** — simple high-level API inspired by mem0
-- **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
+- **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks, email headers) + LLM-powered entity/relationship discovery
 - **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
 - **Four data connectors** — markdown files, conversations, Gmail, Google Calendar
 - **Three interfaces** — CLI, MCP stdio server, HTTP/REST API
-- **Single binary, single file** — embedded SQLite, no external database
+- **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
+
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Setup](#setup)
+- [CLI Reference](#cli-reference)
+- [MCP Server](#using-as-an-mcp-server)
+- [HTTP/REST Server](#using-as-an-httprest-server)
+- [Go Library](#using-as-a-go-library)
+- [Architecture](#architecture)
+- [API Reference](#core-api-reference)
+- [Knowledge Model](#knowledge-model)
+- [Extraction Pipeline](#extraction-pipeline)
+- [Search Strategy](#search-strategy)
+- [Connectors](#connectors)
+- [Storage](#storage)
+- [Pluggable Providers](#pluggable-providers)
+- [Testing](#running-tests)
+
+---
 
 ## Prerequisites
 
 - **Go 1.22+** (uses `net/http` method-based routing from Go 1.22)
 - **OpenAI API key** (optional but recommended) — enables LLM extraction and semantic search
 
-Without an OpenAI key, cortex still works but is limited to deterministic extraction (YAML frontmatter + wikilinks) and keyword search.
+Without an OpenAI key, cortex still works but is limited to deterministic extraction (YAML frontmatter + wikilinks) and keyword search only. No semantic search, no entity extraction from prose.
 
 ## Installation
 
@@ -37,82 +78,115 @@ go build -o cortex ./cmd/cortex/
 go build -o cortex-mcp ./cmd/cortex-mcp/
 go build -o cortex-http ./cmd/cortex-http/
 
-# Move to your PATH (optional)
-mv cortex cortex-mcp cortex-http /usr/local/bin/
+# Optional: move to your PATH
+sudo mv cortex cortex-mcp cortex-http /usr/local/bin/
 ```
 
-### As a Go Library
+### As a Go Module
 
 ```bash
 go get github.com/sausheong/cortex
 ```
 
+This gives you the core library, all connectors, and all provider implementations as importable packages.
+
+---
+
 ## Setup
 
-### 1. Initialize the Brain
+### Step 1: Initialize the Brain
 
 ```bash
 cortex init
 ```
 
-This creates `brain.db` in the current directory — a single SQLite file containing the entire knowledge graph, embeddings, and search indexes.
+This creates `brain.db` in the current directory — a single SQLite file containing the entire knowledge graph, vector embeddings, FTS5 search indexes, and sync state. Everything lives in this one file.
 
-### 2. Set Your OpenAI API Key (Recommended)
+### Step 2: Set Your OpenAI API Key (Recommended)
 
 ```bash
 export OPENAI_API_KEY=sk-...
 ```
 
+Add this to your `~/.zshrc` or `~/.bashrc` to persist across sessions.
+
 With an API key, cortex will:
-- Use GPT-4o-mini to extract entities, relationships, and distilled facts from any text
-- Use text-embedding-3-small to generate vector embeddings for semantic search
-- Decompose natural language queries into multi-strategy sub-queries
+- Use **GPT-4o-mini** to extract entities, relationships, and distilled facts from any text
+- Use **text-embedding-3-small** to generate 1536-dimensional vector embeddings for semantic search
+- Use LLM-powered **query decomposition** to break natural language queries into multi-strategy sub-queries
 
-Without it, cortex falls back to deterministic extraction only (frontmatter + wikilinks).
+Without it, cortex falls back to deterministic extraction only (YAML frontmatter + wikilinks) and keyword search.
 
-### 3. Start Ingesting
+### Step 3: Ingest Your Data
 
+**Sync your markdown notes:**
 ```bash
-# Sync your markdown notes
 cortex sync markdown ~/notes
+```
 
-# Remember ad-hoc facts
+Cortex will recursively find all `.md` files, parse frontmatter and wikilinks deterministically, run LLM extraction on the body text (if API key is set), and store everything in the graph. Incremental — only re-processes files that changed since the last sync.
+
+**Remember ad-hoc facts:**
+```bash
 cortex remember "Alice works at Stripe as a staff engineer"
 cortex remember "Bob and Alice went to Stanford together"
+cortex remember "Meeting with Carol next Tuesday to discuss the Series A"
+```
 
-# Query the graph
+Each call runs the full extraction pipeline: entities are created or merged, relationships are discovered, and distilled memory facts are stored.
+
+### Step 4: Query
+
+```bash
+# Natural language queries
 cortex recall "who works at Stripe"
 cortex recall "what do I know about Alice"
+cortex recall "who should I invite to dinner who knows both Alice and Bob"
 
-# List what's been stored
+# Browse the graph
 cortex entity list --type person
 cortex entity get <entity-id>
 ```
 
+Example output from `cortex recall "who works at Stripe"`:
+```
+[1] (memory, score=0.0323) Alice works at Stripe as a staff engineer
+    source: cli
+[2] (chunk, score=0.0161) Alice works at Stripe as a staff engineer
+[3] (entity, score=0.0161) Alice (person)
+[4] (entity, score=0.0161) Stripe (organization)
+```
+
+---
+
 ## CLI Reference
 
 ```
-cortex init                           Create brain.db
+cortex init                           Create brain.db in the current directory
 cortex remember <text>                Ingest text, extract entities/relationships/memories
 cortex recall <query>                 Natural language query with multi-strategy search
 cortex sync markdown <dir>            Sync .md files from a directory (incremental)
-cortex sync gmail                     Sync Gmail (requires OAuth2 — see below)
-cortex sync calendar                  Sync Google Calendar (requires OAuth2 — see below)
+cortex sync gmail                     Sync Gmail (requires OAuth2 — see Connectors)
+cortex sync calendar                  Sync Google Calendar (requires OAuth2 — see Connectors)
 cortex entity list [--type <type>]    List entities, optionally filtered by type
 cortex entity get <id>                Show entity details, attributes, and relationships
 cortex forget --source <src>          Remove all knowledge from a source
 cortex forget --entity <id>           Remove a specific entity and all linked data
 ```
 
+---
+
 ## Using as an MCP Server
 
-Connect cortex to Claude Code, Cursor, Windsurf, or any MCP-compatible AI tool.
+Connect cortex to Claude Code, Cursor, Windsurf, or any MCP-compatible AI tool. The MCP server exposes 8 tools over stdio.
+
+### Build
 
 ```bash
 go build -o cortex-mcp ./cmd/cortex-mcp/
 ```
 
-### Claude Code
+### Claude Code Setup
 
 Add to `~/.claude/server.json`:
 
@@ -130,7 +204,7 @@ Add to `~/.claude/server.json`:
 }
 ```
 
-### Cursor / Windsurf
+### Cursor / Windsurf Setup
 
 Add to your MCP server configuration:
 
@@ -147,44 +221,102 @@ Add to your MCP server configuration:
 }
 ```
 
-### MCP Tools
+### Available MCP Tools
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `remember` | Store content in the knowledge graph | `content` (required), `source` |
-| `recall` | Natural language query | `query` (required), `limit` |
-| `forget` | Remove knowledge | `entity_id` or `source` |
-| `get_entity` | Get entity by ID | `id` (required) |
-| `find_entities` | Search entities | `type`, `name`, `source` |
-| `get_relationships` | Get relationships for entity | `entity_id` (required), `type` |
-| `traverse` | Walk the knowledge graph | `start_id` (required), `depth`, `edge_types` |
-| `search` | Direct keyword/vector/memory search | `query` (required), `mode` (required), `limit` |
+| Tool | Description | Required Params | Optional Params |
+|------|-------------|-----------------|-----------------|
+| `remember` | Store content in the knowledge graph | `content` | `source` |
+| `recall` | Natural language query with multi-strategy search | `query` | `limit` |
+| `forget` | Remove knowledge from the graph | `entity_id` or `source` | |
+| `get_entity` | Retrieve an entity by ID | `id` | |
+| `find_entities` | Search for entities | | `type`, `name`, `source` |
+| `get_relationships` | Get relationships for an entity | `entity_id` | `type` |
+| `traverse` | BFS walk of the knowledge graph | `start_id` | `depth`, `edge_types` |
+| `search` | Direct keyword, vector, or memory search | `query`, `mode` | `limit` |
+
+The `search` tool's `mode` parameter accepts `keyword`, `vector`, or `memory` to select the search strategy directly, bypassing query decomposition.
+
+The `traverse` tool's `edge_types` parameter accepts a comma-separated list of relationship types to follow (e.g., `"works_at,knows"`).
+
+---
 
 ## Using as an HTTP/REST Server
+
+### Build and Run
 
 ```bash
 go build -o cortex-http ./cmd/cortex-http/
 
 OPENAI_API_KEY=sk-... CORTEX_DB=brain.db cortex-http
-# Listening on :8080
+# cortex-http listening on :8080
 ```
 
 ### Endpoints
 
-| Method | Endpoint | Description | Example |
-|--------|----------|-------------|---------|
-| POST | `/remember` | Ingest content | `curl -X POST -d '{"content":"Alice works at Stripe"}' localhost:8080/remember` |
-| GET | `/recall` | Natural language query | `curl 'localhost:8080/recall?q=who+works+at+Stripe&limit=5'` |
-| DELETE | `/forget` | Remove knowledge | `curl -X DELETE 'localhost:8080/forget?source=gmail'` |
-| GET | `/entity/{id}` | Get entity by ID | `curl localhost:8080/entity/01HXY...` |
-| GET | `/entities` | Search entities | `curl 'localhost:8080/entities?type=person'` |
-| GET | `/relationships/{entity_id}` | Get relationships | `curl 'localhost:8080/relationships/01HXY...?type=works_at'` |
-| GET | `/traverse/{entity_id}` | Walk graph | `curl 'localhost:8080/traverse/01HXY...?depth=2'` |
-| GET | `/search` | Direct search | `curl 'localhost:8080/search?q=Stripe&mode=keyword&limit=10'` |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/remember` | Ingest content |
+| GET | `/recall` | Natural language query |
+| DELETE | `/forget` | Remove knowledge |
+| GET | `/entity/{id}` | Get entity by ID |
+| GET | `/entities` | Search entities |
+| GET | `/relationships/{entity_id}` | Get relationships |
+| GET | `/traverse/{entity_id}` | Walk graph |
+| GET | `/search` | Direct search |
 
-All endpoints return JSON. Error responses use `{"error": "message"}` with appropriate HTTP status codes.
+### Examples
+
+**Remember:**
+```bash
+curl -X POST localhost:8080/remember \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Alice works at Stripe as a staff engineer", "source": "manual"}'
+
+# Response: {"status": "remembered"}
+```
+
+**Recall:**
+```bash
+curl 'localhost:8080/recall?q=who+works+at+Stripe&limit=5'
+
+# Response: [{"type":"memory","content":"Alice works at Stripe...","score":0.032,...}, ...]
+```
+
+**Find entities:**
+```bash
+curl 'localhost:8080/entities?type=person'
+
+# Response: [{"id":"01J...","type":"person","name":"Alice",...}, ...]
+```
+
+**Traverse the graph:**
+```bash
+curl 'localhost:8080/traverse/01JXYZ...?depth=2&edge_types=works_at,knows'
+
+# Response: {"entities":[...],"relationships":[...]}
+```
+
+**Direct search:**
+```bash
+curl 'localhost:8080/search?q=distributed+systems&mode=vector&limit=5'
+
+# Response: [{"id":"...","content":"Alice works on distributed systems...",...}, ...]
+```
+
+**Forget:**
+```bash
+curl -X DELETE 'localhost:8080/forget?source=gmail'
+
+# Response: {"status": "forgotten"}
+```
+
+All endpoints return JSON. Errors use `{"error": "message"}` with appropriate HTTP status codes (400 for bad input, 404 for not found, 500 for internal errors).
+
+---
 
 ## Using as a Go Library
+
+### Full Example
 
 ```go
 package main
@@ -194,6 +326,8 @@ import (
     "fmt"
 
     "github.com/sausheong/cortex"
+    "github.com/sausheong/cortex/connector/conversation"
+    "github.com/sausheong/cortex/connector/markdown"
     "github.com/sausheong/cortex/extractor/deterministic"
     "github.com/sausheong/cortex/extractor/hybrid"
     llmext "github.com/sausheong/cortex/extractor/llmext"
@@ -216,50 +350,137 @@ func main() {
 
     ctx := context.Background()
 
-    // Remember — extracts entities, relationships, and memories automatically
-    c.Remember(ctx, "Alice works at Stripe as a staff engineer")
-    c.Remember(ctx, "Bob and Alice went to Stanford together")
+    // --- Ingestion ---
 
-    // Recall — multi-strategy search with RRF merging
+    // Remember ad-hoc text
+    c.Remember(ctx, "Alice works at Stripe as a staff engineer")
+
+    // Sync markdown notes
+    md := markdown.New("/path/to/notes")
+    md.Sync(ctx, c)
+
+    // Ingest conversation messages
+    conv := conversation.New()
+    conv.Ingest(ctx, c, []conversation.Message{
+        {Role: "user", Content: "Had lunch with Bob, he's leaving Google"},
+        {Role: "assistant", Content: "Noted — Bob is leaving Google."},
+    })
+
+    // --- Querying ---
+
+    // Natural language recall (multi-strategy search + RRF)
     results, _ := c.Recall(ctx, "who works at Stripe")
     for _, r := range results {
         fmt.Printf("[%s] %s (score: %.3f)\n", r.Type, r.Content, r.Score)
     }
 
     // Structured graph queries
-    entities, _ := c.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
-    for _, e := range entities {
-        fmt.Printf("%s (%s)\n", e.Name, e.Type)
-    }
+    people, _ := c.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
+    for _, p := range people {
+        fmt.Printf("%s: %s\n", p.Name, p.ID)
 
-    rels, _ := c.GetRelationships(ctx, entities[0].ID)
-    for _, r := range rels {
-        fmt.Printf("  --%s--> %s\n", r.Type, r.TargetID)
+        // Get their relationships
+        rels, _ := c.GetRelationships(ctx, p.ID)
+        for _, r := range rels {
+            fmt.Printf("  --%s--> %s\n", r.Type, r.TargetID)
+        }
     }
 
     // Graph traversal — BFS from an entity
-    graph, _ := c.Traverse(ctx, entities[0].ID, cortex.WithDepth(2))
-    fmt.Printf("Found %d entities, %d relationships\n",
+    graph, _ := c.Traverse(ctx, people[0].ID,
+        cortex.WithDepth(2),
+        cortex.WithEdgeTypes("works_at", "knows"),
+    )
+    fmt.Printf("Traversal found %d entities, %d relationships\n",
         len(graph.Entities), len(graph.Relationships))
 
-    // Forget — remove by entity or source
+    // Direct search primitives
+    chunks, _ := c.SearchKeyword(ctx, "distributed systems", 5)
+    vectors, _ := c.SearchVector(ctx, "machine learning research", 5)
+    memories, _ := c.SearchMemories(ctx, "Stripe", 5)
+
+    // --- Cleanup ---
+
+    // Forget all knowledge from a source
     c.Forget(ctx, cortex.Filter{Source: "gmail"})
+
+    // Forget a specific entity (cascades to relationships, chunks, memories)
+    c.Forget(ctx, cortex.Filter{EntityID: people[0].ID})
 }
 ```
 
-### Using Without OpenAI
-
-For environments without an API key, use only the deterministic extractor:
+### Minimal Setup (No OpenAI)
 
 ```go
 c, _ := cortex.Open("brain.db",
     cortex.WithExtractor(deterministic.New()),
 )
+defer c.Close()
+
+// Works with frontmatter + wikilinks only
+c.Remember(ctx, "---\ntype: person\nname: Alice\n---\nAlice works at [[Stripe]].")
 ```
 
-This handles YAML frontmatter and wikilinks but won't extract entities from freeform prose.
+---
 
 ## Architecture
+
+```
+                           ┌─────────────────┐
+                           │   Data Sources   │
+                           │                  │
+                           │  Markdown files  │
+                           │  Conversations   │
+                           │  Gmail (OAuth2)  │
+                           │  Calendar(OAuth2)│
+                           └────────┬─────────┘
+                                    │
+                           ┌────────▼─────────┐
+                           │   Connectors     │
+                           │                  │
+                           │  Parse source-   │
+                           │  specific format │
+                           │  Call Remember() │
+                           └────────┬─────────┘
+                                    │
+                           ┌────────▼─────────┐
+                           │  Hybrid Extractor│
+                           │                  │
+                           │  Deterministic:  │
+                           │  frontmatter,    │
+                           │  wikilinks,      │
+                           │  email headers   │
+                           │       +          │
+                           │  LLM: prose →    │
+                           │  entities, rels, │
+                           │  memories        │
+                           └────────┬─────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+             ┌──────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
+             │  Entities   │ │   Chunks   │ │  Memories   │
+             │  & Rels     │ │ + FTS5     │ │  + Links    │
+             │             │ │ + Vectors  │ │  + Vectors  │
+             └──────┬──────┘ └─────┬──────┘ └──────┬──────┘
+                    │              │               │
+                    └──────────────┼───────────────┘
+                                   │
+                          ┌────────▼─────────┐
+                          │  SQLite (brain.db)│
+                          │  Single file,    │
+                          │  WAL mode        │
+                          └────────┬─────────┘
+                                   │
+                    ┌──────────────┼──────────────┐
+                    │              │              │
+             ┌──────▼──────┐ ┌────▼─────┐ ┌─────▼─────┐
+             │    CLI      │ │   MCP    │ │   HTTP    │
+             │  cortex ... │ │  stdio   │ │  :8080    │
+             └─────────────┘ └──────────┘ └───────────┘
+```
+
+### Package Structure
 
 ```
 cortex/
@@ -282,6 +503,8 @@ cortex/
 ```
 
 **Core Graph + Pluggable Connectors**: the core knows nothing about data sources. Connectors are independent packages that parse source-specific formats and call the core API. Adding a new data source means writing a new connector package — no changes to the core.
+
+---
 
 ## Core API Reference
 
@@ -330,31 +553,84 @@ cortex.RelTypeFilter("works_at")    // Filter by relationship type
 cortex.WithDepth(2)                          // Traversal depth (default 1)
 cortex.WithEdgeTypes("works_at", "knows")    // Only follow these edge types
 
-// Provider options
+// Provider options (used in Open)
 cortex.WithLLM(myLLM)              // Set LLM provider
 cortex.WithEmbedder(myEmbedder)    // Set embedding provider
 cortex.WithExtractor(myExtractor)  // Set extraction provider
 ```
 
+### Types
+
+```go
+type Entity struct {
+    ID         string            // ULID, auto-generated
+    Type       string            // "person", "organization", "concept", "event", "document"
+    Name       string            // Display name
+    Attributes map[string]any    // Type-specific data (email, url, role, etc.)
+    Source     string            // Origin: "markdown", "conversation", "gmail", "calendar"
+    CreatedAt  time.Time
+    UpdatedAt  time.Time
+}
+
+type Relationship struct {
+    ID         string            // ULID
+    SourceID   string            // Entity ID
+    TargetID   string            // Entity ID
+    Type       string            // "works_at", "knows", "attended", etc.
+    Attributes map[string]any
+    Source     string
+    CreatedAt  time.Time
+}
+
+type Memory struct {
+    ID        string             // ULID
+    Content   string             // "Alice is joining Stripe next month"
+    EntityIDs []string           // Linked entity IDs
+    Source    string
+    CreatedAt time.Time
+    UpdatedAt time.Time
+}
+
+type Result struct {
+    Type      string             // "memory", "entity", "chunk", "relationship"
+    Content   string             // Displayable text
+    Score     float64            // RRF score
+    EntityIDs []string           // Related entities for follow-up traversal
+    Source    string             // Provenance
+    Metadata  map[string]any
+}
+```
+
+---
+
 ## Knowledge Model
 
-### Entities
+Cortex uses a unified graph where all node types are first-class:
 
-All node types are first-class. Every entity has a type, name, optional JSON attributes, and source provenance.
+### Entities (Nodes)
 
-| Type | Examples |
+| Type | Description | Examples |
+|------|-------------|---------|
+| `person` | People in your network | Alice, Bob, your contacts |
+| `organization` | Companies and institutions | Stripe, Google, Stanford |
+| `concept` | Ideas and topics | distributed systems, machine learning |
+| `event` | Meetings, conferences, milestones | "Q4 planning meeting", "GopherCon 2024" |
+| `document` | Notes, articles, emails | Linked from wikilinks or file ingestion |
+
+Entity types are open-ended strings. You can introduce any type — the five above are conventions, not constraints.
+
+### Relationships (Edges)
+
+Typed directed edges between entities. Types are also open-ended — connectors introduce new types organically.
+
+| Type | Example |
 |------|---------|
-| `person` | Alice, Bob, your contacts |
-| `organization` | Stripe, Google, your company |
-| `concept` | distributed systems, machine learning |
-| `event` | meetings, conferences, milestones |
-| `document` | notes, articles, emails |
-
-### Relationships
-
-Typed directed edges between entities. Types are open-ended strings — new connectors introduce new types organically.
-
-Common types: `works_at`, `knows`, `attended`, `discussed_in`, `related_to`, `created`, `part_of`
+| `works_at` | Alice --works_at--> Stripe |
+| `knows` | Alice --knows--> Bob |
+| `attended` | Alice --attended--> Q4 Planning |
+| `discussed_in` | Series A --discussed_in--> Q4 Planning |
+| `related_to` | Machine Learning --related_to--> AI |
+| `part_of` | Alice --part_of--> Engineering Team |
 
 ### Chunks
 
@@ -362,12 +638,17 @@ Raw text fragments linked to entities. Indexed for both FTS5 keyword search and 
 
 ### Memories
 
-Distilled facts extracted by the LLM. Higher signal than raw chunks. Examples:
+Distilled facts extracted by the LLM. Higher signal density than raw chunks.
+
+Examples:
 - "Alice is joining Stripe next month"
 - "Bob and Alice went to Stanford together"
 - "The project deadline is March 15"
+- "Carol prefers async communication"
 
 Memories are linked to related entities via a junction table and are searched first during `Recall` because they're denser and more useful than raw text.
+
+---
 
 ## Extraction Pipeline
 
@@ -375,18 +656,22 @@ Memories are linked to related entities via a junction table and are searched fi
 
 When you call `Remember`, cortex runs a hybrid extraction pipeline:
 
-1. **Deterministic extraction** (free, fast, reliable):
-   - YAML frontmatter: `type: person`, `name: Alice` becomes an entity
-   - Wikilinks: `[[Stripe]]` becomes a document entity and a relationship
-   - Email headers: From/To/Cc become person entities with email attributes
-   - Calendar events: attendees become person entities with "attended" relationships
+**Step 1 — Deterministic extraction** (free, fast, reliable):
+- **YAML frontmatter**: `type: person`, `name: Alice` becomes an entity
+- **Wikilinks**: `[[Stripe]]` becomes a document entity
+- **Email headers** (Gmail connector): From/To/Cc become person entities with email attributes
+- **Calendar attendees**: become person entities with "attended" relationships
 
-2. **LLM extraction** (powerful, costs API calls):
-   - Sends unstructured prose to OpenAI with a structured extraction prompt
-   - Returns entities, relationships, and distilled memory facts as JSON
-   - Only runs on content the deterministic extractor can't handle
+**Step 2 — LLM extraction** (powerful, costs API calls):
+- Sends unstructured prose to OpenAI with a structured extraction prompt
+- Receives entities, relationships, and distilled memory facts as JSON
+- Processes content that the deterministic extractor can't handle
 
-The hybrid extractor runs deterministic first, then LLM, and merges results.
+**Step 3 — Store and embed**:
+- Entities are upserted (merged by name + type — no duplicates)
+- Relationships are created between resolved entities
+- Raw text is stored as chunks and indexed for FTS5 + vector search
+- Memories are stored with entity links
 
 ### Custom Extractors
 
@@ -396,43 +681,51 @@ Implement the `Extractor` interface to add your own extraction logic:
 type Extractor interface {
     Extract(ctx context.Context, content string, contentType string) (*Extraction, error)
 }
-
-type Extraction struct {
-    Entities      []Entity
-    Relationships []Relationship
-    Memories      []Memory
-}
 ```
+
+For example, you could write an extractor that handles Slack messages, Notion pages, or any domain-specific format.
+
+---
 
 ## Search Strategy
 
 `Recall` uses a multi-step process to answer natural language queries:
 
-### 1. Query Decomposition
+### Step 1: Query Decomposition
 
 The LLM breaks the query into structured sub-queries:
 
 ```
-"What do I know about Alice's work at Stripe?"
-  -> memory_lookup:   {query: "Alice Stripe"}
-  -> graph_traverse:  {entity: "Alice", edge: "works_at"}
-  -> vector_search:   {query: "Alice work Stripe"}
+Query: "What do I know about Alice's work at Stripe?"
+
+Sub-queries:
+  1. memory_lookup:   {query: "Alice Stripe"}
+  2. graph_traverse:  {entity: "Alice", edge: "works_at"}
+  3. vector_search:   {query: "Alice work Stripe"}
 ```
 
-### 2. Parallel Execution
+Without an LLM, cortex falls back to keyword search + memory lookup on the raw query text.
 
-All sub-queries run concurrently:
+### Step 2: Parallel Execution
+
+All sub-queries run concurrently using goroutines:
 
 | Strategy | Source | Best For |
 |----------|--------|----------|
-| Memory lookup | `memories` table | Distilled facts, highest signal |
-| Graph traversal | `entities` + `relationships` | Relationship queries, "who knows who" |
-| Vector search | `embeddings` (cosine similarity) | Semantic similarity |
+| Memory lookup | `memories` table | Distilled facts — highest signal |
 | Keyword search | FTS5 on `chunks` | Exact matches, names, identifiers |
+| Vector search | Embeddings (cosine similarity) | Semantic similarity, fuzzy matching |
+| Graph traversal | `entities` + `relationships` | Relationship queries ("who knows who") |
 
-### 3. Reciprocal Rank Fusion
+### Step 3: Reciprocal Rank Fusion (RRF)
 
-Results from all strategies are merged using RRF — a ranking algorithm that combines ranked lists without requiring score normalization across different search backends. Items appearing in multiple search results get boosted.
+Results from all strategies are merged using RRF — a ranking algorithm that combines ranked lists without requiring score normalization across different search backends.
+
+Formula: `score(item) = sum(1 / (k + rank_in_list))` across all lists where the item appears.
+
+Items appearing in multiple search results get boosted. For example, if "Alice works at Stripe" appears as both a memory match and a keyword match, it ranks higher than items from only one source.
+
+---
 
 ## Connectors
 
@@ -444,10 +737,11 @@ Syncs a directory of `.md` files with incremental change detection.
 cortex sync markdown ~/notes
 ```
 
-- Parses YAML frontmatter for entity type and name
-- Detects `[[wikilinks]]` as relationships
-- Splits body into chunks for search
-- Tracks file modification times — only re-processes changed files
+- Recursively finds all `.md` files
+- Parses YAML frontmatter for entity type, name, and attributes
+- Detects `[[wikilinks]]` as relationships to other entities
+- Splits body into chunks for search indexing
+- Tracks file modification times — only re-processes changed files on subsequent syncs
 
 **Frontmatter format:**
 ```yaml
@@ -455,10 +749,11 @@ cortex sync markdown ~/notes
 type: person
 name: Alice
 email: alice@example.com
-tags: engineering, leadership
+role: Staff Engineer
 ---
 Alice is a staff engineer at [[Stripe]].
 She knows [[Bob]] from their time at [[Google]].
+She's interested in [[distributed systems]] and [[machine learning]].
 ```
 
 ### Conversation
@@ -469,34 +764,81 @@ Inline ingestion from chat messages — designed for agent integration, not batc
 import "github.com/sausheong/cortex/connector/conversation"
 
 conv := conversation.New()
-conv.Ingest(ctx, c, []conversation.Message{
+err := conv.Ingest(ctx, c, []conversation.Message{
     {Role: "user", Content: "Had lunch with Alice, she's joining Stripe next month"},
     {Role: "assistant", Content: "I'll remember that Alice is joining Stripe."},
 })
 ```
 
+Messages are concatenated with role prefixes and passed through `Remember` with source `"conversation"`. The LLM extractor identifies entities and relationships from the conversation text.
+
+Use this in your agent's post-response hook to build the compounding knowledge loop: read from cortex before responding, write back after.
+
 ### Gmail
 
-Syncs emails via the Gmail API with OAuth2. Deterministic extraction on headers (From/To/Cc become person entities), LLM extraction on email bodies.
+Syncs emails via the Gmail API with OAuth2. Requires a pre-built `*gmail.Service`.
+
+- **Deterministic extraction**: From/To/Cc headers become person entities with email attributes
+- **LLM extraction**: email bodies are processed for relationship and memory discovery
+- **Incremental sync**: uses Gmail history IDs — only fetches new emails
+
+```go
+import (
+    gmailconn "github.com/sausheong/cortex/connector/gmail"
+    gm "google.golang.org/api/gmail/v1"
+)
+
+conn := gmailconn.New(gmailService)
+conn.Sync(ctx, c)                            // Sync last 50 emails (first run)
+conn.Sync(ctx, c)                            // Only new emails (subsequent runs)
+```
+
+Options: `gmailconn.WithUserID("me")`, `gmailconn.WithMaxResults(100)`
 
 ### Google Calendar
 
-Syncs events via the Google Calendar API with OAuth2. Attendees become person entities with "attended" relationships to event entities.
+Syncs events from Google Calendar with OAuth2. Requires a pre-built `*calendar.Service`.
+
+- **Deterministic extraction**: attendees become person entities, events become event entities
+- **Relationships**: "attended" edges link each attendee to each event
+- **LLM extraction**: event descriptions are processed for additional context
+- **Incremental sync**: uses Calendar sync tokens
+
+```go
+import (
+    calconn "github.com/sausheong/cortex/connector/calendar"
+    cal "google.golang.org/api/calendar/v3"
+)
+
+conn := calconn.New(calService)
+conn.Sync(ctx, c)                            // Sync last 30 days (first run)
+conn.Sync(ctx, c)                            // Only changed events (subsequent runs)
+```
+
+Options: `calconn.WithCalendarID("primary")`
 
 ### Google OAuth2 Setup (Gmail & Calendar)
 
-The Gmail and Calendar connectors require a pre-built Google API service with OAuth2 credentials:
+Both Google connectors require OAuth2 credentials. The CLI cannot handle the interactive OAuth2 flow — use the Go API directly.
 
-1. Create a project in [Google Cloud Console](https://console.cloud.google.com)
-2. Enable the Gmail API and/or Google Calendar API
-3. Create OAuth2 credentials (Desktop application type)
-4. Download the credentials JSON file
+**1. Create credentials:**
+- Go to [Google Cloud Console](https://console.cloud.google.com)
+- Create a project (or select existing)
+- Enable the **Gmail API** and/or **Google Calendar API**
+- Go to Credentials > Create Credentials > OAuth Client ID
+- Select "Desktop application" as the application type
+- Download the credentials JSON file
 
-Then use the Go API to set up the OAuth2 flow and create the connector:
+**2. Set up the OAuth2 flow in your code:**
 
 ```go
 import (
     "context"
+    "encoding/json"
+    "fmt"
+    "os"
+
+    "golang.org/x/oauth2"
     "golang.org/x/oauth2/google"
     "google.golang.org/api/gmail/v1"
     "google.golang.org/api/calendar/v3"
@@ -506,53 +848,87 @@ import (
     calconn "github.com/sausheong/cortex/connector/calendar"
 )
 
-// Create OAuth2 config from credentials file
-b, _ := os.ReadFile("credentials.json")
-config, _ := google.ConfigFromJSON(b,
-    gmail.GmailReadonlyScope,
-    calendar.CalendarReadonlyScope,
-)
+func main() {
+    ctx := context.Background()
 
-// Obtain token (implement your own token exchange flow)
-token := getTokenFromUser(config) // see Google's OAuth2 docs
+    // Load credentials
+    b, _ := os.ReadFile("credentials.json")
+    config, _ := google.ConfigFromJSON(b,
+        gmail.GmailReadonlyScope,
+        calendar.CalendarReadonlyScope,
+    )
 
-// Create service clients
-tokenSource := config.TokenSource(ctx, token)
-gmailService, _ := gmail.NewService(ctx, option.WithTokenSource(tokenSource))
-calService, _ := calendar.NewService(ctx, option.WithTokenSource(tokenSource))
+    // Get token (first time: interactive flow; thereafter: from saved file)
+    token := getToken(config)
 
-// Sync
-gmailConn := gmailconn.New(gmailService)
-gmailConn.Sync(ctx, cx)
+    // Create service clients
+    ts := config.TokenSource(ctx, token)
+    gmailService, _ := gmail.NewService(ctx, option.WithTokenSource(ts))
+    calService, _ := calendar.NewService(ctx, option.WithTokenSource(ts))
 
-calConn := calconn.New(calService)
-calConn.Sync(ctx, cx)
+    // Open cortex and sync
+    c, _ := cortex.Open("brain.db", /* ... providers ... */)
+    defer c.Close()
+
+    gmailconn.New(gmailService).Sync(ctx, c)
+    calconn.New(calService).Sync(ctx, c)
+}
+
+func getToken(config *oauth2.Config) *oauth2.Token {
+    // Try loading from file
+    f, err := os.Open("token.json")
+    if err == nil {
+        defer f.Close()
+        var tok oauth2.Token
+        json.NewDecoder(f).Decode(&tok)
+        return &tok
+    }
+
+    // Interactive: print URL, get code from user
+    url := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+    fmt.Printf("Visit this URL to authorize:\n%s\n\nEnter code: ", url)
+    var code string
+    fmt.Scan(&code)
+
+    tok, _ := config.Exchange(context.Background(), code)
+
+    // Save for next time
+    f, _ = os.Create("token.json")
+    json.NewEncoder(f).Encode(tok)
+    f.Close()
+
+    return tok
+}
 ```
+
+---
 
 ## Storage
 
-Cortex uses embedded SQLite (via `modernc.org/sqlite`, pure Go — no CGo required) with a single database file.
+Cortex uses embedded SQLite via [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — a pure Go implementation with no CGo dependency. Everything lives in a single `brain.db` file.
 
 ### Schema
 
 | Table | Purpose |
 |-------|---------|
-| `entities` | Graph nodes with type, name, JSON attributes, source |
-| `relationships` | Directed typed edges between entities |
-| `chunks` | Text fragments linked to entities |
-| `chunks_fts` | FTS5 virtual table for keyword search |
+| `entities` | Graph nodes — type, name, JSON attributes, source, timestamps |
+| `relationships` | Directed typed edges between entities with JSON attributes |
+| `chunks` | Text fragments linked to entities with JSON metadata |
+| `chunks_fts` | FTS5 virtual table for full-text keyword search |
 | `memories` | Distilled facts extracted by the LLM |
-| `memory_entities` | Junction table linking memories to entities |
-| `embeddings` | Vector embeddings stored as BLOBs |
-| `sync_state` | Connector sync state (last sync time, cursor, etc.) |
+| `memory_entities` | Junction table linking memories to related entities |
+| `embeddings` | Vector embeddings stored as BLOBs (float32 arrays) |
+| `sync_state` | Per-connector sync state (timestamps, cursors, history IDs) |
 
 ### Design Choices
 
-- **WAL mode** for concurrent reads while writing
-- **FTS5** for fast full-text keyword search
-- **Brute-force cosine similarity** for vector search (stored as BLOBs, computed in Go). Performant for personal-scale data (<100K vectors). Can be swapped for sqlite-vec if Go bindings mature.
-- **ULIDs** for entity IDs — time-sortable, globally unique, URL-safe
-- **Open-ended relationship types** — no enum, connectors introduce new types organically
+- **WAL mode** — enables concurrent reads while writing; important when the MCP/HTTP server handles queries during ingestion
+- **FTS5** — SQLite's full-text search extension for fast keyword matching
+- **Brute-force cosine similarity** — vector embeddings stored as BLOBs, similarity computed in Go. Performant for personal-scale data (<100K vectors). Can be swapped for [sqlite-vec](https://github.com/asg017/sqlite-vec) when mature Go bindings are available.
+- **ULIDs** — time-sortable, globally unique, URL-safe identifiers for all entities
+- **Open-ended types** — entity types and relationship types are plain strings, not enums. New connectors introduce new types without schema changes.
+
+---
 
 ## Pluggable Providers
 
@@ -565,24 +941,36 @@ Cortex uses embedded SQLite (via `modernc.org/sqlite`, pure Go — no CGo requir
 ### Implementing a Custom Provider
 
 ```go
-// Example: custom LLM provider
-type MyLLM struct { /* ... */ }
-
-func (m *MyLLM) Extract(ctx context.Context, text, prompt string) (cortex.ExtractionResult, error) {
-    // Call your model, parse response into Extraction struct
+// Example: Anthropic LLM provider
+type AnthropicLLM struct {
+    client *anthropic.Client
 }
 
-func (m *MyLLM) Decompose(ctx context.Context, query string) ([]cortex.StructuredQuery, error) {
+func (a *AnthropicLLM) Extract(ctx context.Context, text, prompt string) (cortex.ExtractionResult, error) {
+    // Call Claude, parse JSON response into Extraction struct
+    // Return ExtractionResult{Raw: rawJSON, Parsed: &extraction}
+}
+
+func (a *AnthropicLLM) Decompose(ctx context.Context, query string) ([]cortex.StructuredQuery, error) {
     // Break query into sub-queries
+    // Return []StructuredQuery{{Type: "memory_lookup", Params: ...}, ...}
 }
 
-func (m *MyLLM) Summarize(ctx context.Context, texts []string) (string, error) {
+func (a *AnthropicLLM) Summarize(ctx context.Context, texts []string) (string, error) {
     // Summarize texts
 }
 
-// Use it
-c, _ := cortex.Open("brain.db", cortex.WithLLM(&MyLLM{}))
+// Wire it up
+c, _ := cortex.Open("brain.db",
+    cortex.WithLLM(&AnthropicLLM{client: client}),
+    cortex.WithEmbedder(oaillm.NewEmbedder(openaiKey)),  // Can mix providers
+    cortex.WithExtractor(hybrid.New(deterministic.New(), llmext.New(&AnthropicLLM{}))),
+)
 ```
+
+You can mix providers — for example, use Anthropic for extraction and OpenAI for embeddings.
+
+---
 
 ## Environment Variables
 
@@ -590,7 +978,9 @@ c, _ := cortex.Open("brain.db", cortex.WithLLM(&MyLLM{}))
 |----------|---------|---------|-------------|
 | `OPENAI_API_KEY` | (none) | CLI, MCP, HTTP | Enables LLM extraction + semantic search |
 | `CORTEX_DB` | `brain.db` | MCP, HTTP | Database file path |
-| `CORTEX_PORT` | `8080` | HTTP | HTTP server port |
+| `CORTEX_PORT` | `8080` | HTTP | HTTP server listen port |
+
+---
 
 ## Running Tests
 
@@ -601,9 +991,32 @@ go test ./...
 # Run with verbose output
 go test ./... -v
 
+# Run a specific package
+go test ./connector/markdown/ -v
+
 # Run OpenAI integration tests (requires API key)
 OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
+
+# Count total tests
+go test ./... -v 2>&1 | grep -c PASS
+# 79
 ```
+
+---
+
+## Project Stats
+
+| Metric | Value |
+|--------|-------|
+| Go packages | 15 |
+| Lines of Go | ~6,300 |
+| Tests | 79 |
+| Test packages | 9 |
+| Binaries | 3 |
+| External DB required | No |
+| CGo required | No |
+
+---
 
 ## License
 
