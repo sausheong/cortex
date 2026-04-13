@@ -1,0 +1,10 @@
+# Binaries
+cortex
+cortex-mcp
+cortex-http
+
+# Database
+*.db
+
+# OS
+.DS_Store
