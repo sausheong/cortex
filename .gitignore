@@ -1,10 +1,15 @@
-# Binaries (root level only)
+# Binaries
 /cortex
 /cortex-mcp
 /cortex-http
+bin/
 
 # Database
 *.db
+
+# Coverage
+coverage.out
+coverage.html
 
 # OS
 .DS_Store
