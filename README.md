@@ -485,7 +485,9 @@ c.Remember(ctx, "---\ntype: person\nname: Alice\n---\nAlice works at [[Stripe]].
 ```
 cortex/
 ├── *.go                     # Core library — graph, search, Remember/Recall/Forget
-├── llm/openai/              # Pluggable OpenAI LLM + Embedder
+├── llm/
+│   ├── openai/              # OpenAI + OpenAI-compatible LLM + Embedder
+│   └── anthropic/           # Anthropic Claude LLM
 ├── extractor/
 │   ├── deterministic/       # Regex, frontmatter, wikilink extraction
 │   ├── llmext/              # LLM-powered extraction
@@ -932,43 +934,89 @@ Cortex uses embedded SQLite via [`modernc.org/sqlite`](https://pkg.go.dev/modern
 
 ## Pluggable Providers
 
-| Interface | Methods | Shipped Implementation |
-|-----------|---------|----------------------|
-| `LLM` | `Extract`, `Decompose`, `Summarize` | OpenAI GPT-4o-mini |
-| `Embedder` | `Embed`, `Dimensions` | OpenAI text-embedding-3-small (1536 dims) |
-| `Extractor` | `Extract` | Hybrid (deterministic + LLM) |
+| Interface | Methods | Shipped Implementations |
+|-----------|---------|------------------------|
+| `LLM` | `Extract`, `Decompose`, `Summarize` | OpenAI (GPT-4o-mini), Anthropic (Claude Sonnet 4.5) |
+| `Embedder` | `Embed`, `Dimensions` | OpenAI (text-embedding-3-small, 1536 dims) |
+| `Extractor` | `Extract` | Deterministic, LLM, Hybrid (deterministic + LLM) |
 
-### Implementing a Custom Provider
+### OpenAI Provider
 
 ```go
-// Example: Anthropic LLM provider
-type AnthropicLLM struct {
-    client *anthropic.Client
-}
+import oaillm "github.com/sausheong/cortex/llm/openai"
 
-func (a *AnthropicLLM) Extract(ctx context.Context, text, prompt string) (cortex.ExtractionResult, error) {
-    // Call Claude, parse JSON response into Extraction struct
-    // Return ExtractionResult{Raw: rawJSON, Parsed: &extraction}
-}
+// Default (OpenAI API)
+llm := oaillm.NewLLM("sk-...")
+emb := oaillm.NewEmbedder("sk-...")
 
-func (a *AnthropicLLM) Decompose(ctx context.Context, query string) ([]cortex.StructuredQuery, error) {
-    // Break query into sub-queries
-    // Return []StructuredQuery{{Type: "memory_lookup", Params: ...}, ...}
-}
+// With a different model
+llm := oaillm.NewLLM("sk-...", oaillm.WithModel("gpt-4o"))
 
-func (a *AnthropicLLM) Summarize(ctx context.Context, texts []string) (string, error) {
-    // Summarize texts
-}
-
-// Wire it up
-c, _ := cortex.Open("brain.db",
-    cortex.WithLLM(&AnthropicLLM{client: client}),
-    cortex.WithEmbedder(oaillm.NewEmbedder(openaiKey)),  // Can mix providers
-    cortex.WithExtractor(hybrid.New(deterministic.New(), llmext.New(&AnthropicLLM{}))),
+// OpenAI-compatible API (Ollama, vLLM, LM Studio, Together AI, Groq, etc.)
+llm := oaillm.NewLLM("ollama",
+    oaillm.WithBaseURL("http://localhost:11434/v1"),
+    oaillm.WithModel("llama3"),
+)
+emb := oaillm.NewEmbedder("ollama",
+    oaillm.WithEmbedderBaseURL("http://localhost:11434/v1"),
+    oaillm.WithEmbeddingModel(oai.EmbeddingModel("nomic-embed-text"), 768),
 )
 ```
 
-You can mix providers — for example, use Anthropic for extraction and OpenAI for embeddings.
+Or set `OPENAI_BASE_URL` as an environment variable — all three binaries (CLI, MCP, HTTP) pick it up automatically.
+
+### Anthropic Provider
+
+Anthropic does not offer an embeddings API, so you always pair the Anthropic LLM with a separate `Embedder` (e.g., OpenAI, Ollama).
+
+```go
+import (
+    anthropicllm "github.com/sausheong/cortex/llm/anthropic"
+    oaillm "github.com/sausheong/cortex/llm/openai"
+)
+
+// Default (Anthropic API, Claude Sonnet 4.5)
+llm := anthropicllm.NewLLM("sk-ant-...")
+
+// With a different model
+llm := anthropicllm.NewLLM("sk-ant-...",
+    anthropicllm.WithModel("claude-haiku-4-5"),
+)
+
+// Anthropic-compatible API (custom proxy, AWS Bedrock adapter, etc.)
+llm := anthropicllm.NewLLM("key",
+    anthropicllm.WithBaseURL("https://your-proxy.example.com"),
+)
+
+// Wire up with OpenAI embedder (Anthropic has no embeddings)
+emb := oaillm.NewEmbedder("sk-...")
+ext := hybrid.New(deterministic.New(), llmext.New(llm))
+
+c, _ := cortex.Open("brain.db",
+    cortex.WithLLM(llm),
+    cortex.WithEmbedder(emb),
+    cortex.WithExtractor(ext),
+)
+```
+
+### Implementing a Custom Provider
+
+Implement the `LLM` and/or `Embedder` interfaces to add any provider:
+
+```go
+type LLM interface {
+    Extract(ctx context.Context, text, prompt string) (ExtractionResult, error)
+    Decompose(ctx context.Context, query string) ([]StructuredQuery, error)
+    Summarize(ctx context.Context, texts []string) (string, error)
+}
+
+type Embedder interface {
+    Embed(ctx context.Context, texts []string) ([][]float32, error)
+    Dimensions() int
+}
+```
+
+You can mix providers freely — for example, Anthropic for extraction, OpenAI for embeddings, and Ollama for query decomposition.
 
 ---
 
@@ -976,7 +1024,9 @@ You can mix providers — for example, use Anthropic for extraction and OpenAI f
 
 | Variable | Default | Used By | Description |
 |----------|---------|---------|-------------|
-| `OPENAI_API_KEY` | (none) | CLI, MCP, HTTP | Enables LLM extraction + semantic search |
+| `OPENAI_API_KEY` | (none) | CLI, MCP, HTTP | Enables OpenAI LLM extraction + embeddings |
+| `OPENAI_BASE_URL` | (none) | CLI, MCP, HTTP | Custom base URL for OpenAI-compatible APIs (Ollama, vLLM, Together AI, Groq, etc.) |
+| `ANTHROPIC_API_KEY` | (none) | Go API | Anthropic API key (use Go API to wire up — see Pluggable Providers) |
 | `CORTEX_DB` | `brain.db` | MCP, HTTP | Database file path |
 | `CORTEX_PORT` | `8080` | HTTP | HTTP server listen port |
 
@@ -997,6 +1047,9 @@ go test ./connector/markdown/ -v
 # Run OpenAI integration tests (requires API key)
 OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
 
+# Run Anthropic integration tests (requires API key)
+ANTHROPIC_API_KEY=sk-ant-... go test ./llm/anthropic/ -v
+
 # Count total tests
 go test ./... -v 2>&1 | grep -c PASS
 # 79
@@ -1008,10 +1061,10 @@ go test ./... -v 2>&1 | grep -c PASS
 
 | Metric | Value |
 |--------|-------|
-| Go packages | 15 |
-| Lines of Go | ~6,300 |
-| Tests | 79 |
-| Test packages | 9 |
+| Go packages | 16 |
+| Lines of Go | ~6,750 |
+| Tests | 83 |
+| Test packages | 10 |
 | Binaries | 3 |
 | External DB required | No |
 | CGo required | No |
