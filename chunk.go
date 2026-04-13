@@ -26,11 +26,15 @@ func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 	}
 	defer tx.Rollback()
 
-	// Insert into chunks table.
+	// Insert into chunks table. Use NULL for entity_id when empty.
+	var entityID any
+	if ch.EntityID != "" {
+		entityID = ch.EntityID
+	}
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO chunks (id, entity_id, content, metadata, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		ch.ID, ch.EntityID, ch.Content, string(metaJSON), ch.CreatedAt,
+		ch.ID, entityID, ch.Content, string(metaJSON), ch.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert chunk: %w", err)
