@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
+	oai "github.com/sashabaranov/go-openai"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/connector/markdown"
 	"github.com/sausheong/cortex/extractor/deterministic"
 	"github.com/sausheong/cortex/extractor/hybrid"
 	llmext "github.com/sausheong/cortex/extractor/llmext"
+	anthropicllm "github.com/sausheong/cortex/llm/anthropic"
 	oaillm "github.com/sausheong/cortex/llm/openai"
 )
 
@@ -61,33 +64,62 @@ Commands:
 }
 
 func openCortex() *cortex.Cortex {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	baseURL := os.Getenv("OPENAI_BASE_URL")
+	provider := os.Getenv("LLM_PROVIDER") // "openai" (default) or "anthropic"
+	modelName := os.Getenv("LLM_MODEL")
+	embModel := os.Getenv("EMBEDDING_MODEL")
+	embDimsStr := os.Getenv("EMBEDDING_DIMS")
 
 	var opts []cortex.Option
+	var llm cortex.LLM
 
-	if apiKey != "" {
-		var llmOpts []oaillm.LLMOption
-		var embOpts []oaillm.EmbedderOption
-		if baseURL != "" {
-			llmOpts = append(llmOpts, oaillm.WithBaseURL(baseURL))
-			embOpts = append(embOpts, oaillm.WithEmbedderBaseURL(baseURL))
+	switch provider {
+	case "anthropic":
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" {
+			fmt.Fprintln(os.Stderr, "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic")
+			os.Exit(1)
 		}
+		var llmOpts []anthropicllm.LLMOption
+		if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+			llmOpts = append(llmOpts, anthropicllm.WithBaseURL(baseURL))
+		}
+		if modelName != "" {
+			llmOpts = append(llmOpts, anthropicllm.WithModel(modelName))
+		}
+		llm = anthropicllm.NewLLM(apiKey, llmOpts...)
 
-		llm := oaillm.NewLLM(apiKey, llmOpts...)
-		embedder := oaillm.NewEmbedder(apiKey, embOpts...)
-		det := deterministic.New()
-		llmExtractor := llmext.New(llm)
-		ext := hybrid.New(det, llmExtractor)
-
-		opts = append(opts,
-			cortex.WithLLM(llm),
-			cortex.WithEmbedder(embedder),
-			cortex.WithExtractor(ext),
-		)
-	} else {
-		opts = append(opts, cortex.WithExtractor(deterministic.New()))
+	default: // "openai" or empty
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			opts = append(opts, cortex.WithExtractor(deterministic.New()))
+			cx, err := cortex.Open(defaultDB, opts...)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
+				os.Exit(1)
+			}
+			return cx
+		}
+		var llmOpts []oaillm.LLMOption
+		if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
+			llmOpts = append(llmOpts, oaillm.WithBaseURL(baseURL))
+		}
+		if modelName != "" {
+			llmOpts = append(llmOpts, oaillm.WithModel(modelName))
+		}
+		llm = oaillm.NewLLM(apiKey, llmOpts...)
 	}
+
+	// Embedder — uses OpenAI-compatible API (works with Ollama, vLLM, etc.)
+	embedder := configureEmbedder(embModel, embDimsStr)
+	det := deterministic.New()
+	llmExtractor := llmext.New(llm)
+	ext := hybrid.New(det, llmExtractor)
+
+	opts = append(opts,
+		cortex.WithLLM(llm),
+		cortex.WithEmbedder(embedder),
+		cortex.WithExtractor(ext),
+	)
 
 	cx, err := cortex.Open(defaultDB, opts...)
 	if err != nil {
@@ -95,6 +127,39 @@ func openCortex() *cortex.Cortex {
 		os.Exit(1)
 	}
 	return cx
+}
+
+func configureEmbedder(embModel, embDimsStr string) cortex.Embedder {
+	// Embedding API key and base URL can differ from the LLM provider.
+	// Falls back to OPENAI_API_KEY / OPENAI_BASE_URL if not set.
+	apiKey := os.Getenv("EMBEDDING_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "EMBEDDING_API_KEY or OPENAI_API_KEY is required for embeddings")
+		os.Exit(1)
+	}
+
+	var embOpts []oaillm.EmbedderOption
+	baseURL := os.Getenv("EMBEDDING_BASE_URL")
+	if baseURL == "" {
+		baseURL = os.Getenv("OPENAI_BASE_URL")
+	}
+	if baseURL != "" {
+		embOpts = append(embOpts, oaillm.WithEmbedderBaseURL(baseURL))
+	}
+	if embModel != "" {
+		dims := 1536
+		if embDimsStr != "" {
+			if d, err := strconv.Atoi(embDimsStr); err == nil {
+				dims = d
+			}
+		}
+		embOpts = append(embOpts, oaillm.WithEmbeddingModel(oai.EmbeddingModel(embModel), dims))
+	}
+
+	return oaillm.NewEmbedder(apiKey, embOpts...)
 }
 
 func cmdInit() {
