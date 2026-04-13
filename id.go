@@ -9,9 +9,8 @@ import (
 )
 
 var (
-	entropy     = rand.New(rand.NewSource(time.Now().UnixNano()))
-	entropyOnce sync.Once
-	entropyMu   sync.Mutex
+	entropy   = rand.New(rand.NewSource(time.Now().UnixNano()))
+	entropyMu sync.Mutex
 )
 
 // newID generates a new ULID string.
