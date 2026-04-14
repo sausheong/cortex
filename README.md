@@ -103,6 +103,13 @@ cortex init
 
 This creates `brain.db` in the current directory — a single SQLite file containing the entire knowledge graph, vector embeddings, FTS5 search indexes, and sync state. Everything lives in this one file.
 
+During initialization, cortex will prompt for your identity:
+- **Name** (required)
+- **Nickname** (optional)
+- **Email addresses** (zero or more)
+
+This stores you as the owner entity in the graph so that queries like "who am I" work out of the box. You can update your identity later with `cortex config`.
+
 ### Step 2: Set Your OpenAI API Key (Recommended)
 
 ```bash
@@ -163,14 +170,24 @@ Example output from `cortex recall "who works at Stripe"`:
 ## CLI Reference
 
 ```
-cortex init                           Create brain.db in the current directory
-cortex remember <text>                Ingest text, extract entities/relationships/memories
-cortex recall <query>                 Natural language query with multi-strategy search
-cortex sync <dir>                     Sync text files from a directory (incremental, auto-detects format)
-cortex entity list [--type <type>]    List entities, optionally filtered by type
-cortex entity get <id>                Show entity details, attributes, and relationships
-cortex forget --source <src>          Remove all knowledge from a source
-cortex forget --entity <id>           Remove a specific entity and all linked data
+Usage: cortex [--db <path>] <command> [arguments]
+
+Global options:
+  --db <path>                    Path to brain.db (default: brain.db, or CORTEX_DB env var)
+
+Commands:
+  init                           Create brain.db and set up owner identity
+  remember <text>                Ingest text, extract entities/relationships/memories
+  recall <query>                 Natural language query with multi-strategy search
+  sync <dir>                     Sync text files from a directory (incremental, auto-detects format)
+  entity list [--type <type>]    List entities, optionally filtered by type
+  entity get <id>                Show entity details, attributes, and relationships
+  forget --source <src>          Remove all knowledge from a source
+  forget --entity <id>           Remove a specific entity and all linked data
+  config                         Show owner identity
+  config --name <name>           Update owner name
+  config --nickname <nick>       Update owner nickname
+  config --email <email>         Add an email address
 ```
 
 ---
@@ -890,7 +907,7 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LLM_PROVIDER` | `openai` | LLM provider: `openai` or `anthropic` |
-| `LLM_MODEL` | (provider default) | Override the LLM model (e.g., `gpt-4o`, `claude-haiku-4-5`) |
+| `LLM_MODEL` | (provider default) | Override the LLM model (e.g., `gpt-5.4-mini`, `claude-haiku-4-5`) |
 | `OPENAI_API_KEY` | (none) | OpenAI API key |
 | `OPENAI_BASE_URL` | (none) | Custom base URL for OpenAI-compatible APIs (Ollama, vLLM, Together AI, Groq) |
 | `ANTHROPIC_API_KEY` | (none) | Anthropic API key (required when `LLM_PROVIDER=anthropic`) |
@@ -909,7 +926,7 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORTEX_DB` | `brain.db` | Database file path (MCP, HTTP) |
+| `CORTEX_DB` | `brain.db` | Database file path (CLI, MCP, HTTP) |
 | `CORTEX_PORT` | `8080` | HTTP server listen port |
 
 ### Example Configurations
