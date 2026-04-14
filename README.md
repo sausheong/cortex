@@ -1004,23 +1004,3 @@ OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
 # Run Anthropic integration tests (requires API key)
 ANTHROPIC_API_KEY=sk-ant-... go test ./llm/anthropic/ -v
 ```
-
----
-
-## Project Stats
-
-| Metric | Value |
-|--------|-------|
-| Go packages | 16 |
-| Lines of Go | ~6,750 |
-| Tests | 83 |
-| Test packages | 10 |
-| Binaries | 3 |
-| External DB required | No |
-| CGo required | No |
-
----
-
-## License
-
-MIT
