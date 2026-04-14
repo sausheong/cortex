@@ -112,7 +112,7 @@ export OPENAI_API_KEY=sk-...
 Add this to your `~/.zshrc` or `~/.bashrc` to persist across sessions.
 
 With an API key, cortex will:
-- Use **GPT-4o-mini** to extract entities, relationships, and distilled facts from any text
+- Use **GPT-5.4-mini** to extract entities, relationships, and distilled facts from any text
 - Use **text-embedding-3-small** to generate 1536-dimensional vector embeddings for semantic search
 - Use LLM-powered **query decomposition** to break natural language queries into multi-strategy sub-queries
 
@@ -799,7 +799,7 @@ Cortex uses embedded SQLite via [`modernc.org/sqlite`](https://pkg.go.dev/modern
 
 | Interface | Methods | Shipped Implementations |
 |-----------|---------|------------------------|
-| `LLM` | `Extract`, `Decompose`, `Summarize` | OpenAI (GPT-4o-mini), Anthropic (Claude Sonnet 4.5) |
+| `LLM` | `Extract`, `Decompose`, `Summarize` | OpenAI (GPT-5.4-mini), Anthropic (Claude Sonnet 4.5) |
 | `Embedder` | `Embed`, `Dimensions` | OpenAI (text-embedding-3-small, 1536 dims) |
 | `Extractor` | `Extract` | Deterministic, LLM, Hybrid (deterministic + LLM) |
 

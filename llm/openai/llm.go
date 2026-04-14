@@ -65,7 +65,7 @@ type LLM struct {
 // any OpenAI-compatible API (Ollama, vLLM, LM Studio, Together AI, Groq, etc.).
 func NewLLM(apiKey string, opts ...LLMOption) *LLM {
 	l := &LLM{
-		model: oai.GPT4oMini,
+		model: "gpt-5.4-mini",
 	}
 	for _, o := range opts {
 		o(l)
