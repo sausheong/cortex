@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -9,7 +10,7 @@ import (
 
 	oai "github.com/sashabaranov/go-openai"
 	"github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/connector/markdown"
+	"github.com/sausheong/cortex/connector/files"
 	"github.com/sausheong/cortex/extractor/deterministic"
 	"github.com/sausheong/cortex/extractor/hybrid"
 	llmext "github.com/sausheong/cortex/extractor/llmext"
@@ -17,9 +18,26 @@ import (
 	oaillm "github.com/sausheong/cortex/llm/openai"
 )
 
-const defaultDB = "brain.db"
+var dbPath = "brain.db"
 
 func main() {
+	// Resolve database path: --db flag > CORTEX_DB env > default "brain.db".
+	if envDB := os.Getenv("CORTEX_DB"); envDB != "" {
+		dbPath = envDB
+	}
+
+	// Strip --db flag from os.Args before command parsing.
+	var filtered []string
+	for i := 0; i < len(os.Args); i++ {
+		if os.Args[i] == "--db" && i+1 < len(os.Args) {
+			dbPath = os.Args[i+1]
+			i++ // skip the value
+		} else {
+			filtered = append(filtered, os.Args[i])
+		}
+	}
+	os.Args = filtered
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -40,6 +58,8 @@ func main() {
 		cmdEntity()
 	case "forget":
 		cmdForget()
+	case "config":
+		cmdConfig()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -48,19 +68,24 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: cortex <command> [arguments]
+	fmt.Fprintln(os.Stderr, `Usage: cortex [--db <path>] <command> [arguments]
+
+Global options:
+  --db <path>                    Path to brain.db (default: brain.db, or CORTEX_DB env var)
 
 Commands:
   init                           Create a new brain.db
   remember <text>                Remember text
   recall <query>                 Recall and print results
-  sync markdown <dir>            Sync markdown directory
-  sync gmail                     Sync Gmail (requires OAuth2, see README)
-  sync calendar                  Sync Google Calendar (requires OAuth2, see README)
+  sync <dir>                     Sync text files from a directory (.md, .csv, .yaml, .json, .txt, etc.)
   entity list [--type <type>]    List entities
   entity get <id>                Show entity details + relationships
   forget --source <src>          Forget by source
-  forget --entity <id>           Forget by entity ID`)
+  forget --entity <id>           Forget by entity ID
+  config                         Show owner identity
+  config --name <name>           Update owner name
+  config --nickname <nick>       Update owner nickname
+  config --email <email>         Add an email address`)
 }
 
 func openCortex() *cortex.Cortex {
@@ -92,7 +117,7 @@ func openCortex() *cortex.Cortex {
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			opts = append(opts, cortex.WithExtractor(deterministic.New()))
-			cx, err := cortex.Open(defaultDB, opts...)
+			cx, err := cortex.Open(dbPath, opts...)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 				os.Exit(1)
@@ -121,7 +146,7 @@ func openCortex() *cortex.Cortex {
 		cortex.WithExtractor(ext),
 	)
 
-	cx, err := cortex.Open(defaultDB, opts...)
+	cx, err := cortex.Open(dbPath, opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 		os.Exit(1)
@@ -163,13 +188,41 @@ func configureEmbedder(embModel, embDimsStr string) cortex.Embedder {
 }
 
 func cmdInit() {
-	cx, err := cortex.Open(defaultDB)
+	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating database: %v\n", err)
 		os.Exit(1)
 	}
-	cx.Close()
+	defer cx.Close()
 	fmt.Println("Initialized brain.db")
+
+	// Prompt for owner identity.
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Print("Enter your name: ")
+	name, _ := reader.ReadString('\n')
+	name = strings.TrimSpace(name)
+	if name == "" {
+		fmt.Println("Skipping owner setup.")
+		return
+	}
+
+	fmt.Print("Enter nickname (optional): ")
+	nickname, _ := reader.ReadString('\n')
+	nickname = strings.TrimSpace(nickname)
+
+	var emails []string
+	for {
+		fmt.Print("Enter email address (or press Enter to finish): ")
+		email, _ := reader.ReadString('\n')
+		email = strings.TrimSpace(email)
+		if email == "" {
+			break
+		}
+		emails = append(emails, email)
+	}
+
+	storeOwner(cx, name, nickname, emails)
 }
 
 func cmdRemember() {
@@ -222,43 +275,21 @@ func cmdRecall() {
 
 func cmdSync() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: cortex sync <markdown|gmail|calendar> [args]")
+		fmt.Fprintln(os.Stderr, "usage: cortex sync <dir>")
 		os.Exit(1)
 	}
 
-	subCmd := os.Args[2]
+	dir := os.Args[2]
+	cx := openCortex()
+	defer cx.Close()
 
-	switch subCmd {
-	case "markdown":
-		if len(os.Args) < 4 {
-			fmt.Fprintln(os.Stderr, "usage: cortex sync markdown <dir>")
-			os.Exit(1)
-		}
-		dir := os.Args[3]
-		cx := openCortex()
-		defer cx.Close()
-
-		conn := markdown.New(dir)
-		ctx := context.Background()
-		if err := conn.Sync(ctx, cx); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Synced markdown files from %s\n", dir)
-	case "gmail":
-		fmt.Fprintln(os.Stderr, "Gmail sync requires Google OAuth2 credentials.")
-		fmt.Fprintln(os.Stderr, "Set up OAuth2 and pass credentials programmatically via the Go API.")
-		fmt.Fprintln(os.Stderr, "See README for details.")
-		os.Exit(1)
-	case "calendar":
-		fmt.Fprintln(os.Stderr, "Calendar sync requires Google OAuth2 credentials.")
-		fmt.Fprintln(os.Stderr, "Set up OAuth2 and pass credentials programmatically via the Go API.")
-		fmt.Fprintln(os.Stderr, "See README for details.")
-		os.Exit(1)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown sync type: %s\n", subCmd)
+	conn := files.New(dir)
+	ctx := context.Background()
+	if err := conn.Sync(ctx, cx); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("Synced files from %s\n", dir)
 }
 
 func cmdEntity() {
@@ -391,4 +422,157 @@ func cmdForget() {
 		os.Exit(1)
 	}
 	fmt.Println("Forgotten.")
+}
+
+func storeOwner(cx *cortex.Cortex, name, nickname string, emails []string) {
+	ctx := context.Background()
+
+	// Forget previous owner data first (entity + memories), then recreate.
+	_ = cx.Forget(ctx, cortex.Filter{Source: "owner"})
+
+	attrs := map[string]any{}
+	if nickname != "" {
+		attrs["nickname"] = nickname
+	}
+	if len(emails) > 0 {
+		attrs["emails"] = strings.Join(emails, ", ")
+	}
+
+	e := &cortex.Entity{
+		Type:       "person",
+		Name:       name,
+		Source:     "owner",
+		Attributes: attrs,
+	}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		fmt.Fprintf(os.Stderr, "error storing owner entity: %v\n", err)
+		os.Exit(1)
+	}
+
+	summary := buildOwnerSummary(name, nickname, emails)
+	if err := cx.Remember(ctx, summary, cortex.WithSource("owner")); err != nil {
+		fmt.Fprintf(os.Stderr, "error storing owner memory: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Owner set: %s\n", name)
+}
+
+func buildOwnerSummary(name, nickname string, emails []string) string {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("My name is %s.", name))
+	if nickname != "" {
+		parts = append(parts, fmt.Sprintf("My nickname is %s.", nickname))
+	}
+	if len(emails) > 0 {
+		parts = append(parts, fmt.Sprintf("My email addresses are %s.", strings.Join(emails, ", ")))
+	}
+	return strings.Join(parts, " ")
+}
+
+func cmdConfig() {
+	cx := openCortex()
+	defer cx.Close()
+
+	ctx := context.Background()
+
+	// If no flags, show current owner info.
+	if len(os.Args) < 4 {
+		entities, err := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person", Source: "owner"})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(entities) == 0 {
+			fmt.Println("No owner configured. Run 'cortex init' or 'cortex config --name <name>' to set up.")
+			return
+		}
+		e := entities[0]
+		fmt.Printf("Name:     %s\n", e.Name)
+		if nick, ok := e.Attributes["nickname"]; ok && nick != "" {
+			fmt.Printf("Nickname: %v\n", nick)
+		}
+		if em, ok := e.Attributes["emails"]; ok && em != "" {
+			fmt.Printf("Emails:   %v\n", em)
+		}
+		return
+	}
+
+	// Parse flags to update owner.
+	// First, load existing owner entity to preserve fields not being updated.
+	entities, err := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person", Source: "owner"})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	var name, nickname string
+	var emails []string
+
+	if len(entities) > 0 {
+		e := entities[0]
+		name = e.Name
+		if n, ok := e.Attributes["nickname"]; ok {
+			nickname = fmt.Sprintf("%v", n)
+		}
+		if em, ok := e.Attributes["emails"]; ok {
+			emailStr := fmt.Sprintf("%v", em)
+			if emailStr != "" {
+				for _, addr := range strings.Split(emailStr, ", ") {
+					addr = strings.TrimSpace(addr)
+					if addr != "" {
+						emails = append(emails, addr)
+					}
+				}
+			}
+		}
+	}
+
+	// Apply flags.
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--name":
+			if i+1 >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "missing value for --name")
+				os.Exit(1)
+			}
+			i++
+			name = os.Args[i]
+		case "--nickname":
+			if i+1 >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "missing value for --nickname")
+				os.Exit(1)
+			}
+			i++
+			nickname = os.Args[i]
+		case "--email":
+			if i+1 >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "missing value for --email")
+				os.Exit(1)
+			}
+			i++
+			newEmail := os.Args[i]
+			// Add only if not already present.
+			found := false
+			for _, e := range emails {
+				if strings.EqualFold(e, newEmail) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				emails = append(emails, newEmail)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "unknown config flag: %s\n", os.Args[i])
+			os.Exit(1)
+		}
+	}
+
+	if name == "" {
+		fmt.Fprintln(os.Stderr, "name is required. Use --name <name>")
+		os.Exit(1)
+	}
+
+	storeOwner(cx, name, nickname, emails)
 }

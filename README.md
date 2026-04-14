@@ -1,6 +1,6 @@
 # Cortex
 
-A personal knowledge graph and memory system in Go. Cortex stores everything you know — people, organizations, concepts, events, documents — as a unified graph with typed relationships. It extracts entities and facts from your notes, conversations, emails, and calendar, then lets any AI agent query the graph via MCP, HTTP, or the Go API.
+A personal knowledge graph and memory system in Go. Cortex stores everything you know — people, organizations, concepts, events, documents — as a unified graph with typed relationships. It extracts entities and facts from your notes and conversations, then lets any AI agent query the graph via MCP, HTTP, or the Go API.
 
 Think of it as a digital twin that compounds knowledge over time. Agents read from cortex before responding and write back after every conversation. The more you use it, the smarter it gets.
 
@@ -9,7 +9,7 @@ Inspired by [GBrain](https://github.com/garrytan/gbrain) (operational model), [C
 ## How It Works
 
 ```
-Signal arrives (note, email, meeting, conversation)
+Signal arrives (note, conversation)
   -> Hybrid extraction (deterministic + LLM)
      -> Entities: Alice (person), Stripe (org), distributed systems (concept)
      -> Relationships: Alice --works_at--> Stripe
@@ -30,9 +30,9 @@ Every cycle through this loop adds knowledge. The agent enriches a person page a
 
 - **Unified knowledge graph** — people, organizations, concepts, events, documents as first-class nodes with typed relationships
 - **Remember / Recall / Forget** — simple high-level API inspired by mem0
-- **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks, email headers) + LLM-powered entity/relationship discovery
+- **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
 - **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
-- **Four data connectors** — markdown files, conversations, Gmail, Google Calendar
+- **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
 - **Three interfaces** — CLI, MCP stdio server, HTTP/REST API
 - **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
@@ -120,12 +120,12 @@ Without it, cortex falls back to deterministic extraction only (YAML frontmatter
 
 ### Step 3: Ingest Your Data
 
-**Sync your markdown notes:**
+**Sync your files:**
 ```bash
-cortex sync markdown ~/notes
+cortex sync ~/notes
 ```
 
-Cortex will recursively find all `.md` files, parse frontmatter and wikilinks deterministically, run LLM extraction on the body text (if API key is set), and store everything in the graph. Incremental — only re-processes files that changed since the last sync.
+Cortex will recursively find all supported text files (`.md`, `.csv`, `.yaml`, `.json`, `.txt`, etc.), auto-detect the format, parse frontmatter and wikilinks from markdown, and run LLM extraction on all content (if API key is set). Incremental — only re-processes files that changed since the last sync.
 
 **Remember ad-hoc facts:**
 ```bash
@@ -166,9 +166,7 @@ Example output from `cortex recall "who works at Stripe"`:
 cortex init                           Create brain.db in the current directory
 cortex remember <text>                Ingest text, extract entities/relationships/memories
 cortex recall <query>                 Natural language query with multi-strategy search
-cortex sync markdown <dir>            Sync .md files from a directory (incremental)
-cortex sync gmail                     Sync Gmail (requires OAuth2 — see Connectors)
-cortex sync calendar                  Sync Google Calendar (requires OAuth2 — see Connectors)
+cortex sync <dir>                     Sync text files from a directory (incremental, auto-detects format)
 cortex entity list [--type <type>]    List entities, optionally filtered by type
 cortex entity get <id>                Show entity details, attributes, and relationships
 cortex forget --source <src>          Remove all knowledge from a source
@@ -309,7 +307,7 @@ curl 'localhost:8080/search?q=distributed+systems&mode=vector&limit=5'
 
 **Forget:**
 ```bash
-curl -X DELETE 'localhost:8080/forget?source=gmail'
+curl -X DELETE 'localhost:8080/forget?source=markdown'
 
 # Response: {"status": "forgotten"}
 ```
@@ -331,7 +329,7 @@ import (
 
     "github.com/sausheong/cortex"
     "github.com/sausheong/cortex/connector/conversation"
-    "github.com/sausheong/cortex/connector/markdown"
+    "github.com/sausheong/cortex/connector/files"
     "github.com/sausheong/cortex/extractor/deterministic"
     "github.com/sausheong/cortex/extractor/hybrid"
     llmext "github.com/sausheong/cortex/extractor/llmext"
@@ -359,9 +357,9 @@ func main() {
     // Remember ad-hoc text
     c.Remember(ctx, "Alice works at Stripe as a staff engineer")
 
-    // Sync markdown notes
-    md := markdown.New("/path/to/notes")
-    md.Sync(ctx, c)
+    // Sync files (markdown, CSV, YAML, JSON, etc.)
+    f := files.New("/path/to/notes")
+    f.Sync(ctx, c)
 
     // Ingest conversation messages
     conv := conversation.New()
@@ -406,7 +404,7 @@ func main() {
     // --- Cleanup ---
 
     // Forget all knowledge from a source
-    c.Forget(ctx, cortex.Filter{Source: "gmail"})
+    c.Forget(ctx, cortex.Filter{Source: "markdown"})
 
     // Forget a specific entity (cascades to relationships, chunks, memories)
     c.Forget(ctx, cortex.Filter{EntityID: people[0].ID})
@@ -431,20 +429,10 @@ c.Remember(ctx, "---\ntype: person\nname: Alice\n---\nAlice works at [[Stripe]].
 
 ```
                            ┌─────────────────┐
-                           │   Data Sources   │
+                           │    Ingestion     │
                            │                  │
-                           │  Markdown files  │
-                           │  Conversations   │
-                           │  Gmail (OAuth2)  │
-                           │  Calendar(OAuth2)│
-                           └────────┬─────────┘
-                                    │
-                           ┌────────▼─────────┐
-                           │   Connectors     │
-                           │                  │
-                           │  Parse source-   │
-                           │  specific format │
-                           │  Call Remember() │
+                           │  Remember(text)  │
+                           │  Sync(markdown/) │
                            └────────┬─────────┘
                                     │
                            ┌────────▼─────────┐
@@ -452,8 +440,7 @@ c.Remember(ctx, "---\ntype: person\nname: Alice\n---\nAlice works at [[Stripe]].
                            │                  │
                            │  Deterministic:  │
                            │  frontmatter,    │
-                           │  wikilinks,      │
-                           │  email headers   │
+                           │  wikilinks       │
                            │       +          │
                            │  LLM: prose →    │
                            │  entities, rels, │
@@ -497,10 +484,8 @@ cortex/
 │   ├── llmext/              # LLM-powered extraction
 │   └── hybrid/              # Composes deterministic + LLM
 ├── connector/
-│   ├── markdown/            # Markdown directory connector
-│   ├── conversation/        # Conversation message connector
-│   ├── gmail/               # Gmail connector (OAuth2)
-│   └── calendar/            # Google Calendar connector (OAuth2)
+│   ├── files/               # File directory connector (md, csv, yaml, json, txt, etc.)
+│   └── conversation/        # Conversation message connector
 ├── cmd/
 │   ├── cortex/              # CLI
 │   ├── cortex-mcp/          # MCP stdio server
@@ -508,7 +493,7 @@ cortex/
 └── internal/testutil/       # Test mocks and helpers
 ```
 
-**Core Graph + Pluggable Connectors**: the core knows nothing about data sources. Connectors are independent packages that parse source-specific formats and call the core API. Adding a new data source means writing a new connector package — no changes to the core.
+**Simple ingestion model**: cortex accepts text via `Remember` and text files via `Sync`. The file connector auto-detects format by extension and lets the LLM extract knowledge from any supported text format. No external API connectors — keeps the core simple and dependency-free.
 
 ---
 
@@ -550,7 +535,7 @@ cortex.WithContentType("markdown")  // Hint content type for extraction
 
 // Recall options
 cortex.WithLimit(10)                // Max results (default 20)
-cortex.WithSourceFilter("gmail")    // Filter results by source
+cortex.WithSourceFilter("markdown")    // Filter results by source
 
 // Relationship filter
 cortex.RelTypeFilter("works_at")    // Filter by relationship type
@@ -573,7 +558,7 @@ type Entity struct {
     Type       string            // "person", "organization", "concept", "event", "document"
     Name       string            // Display name
     Attributes map[string]any    // Type-specific data (email, url, role, etc.)
-    Source     string            // Origin: "markdown", "conversation", "gmail", "calendar"
+    Source     string            // Origin: "markdown", "conversation"
     CreatedAt  time.Time
     UpdatedAt  time.Time
 }
@@ -665,9 +650,6 @@ When you call `Remember`, cortex runs a hybrid extraction pipeline:
 **Step 1 — Deterministic extraction** (free, fast, reliable):
 - **YAML frontmatter**: `type: person`, `name: Alice` becomes an entity
 - **Wikilinks**: `[[Stripe]]` becomes a document entity
-- **Email headers** (Gmail connector): From/To/Cc become person entities with email attributes
-- **Calendar attendees**: become person entities with "attended" relationships
-
 **Step 2 — LLM extraction** (powerful, costs API calls):
 - Sends unstructured prose to OpenAI with a structured extraction prompt
 - Receives entities, relationships, and distilled memory facts as JSON
@@ -735,21 +717,23 @@ Items appearing in multiple search results get boosted. For example, if "Alice w
 
 ## Connectors
 
-### Markdown
+### File Sync
 
-Syncs a directory of `.md` files with incremental change detection.
+Syncs a directory of text files with incremental change detection and automatic format detection.
 
 ```bash
-cortex sync markdown ~/notes
+cortex sync ~/notes
 ```
 
-- Recursively finds all `.md` files
-- Parses YAML frontmatter for entity type, name, and attributes
-- Detects `[[wikilinks]]` as relationships to other entities
-- Splits body into chunks for search indexing
+**Supported formats:** `.md`, `.csv`, `.tsv`, `.yaml`, `.yml`, `.json`, `.txt`, `.xml`, `.toml`, `.log`
+
+- Recursively finds all supported text files
+- Auto-detects content type from file extension
+- For markdown: parses YAML frontmatter and `[[wikilinks]]` deterministically
+- For all formats: the LLM extracts entities, relationships, and memories from the content
 - Tracks file modification times — only re-processes changed files on subsequent syncs
 
-**Frontmatter format:**
+**Markdown frontmatter format:**
 ```yaml
 ---
 type: person
@@ -761,6 +745,8 @@ Alice is a staff engineer at [[Stripe]].
 She knows [[Bob]] from their time at [[Google]].
 She's interested in [[distributed systems]] and [[machine learning]].
 ```
+
+**CSV / YAML / JSON** are ingested as-is — the LLM reads the tabular or structured data and extracts entities and relationships from it.
 
 ### Conversation
 
@@ -779,133 +765,6 @@ err := conv.Ingest(ctx, c, []conversation.Message{
 Messages are concatenated with role prefixes and passed through `Remember` with source `"conversation"`. The LLM extractor identifies entities and relationships from the conversation text.
 
 Use this in your agent's post-response hook to build the compounding knowledge loop: read from cortex before responding, write back after.
-
-### Gmail
-
-Syncs emails via the Gmail API with OAuth2. Requires a pre-built `*gmail.Service`.
-
-- **Deterministic extraction**: From/To/Cc headers become person entities with email attributes
-- **LLM extraction**: email bodies are processed for relationship and memory discovery
-- **Incremental sync**: uses Gmail history IDs — only fetches new emails
-
-```go
-import (
-    gmailconn "github.com/sausheong/cortex/connector/gmail"
-    gm "google.golang.org/api/gmail/v1"
-)
-
-conn := gmailconn.New(gmailService)
-conn.Sync(ctx, c)                            // Sync last 50 emails (first run)
-conn.Sync(ctx, c)                            // Only new emails (subsequent runs)
-```
-
-Options: `gmailconn.WithUserID("me")`, `gmailconn.WithMaxResults(100)`
-
-### Google Calendar
-
-Syncs events from Google Calendar with OAuth2. Requires a pre-built `*calendar.Service`.
-
-- **Deterministic extraction**: attendees become person entities, events become event entities
-- **Relationships**: "attended" edges link each attendee to each event
-- **LLM extraction**: event descriptions are processed for additional context
-- **Incremental sync**: uses Calendar sync tokens
-
-```go
-import (
-    calconn "github.com/sausheong/cortex/connector/calendar"
-    cal "google.golang.org/api/calendar/v3"
-)
-
-conn := calconn.New(calService)
-conn.Sync(ctx, c)                            // Sync last 30 days (first run)
-conn.Sync(ctx, c)                            // Only changed events (subsequent runs)
-```
-
-Options: `calconn.WithCalendarID("primary")`
-
-### Google OAuth2 Setup (Gmail & Calendar)
-
-Both Google connectors require OAuth2 credentials. The CLI cannot handle the interactive OAuth2 flow — use the Go API directly.
-
-**1. Create credentials:**
-- Go to [Google Cloud Console](https://console.cloud.google.com)
-- Create a project (or select existing)
-- Enable the **Gmail API** and/or **Google Calendar API**
-- Go to Credentials > Create Credentials > OAuth Client ID
-- Select "Desktop application" as the application type
-- Download the credentials JSON file
-
-**2. Set up the OAuth2 flow in your code:**
-
-```go
-import (
-    "context"
-    "encoding/json"
-    "fmt"
-    "os"
-
-    "golang.org/x/oauth2"
-    "golang.org/x/oauth2/google"
-    "google.golang.org/api/gmail/v1"
-    "google.golang.org/api/calendar/v3"
-    "google.golang.org/api/option"
-
-    gmailconn "github.com/sausheong/cortex/connector/gmail"
-    calconn "github.com/sausheong/cortex/connector/calendar"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // Load credentials
-    b, _ := os.ReadFile("credentials.json")
-    config, _ := google.ConfigFromJSON(b,
-        gmail.GmailReadonlyScope,
-        calendar.CalendarReadonlyScope,
-    )
-
-    // Get token (first time: interactive flow; thereafter: from saved file)
-    token := getToken(config)
-
-    // Create service clients
-    ts := config.TokenSource(ctx, token)
-    gmailService, _ := gmail.NewService(ctx, option.WithTokenSource(ts))
-    calService, _ := calendar.NewService(ctx, option.WithTokenSource(ts))
-
-    // Open cortex and sync
-    c, _ := cortex.Open("brain.db", /* ... providers ... */)
-    defer c.Close()
-
-    gmailconn.New(gmailService).Sync(ctx, c)
-    calconn.New(calService).Sync(ctx, c)
-}
-
-func getToken(config *oauth2.Config) *oauth2.Token {
-    // Try loading from file
-    f, err := os.Open("token.json")
-    if err == nil {
-        defer f.Close()
-        var tok oauth2.Token
-        json.NewDecoder(f).Decode(&tok)
-        return &tok
-    }
-
-    // Interactive: print URL, get code from user
-    url := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-    fmt.Printf("Visit this URL to authorize:\n%s\n\nEnter code: ", url)
-    var code string
-    fmt.Scan(&code)
-
-    tok, _ := config.Exchange(context.Background(), code)
-
-    // Save for next time
-    f, _ = os.Create("token.json")
-    json.NewEncoder(f).Encode(tok)
-    f.Close()
-
-    return tok
-}
-```
 
 ---
 
@@ -1120,7 +979,7 @@ make test-v
 make test-cover    # generates coverage.html
 
 # Run a specific package
-go test ./connector/markdown/ -v
+go test ./connector/files/ -v
 
 # Run OpenAI integration tests (requires API key)
 OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
