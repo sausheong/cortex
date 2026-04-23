@@ -55,23 +55,37 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		}
 	}
 
-	// 4. Store raw content as a chunk.
-	ch := &Chunk{Content: content}
-	if cfg.source != "" {
-		ch.Metadata = map[string]any{"source": cfg.source}
-	}
-	if err := c.PutChunk(ctx, ch); err != nil {
-		return fmt.Errorf("cortex: store chunk: %w", err)
-	}
-	// Embed the chunk if embedder is configured.
-	if c.cfg.embedder != nil {
-		vecs, err := c.cfg.embedder.Embed(ctx, []string{ch.Content})
-		if err != nil {
-			return fmt.Errorf("cortex: embed chunk: %w", err)
+	// 4. Store raw content as one or more chunks. Long content is split so
+	// each chunk fits within the embedder's context window; each split is
+	// stored as its own Chunk row with its own embedding, but they share
+	// the same source and (when split) carry part metadata so a recall can
+	// reassemble or reference the originating thread.
+	parts := splitContent(content, cfg.maxChunkSize)
+	for i, part := range parts {
+		ch := &Chunk{Content: part}
+		md := map[string]any{}
+		if cfg.source != "" {
+			md["source"] = cfg.source
 		}
-		if len(vecs) > 0 {
-			if err := c.putEmbedding(ctx, ch.ID, "chunk", vecs[0]); err != nil {
-				return fmt.Errorf("cortex: store chunk embedding: %w", err)
+		if len(parts) > 1 {
+			md["part"] = i + 1
+			md["parts"] = len(parts)
+		}
+		if len(md) > 0 {
+			ch.Metadata = md
+		}
+		if err := c.PutChunk(ctx, ch); err != nil {
+			return fmt.Errorf("cortex: store chunk: %w", err)
+		}
+		if c.cfg.embedder != nil {
+			vecs, err := c.cfg.embedder.Embed(ctx, []string{ch.Content})
+			if err != nil {
+				return fmt.Errorf("cortex: embed chunk: %w", err)
+			}
+			if len(vecs) > 0 {
+				if err := c.putEmbedding(ctx, ch.ID, "chunk", vecs[0]); err != nil {
+					return fmt.Errorf("cortex: store chunk embedding: %w", err)
+				}
 			}
 		}
 	}

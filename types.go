@@ -109,8 +109,9 @@ type StructuredQuery struct {
 
 type RememberOption func(*rememberConfig)
 type rememberConfig struct {
-	source      string
-	contentType string
+	source       string
+	contentType  string
+	maxChunkSize int // max characters per chunk before splitting (0 = no split)
 }
 
 func WithSource(source string) RememberOption {
@@ -119,6 +120,17 @@ func WithSource(source string) RememberOption {
 
 func WithContentType(ct string) RememberOption {
 	return func(c *rememberConfig) { c.contentType = ct }
+}
+
+// WithMaxChunkChars caps each stored chunk to roughly n characters.
+// Long content is split on paragraph and sentence boundaries, then on
+// hard boundaries if needed. Each split is stored as its own Chunk and
+// embedded independently. Pass 0 to disable splitting (default).
+//
+// A safe default for typical embedding models (nomic-embed-text, bge-*,
+// OpenAI text-embedding-3-*) is 6000 chars (~1500 tokens).
+func WithMaxChunkChars(n int) RememberOption {
+	return func(c *rememberConfig) { c.maxChunkSize = n }
 }
 
 type RecallOption func(*recallConfig)
