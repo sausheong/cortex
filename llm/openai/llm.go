@@ -190,8 +190,19 @@ type extractionJSON struct {
 }
 
 // parseExtractionJSON parses the JSON output from the LLM extraction into
-// a cortex.Extraction struct.
+// a cortex.Extraction struct. Strips markdown code fences first because
+// some OpenAI-compatible upstreams (e.g. Anthropic-via-LiteLLM) wrap their
+// JSON response in ```json ... ``` despite a JSON-only system prompt.
 func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) > 2 {
+			lines = lines[1 : len(lines)-1]
+			raw = strings.Join(lines, "\n")
+		}
+	}
+
 	var ej extractionJSON
 	if err := json.Unmarshal([]byte(raw), &ej); err != nil {
 		return nil, err

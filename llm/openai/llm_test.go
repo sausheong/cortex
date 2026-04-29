@@ -114,3 +114,18 @@ func TestParseExtractionJSON(t *testing.T) {
 		t.Errorf("expected memory content, got %q", parsed.Memories[0].Content)
 	}
 }
+
+func TestParseExtractionJSONWithCodeFences(t *testing.T) {
+	// Some OpenAI-compatible upstreams (Anthropic-via-LiteLLM most notably)
+	// wrap their JSON response in markdown code fences. The parser must
+	// strip them before json.Unmarshal.
+	raw := "```json\n{\"entities\": [{\"type\": \"person\", \"name\": \"Alice\"}], \"relationships\": [], \"memories\": []}\n```"
+
+	parsed, err := parseExtractionJSON(raw)
+	if err != nil {
+		t.Fatalf("parseExtractionJSON with fences: %v", err)
+	}
+	if len(parsed.Entities) != 1 {
+		t.Errorf("got %d entities, want 1", len(parsed.Entities))
+	}
+}
