@@ -97,6 +97,107 @@ func TestTraverseWithEdgeTypeFilter(t *testing.T) {
 	}
 }
 
+func TestTraverseMultiLevel(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Chain: Alice -> Bob -> Carol
+	alice := &Entity{Type: "person", Name: "Alice", Source: "test"}
+	bob := &Entity{Type: "person", Name: "Bob", Source: "test"}
+	carol := &Entity{Type: "person", Name: "Carol", Source: "test"}
+	for _, e := range []*Entity{alice, bob, carol} {
+		if err := c.PutEntity(ctx, e); err != nil {
+			t.Fatalf("PutEntity(%s) error: %v", e.Name, err)
+		}
+	}
+
+	rel1 := &Relationship{SourceID: alice.ID, TargetID: bob.ID, Type: "knows", Source: "test"}
+	rel2 := &Relationship{SourceID: bob.ID, TargetID: carol.ID, Type: "knows", Source: "test"}
+	if err := c.PutRelationship(ctx, rel1); err != nil {
+		t.Fatalf("PutRelationship(alice->bob): %v", err)
+	}
+	if err := c.PutRelationship(ctx, rel2); err != nil {
+		t.Fatalf("PutRelationship(bob->carol): %v", err)
+	}
+
+	// Depth 1 should only reach Bob, not Carol.
+	g1, err := c.Traverse(ctx, alice.ID, WithDepth(1))
+	if err != nil {
+		t.Fatalf("Traverse(depth=1) error: %v", err)
+	}
+	if len(g1.Entities) != 2 {
+		t.Errorf("depth=1: expected 2 entities (Alice, Bob), got %d", len(g1.Entities))
+	}
+
+	// Depth 2 should reach Carol.
+	g2, err := c.Traverse(ctx, alice.ID, WithDepth(2))
+	if err != nil {
+		t.Fatalf("Traverse(depth=2) error: %v", err)
+	}
+	if len(g2.Entities) != 3 {
+		t.Errorf("depth=2: expected 3 entities (Alice, Bob, Carol), got %d", len(g2.Entities))
+		for _, e := range g2.Entities {
+			t.Logf("  entity: %s", e.Name)
+		}
+	}
+
+	names := make(map[string]bool)
+	for _, e := range g2.Entities {
+		names[e.Name] = true
+	}
+	if !names["Carol"] {
+		t.Error("expected Carol to be reachable at depth 2")
+	}
+}
+
+func TestTraverseCycleDetection(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Bidirectional: Alice -> Bob and Bob -> Alice as separate relationships.
+	alice := &Entity{Type: "person", Name: "Alice", Source: "test"}
+	bob := &Entity{Type: "person", Name: "Bob", Source: "test"}
+	if err := c.PutEntity(ctx, alice); err != nil {
+		t.Fatalf("PutEntity(Alice): %v", err)
+	}
+	if err := c.PutEntity(ctx, bob); err != nil {
+		t.Fatalf("PutEntity(Bob): %v", err)
+	}
+
+	rel1 := &Relationship{SourceID: alice.ID, TargetID: bob.ID, Type: "knows", Source: "test"}
+	rel2 := &Relationship{SourceID: bob.ID, TargetID: alice.ID, Type: "knows", Source: "test"}
+	if err := c.PutRelationship(ctx, rel1); err != nil {
+		t.Fatalf("PutRelationship(alice->bob): %v", err)
+	}
+	if err := c.PutRelationship(ctx, rel2); err != nil {
+		t.Fatalf("PutRelationship(bob->alice): %v", err)
+	}
+
+	// Depth 3: cycle must not cause duplicates or infinite loops.
+	graph, err := c.Traverse(ctx, alice.ID, WithDepth(3))
+	if err != nil {
+		t.Fatalf("Traverse() error: %v", err)
+	}
+
+	// Only Alice and Bob should appear, each exactly once.
+	if len(graph.Entities) != 2 {
+		t.Errorf("expected 2 unique entities (no duplicates from cycle), got %d", len(graph.Entities))
+		for _, e := range graph.Entities {
+			t.Logf("  entity: %s", e.Name)
+		}
+	}
+}
+
+func TestTraverseNonexistentEntity(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	_, err := c.Traverse(ctx, "nonexistent-id")
+	if err == nil {
+		t.Fatal("expected error for nonexistent entity, got nil")
+	}
+}
+
 func TestTraverseDepthZero(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

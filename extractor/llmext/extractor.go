@@ -10,7 +10,7 @@ import (
 const extractionPrompt = `Analyze the following text and extract structured knowledge.
 Return a JSON object with the following fields:
 - "entities": array of objects with "name", "type", and optional "attributes" (key-value pairs)
-- "relationships": array of objects with "source_id", "target_id", "type", and optional "attributes"
+- "relationships": array of objects with "source" (entity name), "target" (entity name), "type", and optional "attributes"
 - "memories": array of objects with "content" (a concise factual statement) and optional "entity_ids"
 
 Extract all people, organizations, places, concepts, and other notable entities.

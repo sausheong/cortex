@@ -72,6 +72,88 @@ func TestSearchKeyword(t *testing.T) {
 	}
 }
 
+func TestPutChunkWithoutEntity(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	ch := &Chunk{Content: "standalone chunk without any entity link"}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatalf("PutChunk() error: %v", err)
+	}
+	if ch.ID == "" {
+		t.Fatal("expected chunk ID to be set")
+	}
+
+	results, err := c.SearchKeyword(ctx, "standalone", 5)
+	if err != nil {
+		t.Fatalf("SearchKeyword() error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].EntityID != "" {
+		t.Errorf("expected empty EntityID for orphan chunk, got %q", results[0].EntityID)
+	}
+}
+
+func TestPutChunkMetadataRoundtrip(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	ch := &Chunk{
+		Content: "chunk with rich metadata attached",
+		Metadata: map[string]any{
+			"page":   3,
+			"source": "manual.pdf",
+		},
+	}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatalf("PutChunk() error: %v", err)
+	}
+
+	results, err := c.SearchKeyword(ctx, "rich metadata", 5)
+	if err != nil {
+		t.Fatalf("SearchKeyword() error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	got := results[0]
+	if got.Metadata["page"].(float64) != 3 {
+		t.Errorf("Metadata[page] = %v, want 3", got.Metadata["page"])
+	}
+	if got.Metadata["source"] != "manual.pdf" {
+		t.Errorf("Metadata[source] = %q, want %q", got.Metadata["source"], "manual.pdf")
+	}
+}
+
+func TestSearchKeywordLimit(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	contents := []string{
+		"golang programming tip alpha concurrency",
+		"golang programming tip beta channels",
+		"golang programming tip gamma goroutines",
+		"golang programming tip delta interfaces",
+		"golang programming tip epsilon contexts",
+	}
+	for _, content := range contents {
+		if err := c.PutChunk(ctx, &Chunk{Content: content}); err != nil {
+			t.Fatalf("PutChunk: %v", err)
+		}
+	}
+
+	results, err := c.SearchKeyword(ctx, "golang", 3)
+	if err != nil {
+		t.Fatalf("SearchKeyword() error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected exactly 3 results (limit), got %d", len(results))
+	}
+}
+
 func TestSearchKeywordNoResults(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

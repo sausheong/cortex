@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -242,6 +243,97 @@ func TestForgetRequiresFilter(t *testing.T) {
 	err := c.Forget(ctx, Filter{})
 	if err == nil {
 		t.Fatal("expected error when no filter provided")
+	}
+}
+
+func TestRememberWithEmbedder(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetEmbedder(&testEmbedder{})
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Memories: []Memory{{Content: "Alice works at Stripe"}},
+			}, nil
+		},
+	})
+
+	if err := c.Remember(ctx, "Alice works at Stripe as an engineer"); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	// Chunk embedding should be stored — vector search must return it.
+	chunks, err := c.SearchVector(ctx, "Alice Stripe engineer", 5)
+	if err != nil {
+		t.Fatalf("SearchVector: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Error("expected at least one chunk from vector search after Remember with embedder")
+	}
+}
+
+func TestRememberWithMaxChunkSize(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetExtractor(&mockExtractor{})
+
+	// Three paragraphs of ~90 chars each; at maxChunkChars=100 each becomes its own chunk.
+	// Each paragraph starts with a searchable keyword followed by filler characters.
+	para := "programming " + strings.Repeat("x", 78) // 90 chars
+	content := para + "\n\n" + para + "\n\n" + para
+
+	if err := c.Remember(ctx, content, WithMaxChunkChars(100)); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	results, err := c.SearchKeyword(ctx, "programming", 10)
+	if err != nil {
+		t.Fatalf("SearchKeyword: %v", err)
+	}
+	if len(results) < 2 {
+		t.Errorf("expected multiple chunks from long split content, got %d", len(results))
+	}
+}
+
+func TestRememberUnresolvableRelationshipSkipped(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Extractor returns a relationship where the target name ("Bob") is not
+	// in the extracted entities list, so it cannot be resolved to an ID.
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Entities: []Entity{
+					{Type: "person", Name: "Alice"},
+				},
+				Relationships: []Relationship{
+					{SourceID: "Alice", TargetID: "Bob", Type: "knows"},
+				},
+			}, nil
+		},
+	})
+
+	if err := c.Remember(ctx, "Alice knows Bob from work"); err != nil {
+		t.Fatalf("Remember should succeed even with unresolvable relationship: %v", err)
+	}
+
+	// Alice should be stored.
+	people, err := c.FindEntities(ctx, EntityFilter{Type: "person"})
+	if err != nil {
+		t.Fatalf("FindEntities: %v", err)
+	}
+	if len(people) != 1 || people[0].Name != "Alice" {
+		t.Errorf("expected Alice to be stored, got %v", people)
+	}
+
+	// No relationship stored (Bob was unresolvable).
+	rels, err := c.GetRelationships(ctx, people[0].ID)
+	if err != nil {
+		t.Fatalf("GetRelationships: %v", err)
+	}
+	if len(rels) != 0 {
+		t.Errorf("expected 0 relationships (unresolvable skipped), got %d", len(rels))
 	}
 }
 

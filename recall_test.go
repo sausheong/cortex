@@ -106,6 +106,103 @@ func TestRecallFallbackWithoutLLM(t *testing.T) {
 	}
 }
 
+func TestRecallWithLimit(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Seed 5 memories all matching "go programming".
+	names := []string{"tip-alpha", "tip-beta", "tip-gamma", "tip-delta", "tip-epsilon"}
+	contents := []string{
+		"go programming tip: use goroutines for concurrency",
+		"go programming tip: use channels for communication",
+		"go programming tip: use defer for cleanup",
+		"go programming tip: use interfaces for abstraction",
+		"go programming tip: use context for cancellation",
+	}
+	for i, name := range names {
+		e := &Entity{Type: "note", Name: name, Source: "test"}
+		if err := c.PutEntity(ctx, e); err != nil {
+			t.Fatalf("PutEntity(%s): %v", name, err)
+		}
+		mem := &Memory{Content: contents[i], EntityIDs: []string{e.ID}, Source: "test"}
+		if err := c.PutMemory(ctx, mem); err != nil {
+			t.Fatalf("PutMemory(%s): %v", name, err)
+		}
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "go programming", WithLimit(2))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) > 2 {
+		t.Errorf("expected at most 2 results (limit=2), got %d", len(results))
+	}
+	if len(results) == 0 {
+		t.Error("expected at least 1 result, got 0")
+	}
+}
+
+func TestRecallVectorSearch(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetEmbedder(&testEmbedder{})
+
+	// Store two chunks and their embeddings.
+	ch1 := &Chunk{Content: "Go concurrency with goroutines and channels"}
+	ch2 := &Chunk{Content: "Python data science with pandas and numpy"}
+	if err := c.PutChunk(ctx, ch1); err != nil {
+		t.Fatalf("PutChunk(1): %v", err)
+	}
+	if err := c.PutChunk(ctx, ch2); err != nil {
+		t.Fatalf("PutChunk(2): %v", err)
+	}
+
+	vecs, err := c.cfg.embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if err := c.putEmbedding(ctx, ch1.ID, "chunk", vecs[0]); err != nil {
+		t.Fatalf("putEmbedding(1): %v", err)
+	}
+	if err := c.putEmbedding(ctx, ch2.ID, "chunk", vecs[1]); err != nil {
+		t.Fatalf("putEmbedding(2): %v", err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "vector_search", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Go goroutines concurrency", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected vector search results, got 0")
+	}
+
+	foundChunk := false
+	for _, r := range results {
+		if r.Type == "chunk" {
+			foundChunk = true
+		}
+	}
+	if !foundChunk {
+		t.Errorf("expected chunk results from vector search, got types: %v", resultTypes(results))
+	}
+}
+
 func TestRecallWithGraphTraverse(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

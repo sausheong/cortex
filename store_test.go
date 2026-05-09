@@ -72,6 +72,65 @@ func TestOpenExistingDatabase(t *testing.T) {
 	defer c2.Close()
 }
 
+func TestSyncStateMultipleConnectors(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	c, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer c.Close()
+
+	ctx := context.Background()
+
+	if err := c.SetSyncState(ctx, "connector-a", "state-A"); err != nil {
+		t.Fatalf("SetSyncState(a): %v", err)
+	}
+	if err := c.SetSyncState(ctx, "connector-b", "state-B"); err != nil {
+		t.Fatalf("SetSyncState(b): %v", err)
+	}
+
+	stateA, err := c.GetSyncState(ctx, "connector-a")
+	if err != nil {
+		t.Fatalf("GetSyncState(a): %v", err)
+	}
+	if stateA != "state-A" {
+		t.Errorf("connector-a: got %q, want %q", stateA, "state-A")
+	}
+
+	stateB, err := c.GetSyncState(ctx, "connector-b")
+	if err != nil {
+		t.Fatalf("GetSyncState(b): %v", err)
+	}
+	if stateB != "state-B" {
+		t.Errorf("connector-b: got %q, want %q", stateB, "state-B")
+	}
+
+	// Update A without affecting B.
+	if err := c.SetSyncState(ctx, "connector-a", "state-A2"); err != nil {
+		t.Fatalf("SetSyncState(a update): %v", err)
+	}
+	stateB2, _ := c.GetSyncState(ctx, "connector-b")
+	if stateB2 != "state-B" {
+		t.Errorf("connector-b changed unexpectedly: got %q", stateB2)
+	}
+}
+
+func TestOpenNestedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "deep", "nested", "dir", "test.db")
+
+	c, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() nested directory error: %v", err)
+	}
+	defer c.Close()
+
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Fatal("expected database file to be created in nested directory")
+	}
+}
+
 func TestSyncState(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

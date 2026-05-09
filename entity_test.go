@@ -151,6 +151,86 @@ func TestFindEntitiesByType(t *testing.T) {
 	}
 }
 
+func TestFindEntitiesBySource(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	entities := []*Entity{
+		{Type: "person", Name: "Alice", Source: "source-a"},
+		{Type: "person", Name: "Bob", Source: "source-b"},
+		{Type: "person", Name: "Carol", Source: "source-a"},
+	}
+	for _, e := range entities {
+		if err := c.PutEntity(ctx, e); err != nil {
+			t.Fatalf("PutEntity(%s) error: %v", e.Name, err)
+		}
+	}
+
+	results, err := c.FindEntities(ctx, EntityFilter{Source: "source-a"})
+	if err != nil {
+		t.Fatalf("FindEntities(source-a) error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Source != "source-a" {
+			t.Errorf("expected source-a, got %q", r.Source)
+		}
+	}
+}
+
+func TestFindEntitiesNoFilter(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"Alice", "Bob", "Carol"} {
+		e := &Entity{Type: "person", Name: name, Source: "test"}
+		if err := c.PutEntity(ctx, e); err != nil {
+			t.Fatalf("PutEntity(%s) error: %v", name, err)
+		}
+	}
+
+	results, err := c.FindEntities(ctx, EntityFilter{})
+	if err != nil {
+		t.Fatalf("FindEntities(empty filter) error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results from empty filter, got %d", len(results))
+	}
+}
+
+func TestFindEntitiesCombinedFilters(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	entities := []*Entity{
+		{Type: "person", Name: "Alice Johnson", Source: "test"},
+		{Type: "person", Name: "Alice Smith", Source: "test"},
+		{Type: "organization", Name: "Alice Corp", Source: "test"},
+		{Type: "person", Name: "Bob Brown", Source: "test"},
+	}
+	for _, e := range entities {
+		if err := c.PutEntity(ctx, e); err != nil {
+			t.Fatalf("PutEntity(%s) error: %v", e.Name, err)
+		}
+	}
+
+	// Type=person AND name like Alice — should exclude Alice Corp (organization) and Bob.
+	results, err := c.FindEntities(ctx, EntityFilter{Type: "person", NameLike: "%Alice%"})
+	if err != nil {
+		t.Fatalf("FindEntities() error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 person entities named Alice*, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Type != "person" {
+			t.Errorf("expected type person, got %q", r.Type)
+		}
+	}
+}
+
 func TestFindEntitiesByNameLike(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

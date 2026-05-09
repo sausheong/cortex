@@ -67,6 +67,49 @@ func TestEncodeDecodeFloat32s(t *testing.T) {
 	}
 }
 
+func TestCosineSimilarityMismatchedLength(t *testing.T) {
+	a := []float32{1, 2, 3}
+	b := []float32{1, 2}
+	sim := cosineSimilarity(a, b)
+	if sim != 0.0 {
+		t.Errorf("mismatched length: got %f, want 0.0", sim)
+	}
+}
+
+func TestRRFMergeEmptyInput(t *testing.T) {
+	merged := rrfMerge(nil, 60)
+	if len(merged) != 0 {
+		t.Errorf("expected empty result from nil input, got %d items", len(merged))
+	}
+	merged = rrfMerge([][]rankedItem{}, 60)
+	if len(merged) != 0 {
+		t.Errorf("expected empty result from empty input, got %d items", len(merged))
+	}
+}
+
+func TestRRFMergeSingleList(t *testing.T) {
+	list := []rankedItem{
+		{id: "X", rank: 0},
+		{id: "Y", rank: 1},
+		{id: "Z", rank: 2},
+	}
+	merged := rrfMerge([][]rankedItem{list}, 60)
+	if len(merged) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(merged))
+	}
+	// X should be first: 1/(60+0+1) = 1/61
+	if merged[0].id != "X" {
+		t.Errorf("expected X first (highest rank), got %q", merged[0].id)
+	}
+	// Scores should be strictly decreasing.
+	for i := 1; i < len(merged); i++ {
+		if merged[i].score >= merged[i-1].score {
+			t.Errorf("scores not decreasing: [%d]=%f >= [%d]=%f",
+				i, merged[i].score, i-1, merged[i-1].score)
+		}
+	}
+}
+
 func TestRRFMerge(t *testing.T) {
 	// List 1: A is rank 0, B is rank 1
 	// List 2: B is rank 0, C is rank 1

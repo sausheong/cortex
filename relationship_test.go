@@ -98,6 +98,69 @@ func TestGetRelationshipsFilterByType(t *testing.T) {
 	}
 }
 
+func TestGetRelationshipsNoRelationships(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Alice", Source: "test"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatalf("PutEntity() error: %v", err)
+	}
+
+	rels, err := c.GetRelationships(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("GetRelationships() error: %v", err)
+	}
+	if len(rels) != 0 {
+		t.Errorf("expected 0 relationships for isolated entity, got %d", len(rels))
+	}
+}
+
+func TestGetRelationshipsAttributesRoundtrip(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	alice := &Entity{Type: "person", Name: "Alice", Source: "test"}
+	bob := &Entity{Type: "person", Name: "Bob", Source: "test"}
+	if err := c.PutEntity(ctx, alice); err != nil {
+		t.Fatalf("PutEntity(Alice): %v", err)
+	}
+	if err := c.PutEntity(ctx, bob); err != nil {
+		t.Fatalf("PutEntity(Bob): %v", err)
+	}
+
+	rel := &Relationship{
+		SourceID: alice.ID,
+		TargetID: bob.ID,
+		Type:     "collaborates_with",
+		Attributes: map[string]any{
+			"since":    2022,
+			"projects": []any{"alpha", "beta"},
+		},
+		Source: "test",
+	}
+	if err := c.PutRelationship(ctx, rel); err != nil {
+		t.Fatalf("PutRelationship(): %v", err)
+	}
+
+	rels, err := c.GetRelationships(ctx, alice.ID)
+	if err != nil {
+		t.Fatalf("GetRelationships(): %v", err)
+	}
+	if len(rels) != 1 {
+		t.Fatalf("expected 1 relationship, got %d", len(rels))
+	}
+
+	got := rels[0]
+	if got.Attributes["since"].(float64) != 2022 {
+		t.Errorf("Attributes[since] = %v, want 2022", got.Attributes["since"])
+	}
+	projects, ok := got.Attributes["projects"].([]any)
+	if !ok || len(projects) != 2 {
+		t.Errorf("Attributes[projects] = %v, expected 2 elements", got.Attributes["projects"])
+	}
+}
+
 func TestGetRelationshipsFromEitherDirection(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
