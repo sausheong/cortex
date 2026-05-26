@@ -80,7 +80,8 @@ Global options:
 Commands:
   init                           Create a new brain.db
   remember <text>                Remember text
-  recall <query>                 Recall and print results
+  recall <query> [--min-confidence <0-1>]
+                                 Recall and print results
   sync <dir>                     Sync text files from a directory (.md, .csv, .yaml, .json, .txt, etc.)
   entity list [--type <type>]    List entities
   entity get <id>                Show entity details + relationships
@@ -252,17 +253,47 @@ func cmdRemember() {
 }
 
 func cmdRecall() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: cortex recall <query>")
+	args := os.Args[2:]
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: cortex recall <query> [--min-confidence <0-1>]")
 		os.Exit(1)
 	}
 
-	query := strings.Join(os.Args[2:], " ")
+	var minConf float64
+	var queryParts []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--min-confidence":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --min-confidence requires a value")
+				os.Exit(1)
+			}
+			v, err := strconv.ParseFloat(args[i+1], 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: invalid --min-confidence: %v\n", err)
+				os.Exit(1)
+			}
+			minConf = v
+			i++
+		default:
+			queryParts = append(queryParts, args[i])
+		}
+	}
+	if len(queryParts) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: cortex recall <query> [--min-confidence <0-1>]")
+		os.Exit(1)
+	}
+	query := strings.Join(queryParts, " ")
+
 	cx := openCortex()
 	defer cx.Close()
 
 	ctx := context.Background()
-	results, err := cx.Recall(ctx, query)
+	var opts []cortex.RecallOption
+	if minConf > 0 {
+		opts = append(opts, cortex.WithMinConfidence(minConf))
+	}
+	results, err := cx.Recall(ctx, query, opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -274,7 +305,8 @@ func cmdRecall() {
 	}
 
 	for i, r := range results {
-		fmt.Printf("[%d] (%s, score=%.4f) %s\n", i+1, r.Type, r.Score, r.Content)
+		fmt.Printf("[%d] (%s, score=%.4f, conf=%d%%) %s\n",
+			i+1, r.Type, r.Score, int(r.Confidence*100), r.Content)
 		if r.Source != "" {
 			fmt.Printf("    source: %s\n", r.Source)
 		}
@@ -368,10 +400,11 @@ func cmdEntityGet() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("ID:      %s\n", entity.ID)
-	fmt.Printf("Name:    %s\n", entity.Name)
-	fmt.Printf("Type:    %s\n", entity.Type)
-	fmt.Printf("Source:  %s\n", entity.Source)
+	fmt.Printf("ID:         %s\n", entity.ID)
+	fmt.Printf("Name:       %s\n", entity.Name)
+	fmt.Printf("Type:       %s\n", entity.Type)
+	fmt.Printf("Source:     %s\n", entity.Source)
+	fmt.Printf("Confidence: %.0f%%\n", entity.Confidence*100)
 	if len(entity.Attributes) > 0 {
 		fmt.Println("Attributes:")
 		for k, v := range entity.Attributes {
