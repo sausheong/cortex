@@ -188,7 +188,36 @@ Commands:
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
   config --email <email>         Add an email address
+  export [--vault <dir>] [--full] [--dry-run]
+                                 Export the knowledge graph as an Obsidian-compatible markdown vault
+  init-schema [<dir>] [--force]  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
 ```
+
+### `cortex export`
+
+Project the knowledge graph as an Obsidian-compatible markdown vault.
+
+```bash
+cortex export [--vault <dir>] [--full] [--dry-run]
+```
+
+- `--vault <dir>` — output directory (default: `./vault`).
+- `--full` — rewrite every page regardless of whether content has changed.
+- `--dry-run` — compute what would change and report stats; write nothing.
+
+The vault is laid out as `vault/people/`, `vault/organizations/`, `vault/concepts/`, etc., with one markdown page per entity. An `index.md` catalog and a chronological `log.md` live at the vault root. A hidden `.cortex-export.json` manifest tracks content hashes so subsequent runs only rewrite pages whose content has actually changed. Entities deleted from the graph are moved to `vault/_archive/<timestamp>/`.
+
+Each page carries YAML frontmatter (including the entity's full `cortex_id`) and renders memories, outbound relationships, backlinks, and source attribution. Wikilinks use explicit paths (`[[people/alice-chen|Alice Chen]]`), so the vault is browsable in Obsidian, in a plain editor, or via `grep`.
+
+### `cortex init-schema`
+
+Write a generic agent contract (`CORTEX.md`) into a project directory.
+
+```bash
+cortex init-schema [<dir>] [--force]
+```
+
+The template explains to any LLM-based agent how to use cortex as the knowledge layer for the project: when to `recall`, when to `remember`, what not to store, and how the vault fits in. Refuses to overwrite an existing `CORTEX.md` unless `--force` is passed. After running, edit the file to add project-specific conventions.
 
 ---
 
