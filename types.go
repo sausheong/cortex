@@ -139,8 +139,9 @@ func WithMaxChunkChars(n int) RememberOption {
 
 type RecallOption func(*recallConfig)
 type recallConfig struct {
-	limit  int
-	source string
+	limit         int
+	source        string
+	minConfidence float64
 }
 
 func WithLimit(n int) RecallOption {
@@ -149,6 +150,13 @@ func WithLimit(n int) RecallOption {
 
 func WithSourceFilter(source string) RecallOption {
 	return func(c *recallConfig) { c.source = source }
+}
+
+// WithMinConfidence filters out recall results below the given threshold.
+// Default 0.0 (no filtering). Applied as a hard >= threshold after RRF
+// merge, before the limit cap.
+func WithMinConfidence(c float64) RecallOption {
+	return func(cfg *recallConfig) { cfg.minConfidence = c }
 }
 
 type RelFilter func(*relFilterConfig)
