@@ -46,6 +46,7 @@ Remember when:
 - A decision is made (architectural, product, personnel).
 - An event happens (a meeting, a launch, a milestone).
 - The user corrects a prior belief — first `forget`, then `remember` the new fact.
+- When you're not certain about a fact, let the extractor mark it low-confidence rather than dropping it. Better to record a hesitation than to lose it.
 
 Use the user's own words when possible. The extraction pipeline will pull out entities and relationships.
 
@@ -60,6 +61,20 @@ Cortex is for knowledge that compounds, not for ephemeral state. Do **not** stor
 - In-progress task state, current conversation context, "I'm about to do X" notes — these don't survive a session and shouldn't try.
 
 If you're tempted to remember something but it fails these tests, don't.
+
+## Confidence
+
+Every extracted entity, relationship, and memory carries a confidence score (0.0–1.0). The LLM extractor sets it: 1.0 for things directly stated, lower for things inferred, paraphrased, or speculative.
+
+Use it when deciding whether to assert a fact: confidence below ~0.5 usually means "the user said something like this but you might be misreading it." Cite the memory's source if you act on it. If a recall returns mostly low-confidence results, that's a signal to ask the user a clarifying question rather than guessing.
+
+You can filter recalls to high-confidence only:
+
+```
+cortex recall "..." --min-confidence 0.7
+```
+
+But the default (no filter) is right for most cases — uncertain knowledge is still knowledge.
 
 ## The vault
 

@@ -192,6 +192,18 @@ func handleRecall(w http.ResponseWriter, r *http.Request) {
 		}
 		opts = append(opts, cortex.WithLimit(limit))
 	}
+	if minConfStr := r.URL.Query().Get("min_confidence"); minConfStr != "" {
+		minConf, err := strconv.ParseFloat(minConfStr, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid min_confidence: "+err.Error())
+			return
+		}
+		if minConf < 0 || minConf > 1 {
+			writeError(w, http.StatusBadRequest, "min_confidence must be between 0 and 1")
+			return
+		}
+		opts = append(opts, cortex.WithMinConfidence(minConf))
+	}
 
 	ctx := r.Context()
 	results, err := cx.Recall(ctx, query, opts...)

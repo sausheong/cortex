@@ -193,6 +193,16 @@ Commands:
   init-schema [<dir>] [--force]  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
 ```
 
+### `cortex recall`
+
+Recall results now carry a `confidence` score (0–1). The LLM extractor sets the value at ingest time — 1.0 for facts directly stated in the source, lower for inferences or speculation. Filter to high-confidence-only with `--min-confidence`:
+
+```bash
+cortex recall "did alice join stripe" --min-confidence 0.7
+```
+
+Default behavior is unchanged: all results surface, ranked by Reciprocal Rank Fusion, with confidence reported but not used for ranking.
+
 ### `cortex export`
 
 Project the knowledge graph as an Obsidian-compatible markdown vault.
@@ -706,6 +716,8 @@ When you call `Remember`, cortex runs a hybrid extraction pipeline:
 - Relationships are created between resolved entities
 - Raw text is stored as chunks and indexed for FTS5 + vector search
 - Memories are stored with entity links
+
+The LLM extractor now requests a `confidence` field on every extracted item. Existing brain.db files migrate transparently on next `Open` — old rows get `confidence=1.0`.
 
 ### Custom Extractors
 

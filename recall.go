@@ -61,6 +61,17 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		}
 	}
 
+	// Apply min-confidence filter (post-RRF, pre-limit).
+	if cfg.minConfidence > 0 {
+		filtered := final[:0]
+		for _, r := range final {
+			if r.Confidence >= cfg.minConfidence {
+				filtered = append(filtered, r)
+			}
+		}
+		final = filtered
+	}
+
 	// Apply limit.
 	if len(final) > cfg.limit {
 		final = final[:cfg.limit]
@@ -121,10 +132,11 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int) ([
 		key := "mem:" + m.ID
 		items[i] = rankedItem{id: key, rank: i}
 		results[key] = Result{
-			Type:      "memory",
-			Content:   m.Content,
-			EntityIDs: m.EntityIDs,
-			Source:    m.Source,
+			Type:       "memory",
+			Content:    m.Content,
+			Confidence: m.Confidence,
+			EntityIDs:  m.EntityIDs,
+			Source:     m.Source,
 		}
 	}
 	return items, results
@@ -141,10 +153,17 @@ func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]
 	for i, ch := range chunks {
 		key := "chunk:" + ch.ID
 		items[i] = rankedItem{id: key, rank: i}
+		conf := 1.0
+		if ch.EntityID != "" {
+			if e, err := c.GetEntity(ctx, ch.EntityID); err == nil {
+				conf = e.Confidence
+			}
+		}
 		results[key] = Result{
-			Type:     "chunk",
-			Content:  ch.Content,
-			Metadata: ch.Metadata,
+			Type:       "chunk",
+			Content:    ch.Content,
+			Confidence: conf,
+			Metadata:   ch.Metadata,
 		}
 	}
 	return items, results
@@ -165,10 +184,17 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 	for i, ch := range chunks {
 		key := "chunk:" + ch.ID
 		items[i] = rankedItem{id: key, rank: i}
+		conf := 1.0
+		if ch.EntityID != "" {
+			if e, err := c.GetEntity(ctx, ch.EntityID); err == nil {
+				conf = e.Confidence
+			}
+		}
 		results[key] = Result{
-			Type:     "chunk",
-			Content:  ch.Content,
-			Metadata: ch.Metadata,
+			Type:       "chunk",
+			Content:    ch.Content,
+			Confidence: conf,
+			Metadata:   ch.Metadata,
 		}
 	}
 	return items, results
@@ -207,10 +233,11 @@ func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]ra
 		}
 
 		results[key] = Result{
-			Type:      "entity",
-			Content:   content,
-			EntityIDs: []string{e.ID},
-			Source:    e.Source,
+			Type:       "entity",
+			Content:    content,
+			Confidence: e.Confidence,
+			EntityIDs:  []string{e.ID},
+			Source:     e.Source,
 		}
 	}
 	return items, results

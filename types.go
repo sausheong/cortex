@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"math"
 	"time"
 )
 
@@ -11,6 +12,7 @@ type Entity struct {
 	Name       string         `json:"name"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 	Source     string         `json:"source,omitempty"`
+	Confidence float64        `json:"confidence"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
@@ -22,6 +24,7 @@ type Relationship struct {
 	Type       string         `json:"type"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 	Source     string         `json:"source,omitempty"`
+	Confidence float64        `json:"confidence"`
 	CreatedAt  time.Time      `json:"created_at"`
 }
 
@@ -34,21 +37,23 @@ type Chunk struct {
 }
 
 type Memory struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"content"`
-	EntityIDs []string  `json:"entity_ids,omitempty"`
-	Source    string    `json:"source,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Content    string    `json:"content"`
+	EntityIDs  []string  `json:"entity_ids,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	Confidence float64   `json:"confidence"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Result struct {
-	Type      string         `json:"type"`
-	Content   string         `json:"content"`
-	Score     float64        `json:"score"`
-	EntityIDs []string       `json:"entity_ids,omitempty"`
-	Source    string         `json:"source,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	Type       string         `json:"type"`
+	Content    string         `json:"content"`
+	Score      float64        `json:"score"`
+	Confidence float64        `json:"confidence"`
+	EntityIDs  []string       `json:"entity_ids,omitempty"`
+	Source     string         `json:"source,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 type Filter struct {
@@ -135,8 +140,9 @@ func WithMaxChunkChars(n int) RememberOption {
 
 type RecallOption func(*recallConfig)
 type recallConfig struct {
-	limit  int
-	source string
+	limit         int
+	source        string
+	minConfidence float64
 }
 
 func WithLimit(n int) RecallOption {
@@ -145,6 +151,13 @@ func WithLimit(n int) RecallOption {
 
 func WithSourceFilter(source string) RecallOption {
 	return func(c *recallConfig) { c.source = source }
+}
+
+// WithMinConfidence filters out recall results below the given threshold.
+// Default 0.0 (no filtering). Applied as a hard >= threshold after RRF
+// merge, before the limit cap.
+func WithMinConfidence(c float64) RecallOption {
+	return func(cfg *recallConfig) { cfg.minConfidence = c }
 }
 
 type RelFilter func(*relFilterConfig)
@@ -180,4 +193,25 @@ func WithEmbedder(e Embedder) Option {
 
 func WithExtractor(e Extractor) Option {
 	return func(c *config) { c.extractor = e }
+}
+
+// coerceConfidence enforces the [0, 1] invariant for confidence values.
+// Zero (the Go zero value, indistinguishable from "unset") is coerced to
+// 1.0 — this is what preserves backward compatibility: callers that did
+// not specify confidence (deterministic extractor, manual API use, legacy
+// tests) get the pre-feature behavior of "treat all data as fully
+// confident." Out-of-range values are clamped silently rather than
+// errored: failing an entire ingest because of one bad number from an LLM
+// is worse UX than clamping and continuing.
+func coerceConfidence(c float64) float64 {
+	if math.IsNaN(c) || c == 0 {
+		return 1.0
+	}
+	if c < 0 {
+		return 0
+	}
+	if c > 1 {
+		return 1
+	}
+	return c
 }

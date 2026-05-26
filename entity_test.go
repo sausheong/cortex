@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -256,6 +257,60 @@ func TestFindEntitiesByNameLike(t *testing.T) {
 	for _, r := range results {
 		if r.Name != "Alice Johnson" && r.Name != "Alice Smith" {
 			t.Errorf("unexpected name %q", r.Name)
+		}
+	}
+}
+
+func TestPutEntity_ConfidenceDefaultsToOne(t *testing.T) {
+	cx := openTestDB(t)
+	e := &Entity{Type: "person", Name: "NoConfidenceSet"}
+	if err := cx.PutEntity(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cx.GetEntity(context.Background(), e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Confidence != 1.0 {
+		t.Errorf("Confidence = %v, want 1.0 (zero coerces to 1)", got.Confidence)
+	}
+}
+
+func TestPutEntity_ConfidenceRoundTrip(t *testing.T) {
+	cx := openTestDB(t)
+	e := &Entity{Type: "person", Name: "PartialConfidence", Confidence: 0.42}
+	if err := cx.PutEntity(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cx.GetEntity(context.Background(), e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Confidence != 0.42 {
+		t.Errorf("Confidence = %v, want 0.42", got.Confidence)
+	}
+}
+
+func TestPutEntity_ConfidenceClamped(t *testing.T) {
+	cx := openTestDB(t)
+	tests := []struct {
+		in, want float64
+	}{
+		{1.5, 1.0},
+		{-0.1, 0.0},
+		{2.0, 1.0},
+	}
+	for _, tt := range tests {
+		e := &Entity{Type: "person", Name: fmt.Sprintf("Clamp-%v", tt.in), Confidence: tt.in}
+		if err := cx.PutEntity(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
+		got, err := cx.GetEntity(context.Background(), e.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Confidence != tt.want {
+			t.Errorf("input %v: Confidence = %v, want %v", tt.in, got.Confidence, tt.want)
 		}
 	}
 }

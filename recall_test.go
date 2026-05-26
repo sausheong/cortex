@@ -288,3 +288,80 @@ func (m *mockLLM) Summarize(ctx context.Context, texts []string) (string, error)
 	}
 	return "", nil
 }
+
+func TestRecall_ResultIncludesConfidence(t *testing.T) {
+	cx := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Alice Recall", Confidence: 0.6}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	m := &Memory{Content: "alice recall test memory", EntityIDs: []string{e.ID}, Confidence: 0.4}
+	if err := cx.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := cx.Recall(ctx, "alice recall")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no results")
+	}
+	// At least one result should have non-default confidence (0.4 or 0.6).
+	found := false
+	for _, r := range results {
+		if r.Confidence == 0.4 || r.Confidence == 0.6 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("no result with expected confidence values; got %+v", results)
+	}
+}
+
+func TestRecall_WithMinConfidence_FiltersBelow(t *testing.T) {
+	cx := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "FilterAlice"}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	low := &Memory{Content: "filteralice rumor", EntityIDs: []string{e.ID}, Confidence: 0.2}
+	high := &Memory{Content: "filteralice fact", EntityIDs: []string{e.ID}, Confidence: 0.9}
+	if err := cx.PutMemory(ctx, low); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutMemory(ctx, high); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without filter: both should appear.
+	all, err := cx.Recall(ctx, "filteralice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasLow := false
+	for _, r := range all {
+		if r.Confidence == 0.2 {
+			hasLow = true
+		}
+	}
+	if !hasLow {
+		t.Error("expected low-confidence result without filter")
+	}
+
+	// With filter at 0.5: only high should appear.
+	filtered, err := cx.Recall(ctx, "filteralice", WithMinConfidence(0.5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range filtered {
+		if r.Confidence < 0.5 {
+			t.Errorf("WithMinConfidence(0.5) returned r.Confidence=%v", r.Confidence)
+		}
+	}
+}

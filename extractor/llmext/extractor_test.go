@@ -61,6 +61,43 @@ func TestLLMExtractor(t *testing.T) {
 	}
 }
 
+func TestLLMExtractor_PreservesConfidence(t *testing.T) {
+	// The Extractor is a thin passthrough — confidence values returned by
+	// the LLM must survive unchanged into the returned Extraction.
+	mock := &mockLLM{
+		result: cortex.ExtractionResult{
+			Raw: `{}`,
+			Parsed: &cortex.Extraction{
+				Entities: []cortex.Entity{
+					{Name: "Alice", Type: "person", Confidence: 0.7},
+				},
+				Relationships: []cortex.Relationship{
+					{SourceID: "Alice", TargetID: "Stripe", Type: "works_at", Confidence: 0.5},
+				},
+				Memories: []cortex.Memory{
+					{Content: "Alice works at Stripe", Confidence: 0.3},
+				},
+			},
+		},
+	}
+
+	ext := New(mock)
+	result, err := ext.Extract(context.Background(), "irrelevant", "text/plain")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Entities[0].Confidence != 0.7 {
+		t.Errorf("entity confidence = %v, want 0.7", result.Entities[0].Confidence)
+	}
+	if result.Relationships[0].Confidence != 0.5 {
+		t.Errorf("relationship confidence = %v, want 0.5", result.Relationships[0].Confidence)
+	}
+	if result.Memories[0].Confidence != 0.3 {
+		t.Errorf("memory confidence = %v, want 0.3", result.Memories[0].Confidence)
+	}
+}
+
 func TestLLMExtractorNilParsed(t *testing.T) {
 	mock := &mockLLM{
 		result: cortex.ExtractionResult{

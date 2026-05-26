@@ -2,6 +2,7 @@ package vault
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +51,9 @@ func renderEntity(
 			fmt.Fprintf(&b, "  %s: %s\n", k, yamlString(fmt.Sprint(e.Attributes[k])))
 		}
 	}
+	if e.Confidence != 0 && e.Confidence != 1.0 {
+		fmt.Fprintf(&b, "confidence: %g\n", e.Confidence)
+	}
 	fmt.Fprintf(&b, "exported_at: %s\n", exportedAt.UTC().Format(time.RFC3339))
 	b.WriteString("---\n\n")
 
@@ -60,10 +64,14 @@ func renderEntity(
 	if len(memories) > 0 {
 		b.WriteString("\n## Memories\n\n")
 		for _, m := range memories {
+			var confSuffix string
+			if m.Confidence > 0 && m.Confidence < 1.0 {
+				confSuffix = fmt.Sprintf(" (conf %d%%)", int(math.Round(m.Confidence*100)))
+			}
 			if m.Source != "" {
-				fmt.Fprintf(&b, "- %s — `%s`\n", m.Content, m.Source)
+				fmt.Fprintf(&b, "- %s%s — `%s`\n", m.Content, confSuffix, m.Source)
 			} else {
-				fmt.Fprintf(&b, "- %s\n", m.Content)
+				fmt.Fprintf(&b, "- %s%s\n", m.Content, confSuffix)
 			}
 		}
 	}

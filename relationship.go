@@ -11,6 +11,7 @@ import (
 // PutRelationship inserts a new relationship with a generated ULID.
 // Attributes are stored as JSON TEXT.
 func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
+	r.Confidence = coerceConfidence(r.Confidence)
 	r.ID = newID()
 	r.CreatedAt = time.Now().UTC()
 
@@ -20,9 +21,9 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 	}
 
 	_, err = c.db.ExecContext(ctx,
-		`INSERT INTO relationships (id, source_id, target_id, type, attributes, source, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.CreatedAt,
+		`INSERT INTO relationships (id, source_id, target_id, type, attributes, source, confidence, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, r.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert relationship: %w", err)
@@ -39,7 +40,7 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 		f(cfg)
 	}
 
-	query := `SELECT id, source_id, target_id, type, attributes, source, created_at
+	query := `SELECT id, source_id, target_id, type, attributes, source, confidence, created_at
 		FROM relationships
 		WHERE (source_id = ? OR target_id = ?)`
 	args := []any{entityID, entityID}
@@ -59,7 +60,7 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 	for rows.Next() {
 		var r Relationship
 		var attrsJSON sql.NullString
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.Confidence, &r.CreatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan relationship: %w", err)
 		}
 		if attrsJSON.Valid && attrsJSON.String != "" {
