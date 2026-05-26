@@ -690,3 +690,32 @@ func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
 	}
 }
 
+
+// --- Dry-run ---
+
+func TestMergeEntitiesDryRun_NoChanges(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop := &Entity{Type: "person", Name: "D"}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cx.PutRelationship(ctx, &Relationship{SourceID: drop.ID, TargetID: keep.ID, Type: "knows"}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := cx.MergeEntitiesDryRun(ctx, keep.ID, drop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Relationships == 0 {
+		t.Error("dry-run should report what would change")
+	}
+	// drop entity is STILL present.
+	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
+		t.Errorf("drop entity should still exist after dry-run: %v", err)
+	}
+}

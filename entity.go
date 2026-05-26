@@ -146,16 +146,44 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 // entity row is deleted. On any error, all changes are rolled back.
 func (c *Cortex) MergeEntities(ctx context.Context, keepID, dropID string) (MergeStats, error) {
 	var stats MergeStats
-
 	if keepID == dropID {
 		return stats, fmt.Errorf("cortex: cannot merge an entity into itself")
 	}
-
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	stats, err = mergeEntitiesTx(ctx, tx, keepID, dropID)
+	if err != nil {
+		return stats, err
+	}
+	if err := tx.Commit(); err != nil {
+		return stats, fmt.Errorf("cortex: commit merge: %w", err)
+	}
+	return stats, nil
+}
+
+// MergeEntitiesDryRun runs the merge algorithm but always ROLLBACKs the
+// transaction, returning the same MergeStats a real run would produce
+// without writing any changes. Used by `cortex merge --dry-run`.
+func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string) (MergeStats, error) {
+	var stats MergeStats
+	if keepID == dropID {
+		return stats, fmt.Errorf("cortex: cannot merge an entity into itself")
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	return mergeEntitiesTx(ctx, tx, keepID, dropID)
+}
+
+// mergeEntitiesTx performs the merge against the provided transaction.
+// Caller is responsible for Commit or Rollback.
+func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (MergeStats, error) {
+	var stats MergeStats
 
 	keep, err := getEntityTx(ctx, tx, keepID)
 	if err != nil {
@@ -321,9 +349,6 @@ func (c *Cortex) MergeEntities(ctx context.Context, keepID, dropID string) (Merg
 		return stats, fmt.Errorf("cortex: delete drop entity: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return stats, fmt.Errorf("cortex: commit merge: %w", err)
-	}
 	return stats, nil
 }
 
