@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -158,11 +159,17 @@ func (c *Cortex) MergeEntities(ctx context.Context, keepID, dropID string) (Merg
 
 	keep, err := getEntityTx(ctx, tx, keepID)
 	if err != nil {
-		return stats, fmt.Errorf("cortex: keep entity not found: %s", keepID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return stats, fmt.Errorf("cortex: keep entity not found: %s", keepID)
+		}
+		return stats, fmt.Errorf("cortex: load keep entity: %w", err)
 	}
 	drop, err := getEntityTx(ctx, tx, dropID)
 	if err != nil {
-		return stats, fmt.Errorf("cortex: drop entity not found: %s", dropID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return stats, fmt.Errorf("cortex: drop entity not found: %s", dropID)
+		}
+		return stats, fmt.Errorf("cortex: load drop entity: %w", err)
 	}
 	if keep.Type != drop.Type {
 		return stats, fmt.Errorf("cortex: cannot merge across types: %s (keep) vs %s (drop)", keep.Type, drop.Type)

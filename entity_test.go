@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func openTestDB(t *testing.T) *Cortex {
@@ -691,5 +690,3 @@ func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
 	}
 }
 
-// keep time import referenced for future use
-var _ = time.Now
