@@ -62,6 +62,8 @@ func main() {
 		cmdConfig()
 	case "export":
 		cmdExport()
+	case "init-schema":
+		cmdInitSchema()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -89,7 +91,9 @@ Commands:
   config --nickname <nick>       Update owner nickname
   config --email <email>         Add an email address
   export [--vault <dir>] [--full] [--dry-run]
-                                 Export the knowledge graph as an Obsidian-compatible markdown vault`)
+                                 Export the knowledge graph as an Obsidian-compatible markdown vault
+  init-schema [<dir>] [--force]
+                                 Write CORTEX.md (generic agent contract) to <dir> (default: cwd)`)
 }
 
 func openCortex() *cortex.Cortex {
