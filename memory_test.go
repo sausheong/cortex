@@ -132,3 +132,38 @@ func TestGetMemoriesByEntity(t *testing.T) {
 		t.Fatalf("expected 2 entity IDs on Bob's memory, got %d", len(bobMems[0].EntityIDs))
 	}
 }
+
+func TestPutMemory_ConfidenceDefaultsToOne(t *testing.T) {
+	cx := openTestDB(t)
+	ctx := context.Background()
+	m := &Memory{Content: "alice did X"}
+	if err := cx.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	results, err := cx.SearchMemories(ctx, "alice", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("no memories")
+	}
+	if results[0].Confidence != 1.0 {
+		t.Errorf("Confidence = %v, want 1.0", results[0].Confidence)
+	}
+}
+
+func TestPutMemory_ConfidenceClamped(t *testing.T) {
+	cx := openTestDB(t)
+	ctx := context.Background()
+	m := &Memory{Content: "alice did Y", Confidence: -0.5}
+	if err := cx.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	results, err := cx.SearchMemories(ctx, "alice", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Confidence != 0.0 {
+		t.Errorf("Confidence = %v, want 0.0 (clamped)", results[0].Confidence)
+	}
+}

@@ -14,6 +14,8 @@ import (
 // updated and the existing ID is set on the passed entity. Otherwise a new
 // entity is inserted with a generated ULID.
 func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
+	e.Confidence = coerceConfidence(e.Confidence)
+
 	// Check for existing entity with same name + type.
 	var existingID string
 	err := c.db.QueryRowContext(ctx,
@@ -31,8 +33,8 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	if err == nil {
 		// Entity exists — update.
 		_, err = c.db.ExecContext(ctx,
-			`UPDATE entities SET attributes = ?, source = ?, updated_at = ? WHERE id = ?`,
-			string(attrsJSON), e.Source, now, existingID,
+			`UPDATE entities SET attributes = ?, source = ?, confidence = ?, updated_at = ? WHERE id = ?`,
+			string(attrsJSON), e.Source, e.Confidence, now, existingID,
 		)
 		if err != nil {
 			return fmt.Errorf("cortex: update entity: %w", err)
@@ -51,9 +53,9 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	e.UpdatedAt = now
 
 	_, err = c.db.ExecContext(ctx,
-		`INSERT INTO entities (id, type, name, attributes, source, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Type, e.Name, string(attrsJSON), e.Source, e.CreatedAt, e.UpdatedAt,
+		`INSERT INTO entities (id, type, name, attributes, source, confidence, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, e.CreatedAt, e.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert entity: %w", err)
@@ -66,9 +68,9 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
 	err := c.db.QueryRowContext(ctx,
-		`SELECT id, type, name, attributes, source, created_at, updated_at
+		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at
 		 FROM entities WHERE id = ?`, id,
-	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("cortex: entity %q not found", id)
 	}
@@ -87,7 +89,7 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 // FindEntities returns entities matching the given filter. All filter fields
 // are optional — an empty filter returns all entities.
 func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, error) {
-	query := `SELECT id, type, name, attributes, source, created_at, updated_at FROM entities`
+	query := `SELECT id, type, name, attributes, source, confidence, created_at, updated_at FROM entities`
 	var conditions []string
 	var args []any
 
@@ -118,7 +120,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 	for rows.Next() {
 		var e Entity
 		var attrsJSON sql.NullString
-		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan entity: %w", err)
 		}
 		if attrsJSON.Valid && attrsJSON.String != "" {

@@ -218,8 +218,6 @@ func TestEnsureColumn_AddsMissingColumn(t *testing.T) {
 }
 
 func TestOpen_AddsConfidenceColumnsToLegacyDB(t *testing.T) {
-	t.Skip("requires Task 2 (Entity.Confidence field)")
-
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "legacy.db")
 
@@ -236,7 +234,7 @@ func TestOpen_AddsConfidenceColumnsToLegacyDB(t *testing.T) {
 	if _, err := db.Exec(legacyDDL); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO entities (id, type, name) VALUES ('legacy1', 'person', 'Old Alice')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO entities (id, type, name, source, created_at, updated_at) VALUES ('legacy1', 'person', 'Old Alice', 'legacy', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -253,9 +251,7 @@ func TestOpen_AddsConfidenceColumnsToLegacyDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
-	_ = e
-	// TODO(task-2): un-skip and uncomment when Entity.Confidence is added.
-	// if e.Confidence != 1.0 {
-	// 	t.Errorf("legacy row confidence = %v, want 1.0", e.Confidence)
-	// }
+	if e.Confidence != 1.0 {
+		t.Errorf("legacy row confidence = %v, want 1.0", e.Confidence)
+	}
 }

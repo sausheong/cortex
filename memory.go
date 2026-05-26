@@ -11,6 +11,7 @@ import (
 // The operation is wrapped in a transaction. The memory's ID, CreatedAt,
 // and UpdatedAt are set on the passed struct.
 func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
+	m.Confidence = coerceConfidence(m.Confidence)
 	m.ID = newID()
 	now := time.Now().UTC()
 	m.CreatedAt = now
@@ -23,9 +24,9 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO memories (id, content, source, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		m.ID, m.Content, m.Source, m.CreatedAt, m.UpdatedAt,
+		`INSERT INTO memories (id, content, source, confidence, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Content, m.Source, m.Confidence, m.CreatedAt, m.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)
@@ -65,7 +66,7 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 		args = append(args, "%"+word+"%")
 	}
 
-	sqlQuery := `SELECT id, content, source, created_at, updated_at
+	sqlQuery := `SELECT id, content, source, confidence, created_at, updated_at
 		FROM memories WHERE ` + strings.Join(conditions, " OR ") + `
 		LIMIT ?`
 	args = append(args, limit)
@@ -79,7 +80,7 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
 		memories = append(memories, m)
@@ -103,7 +104,7 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 // Entity links are loaded from memory_entities for each result.
 func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Memory, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.created_at, m.updated_at
+		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id
 		 WHERE me.entity_id = ?`,
@@ -117,7 +118,7 @@ func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Me
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
 		memories = append(memories, m)

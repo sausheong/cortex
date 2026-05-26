@@ -191,3 +191,54 @@ func TestGetRelationshipsFromEitherDirection(t *testing.T) {
 		t.Errorf("Type = %q, want %q", rels[0].Type, "knows")
 	}
 }
+
+func TestPutRelationship_ConfidenceDefaultsToOne(t *testing.T) {
+	cx := openTestDB(t)
+	ctx := context.Background()
+	a := &Entity{Type: "person", Name: "RelA"}
+	b := &Entity{Type: "person", Name: "RelB"}
+	if err := cx.PutEntity(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutEntity(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	r := &Relationship{SourceID: a.ID, TargetID: b.ID, Type: "knows"}
+	if err := cx.PutRelationship(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	rels, err := cx.GetRelationships(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rels) == 0 {
+		t.Fatal("no relationships returned")
+	}
+	if rels[0].Confidence != 1.0 {
+		t.Errorf("Confidence = %v, want 1.0", rels[0].Confidence)
+	}
+}
+
+func TestPutRelationship_ConfidenceClamped(t *testing.T) {
+	cx := openTestDB(t)
+	ctx := context.Background()
+	a := &Entity{Type: "person", Name: "RelClampA"}
+	b := &Entity{Type: "person", Name: "RelClampB"}
+	if err := cx.PutEntity(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutEntity(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	r := &Relationship{SourceID: a.ID, TargetID: b.ID, Type: "knows", Confidence: 1.5}
+	if err := cx.PutRelationship(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	rels, err := cx.GetRelationships(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rels[0].Confidence != 1.0 {
+		t.Errorf("Confidence = %v, want 1.0 (clamped from 1.5)", rels[0].Confidence)
+	}
+}
