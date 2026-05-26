@@ -54,16 +54,30 @@ func TestPageFilename_NoCollision(t *testing.T) {
 
 func TestPageFilename_Collision(t *testing.T) {
 	// When colliding=true, every page gets the suffix.
+	// Suffix takes the last 6 chars of the ID (ULID tail = pure randomness),
+	// lowercased.
 	a := pageFilename("Java", "ent_01HAAAAAAAAAAAAAAAAAAAAAA1", true)
 	b := pageFilename("Java", "ent_01HBBBBBBBBBBBBBBBBBBBBBB2", true)
 	if a == b {
 		t.Fatalf("colliding entities got same filename: %q", a)
 	}
-	if a != "java-01haaa.md" {
-		t.Errorf("a = %q, want java-01haaa.md", a)
+	if a != "java-aaaaa1.md" {
+		t.Errorf("a = %q, want java-aaaaa1.md", a)
 	}
-	if b != "java-01hbbb.md" {
-		t.Errorf("b = %q, want java-01hbbb.md", b)
+	if b != "java-bbbbb2.md" {
+		t.Errorf("b = %q, want java-bbbbb2.md", b)
+	}
+}
+
+func TestPageFilename_Collision_SameTimestamp(t *testing.T) {
+	// Two ULIDs sharing the first 10 chars after the prefix (same-tick
+	// creation). Taking suffix chars rather than prefix chars is what
+	// keeps these distinguishable.
+	const prefix = "ent_01H7ZZZZZZ" // shared 10-char timestamp prefix
+	a := pageFilename("Java", prefix+"AAAAAAAAAAAA1", true)
+	b := pageFilename("Java", prefix+"BBBBBBBBBBBB2", true)
+	if a == b {
+		t.Fatalf("same-timestamp collision produced identical filenames: %q", a)
 	}
 }
 

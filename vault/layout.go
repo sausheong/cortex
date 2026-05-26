@@ -58,6 +58,11 @@ func folderForType(t string) string {
 // If colliding is true, the short ID suffix is always appended; this
 // is how the exporter keeps colliding names stable across runs
 // (every page in a collision set gets a suffix, never just some).
+//
+// The two ID helpers are intentionally asymmetric: the collision
+// suffix slices from the tail of the ID (where ULID randomness lives),
+// while the empty-slug fallback slices from the head (keeping the type
+// prefix because there is no slug to provide type context).
 func pageFilename(name, id string, colliding bool) string {
 	base := slug(name)
 	if base == "" {
@@ -66,11 +71,14 @@ func pageFilename(name, id string, colliding bool) string {
 		return base + ".md"
 	}
 	if colliding {
-		return base + "-" + shortIDNoPrefix(id, 6) + ".md"
+		return base + "-" + shortIDTail(id, 6) + ".md"
 	}
 	return base + ".md"
 }
 
+// shortID returns the first n chars of the ID, lowercased. Used as the
+// empty-slug fallback in pageFilename: the type prefix is kept because
+// there is no slug to provide type context.
 func shortID(id string, n int) string {
 	id = strings.ToLower(id)
 	if len(id) <= n {
@@ -79,16 +87,17 @@ func shortID(id string, n int) string {
 	return id[:n]
 }
 
-// shortIDNoPrefix returns the first n chars of the ID with any "xxx_"
-// type prefix stripped, lowercased. Used for collision disambiguators
-// where the slug already provides type context.
-func shortIDNoPrefix(id string, n int) string {
+// shortIDTail returns the last n chars of the ID, lowercased, with any
+// "xxx_" type prefix already implicitly excluded (we slice from the end).
+// Used for collision disambiguators because cortex IDs are ULIDs: the
+// last 16 chars are pure randomness, while the first ~10 after the prefix
+// are a millisecond timestamp shared by entities created in the same tick.
+// Taking from the tail gives strong entropy even when entities collide
+// on name AND creation time.
+func shortIDTail(id string, n int) string {
 	id = strings.ToLower(id)
-	if i := strings.Index(id, "_"); i >= 0 {
-		id = id[i+1:]
-	}
 	if len(id) <= n {
 		return id
 	}
-	return id[:n]
+	return id[len(id)-n:]
 }
