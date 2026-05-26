@@ -59,6 +59,8 @@ func main() {
 		cmdEntity()
 	case "forget":
 		cmdForget()
+	case "merge":
+		cmdMerge()
 	case "config":
 		cmdConfig()
 	case "export":
@@ -88,6 +90,8 @@ Commands:
   entity get <id>                Show entity details + relationships
   forget --source <src>          Forget by source
   forget --entity <id>           Forget by entity ID
+  merge <keep-id> <drop-id> [--dry-run]
+                                 Merge drop entity into keep entity; re-target all references
   config                         Show owner identity
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
@@ -464,6 +468,108 @@ func cmdForget() {
 		os.Exit(1)
 	}
 	fmt.Println("Forgotten.")
+}
+
+type mergeOptions struct {
+	KeepID string
+	DropID string
+	DryRun bool
+}
+
+func parseMergeArgs(args []string) (mergeOptions, error) {
+	var opts mergeOptions
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--dry-run":
+			opts.DryRun = true
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return opts, fmt.Errorf("unknown flag: %s", args[i])
+			}
+			positional = append(positional, args[i])
+		}
+	}
+	if len(positional) != 2 {
+		return opts, fmt.Errorf("merge requires <keep-id> <drop-id>")
+	}
+	opts.KeepID = positional[0]
+	opts.DropID = positional[1]
+	return opts, nil
+}
+
+func cmdMerge() {
+	opts, err := parseMergeArgs(os.Args[2:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "usage: cortex merge <keep-id> <drop-id> [--dry-run]")
+		os.Exit(1)
+	}
+
+	cx := openCortex()
+	defer cx.Close()
+	ctx := context.Background()
+
+	// Look up names for display (best-effort, may fail if keep doesn't exist — that's fine, the
+	// merge call below will produce the real error).
+	keepName := opts.KeepID
+	keepType := ""
+	if e, err := cx.GetEntity(ctx, opts.KeepID); err == nil {
+		keepName = e.Name
+		keepType = e.Type
+	}
+
+	verb := "Merging"
+	if opts.DryRun {
+		verb = "Dry-run: would merge"
+	}
+	if keepType != "" {
+		fmt.Printf("%s %s → %s (%s, %s)\n", verb, opts.DropID, opts.KeepID, keepName, keepType)
+	} else {
+		fmt.Printf("%s %s → %s\n", verb, opts.DropID, opts.KeepID)
+	}
+
+	var stats cortex.MergeStats
+	if opts.DryRun {
+		stats, err = cx.MergeEntitiesDryRun(ctx, opts.KeepID, opts.DropID)
+	} else {
+		stats, err = cx.MergeEntities(ctx, opts.KeepID, opts.DropID)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printMergeStats(stats, opts.DryRun)
+
+	if opts.DryRun {
+		fmt.Println("No changes written.")
+	} else {
+		fmt.Printf("Merge complete. %s deleted.\n", opts.DropID)
+	}
+}
+
+func printMergeStats(s cortex.MergeStats, dryRun bool) {
+	wouldBe := ""
+	if dryRun {
+		wouldBe = " would be"
+	}
+	fmt.Printf("  %d relationships%s re-targeted", s.Relationships, wouldBe)
+	if s.DupesDropped > 0 {
+		fmt.Printf(" (%d duplicate%s dropped)", s.DupesDropped, plural(s.DupesDropped))
+	}
+	fmt.Println()
+	fmt.Printf("  %d memory links%s re-targeted\n", s.Memories, wouldBe)
+	fmt.Printf("  %d chunks%s re-targeted\n", s.Chunks, wouldBe)
+	fmt.Printf("  %d stale embedding%s%s removed\n", s.Embeddings, plural(s.Embeddings), wouldBe)
+	fmt.Printf("  %d attribute conflict%s (keep value preserved)\n", s.AttrConflicts, plural(s.AttrConflicts))
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func storeOwner(cx *cortex.Cortex, name, nickname string, emails []string) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -134,4 +135,240 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 		return nil, fmt.Errorf("cortex: iterate entities: %w", err)
 	}
 	return entities, nil
+}
+
+// MergeEntities merges the drop entity into the keep entity, atomically.
+// All references to dropID (relationships, memory_entities, chunks,
+// embeddings) are re-targeted to keepID; duplicates that would arise
+// from the re-target are collapsed; the drop entity's attributes are
+// unioned into the keep entity (keep wins on conflicts); a `merged_from`
+// provenance record is appended to keep's attributes; finally the drop
+// entity row is deleted. On any error, all changes are rolled back.
+func (c *Cortex) MergeEntities(ctx context.Context, keepID, dropID string) (MergeStats, error) {
+	var stats MergeStats
+	if keepID == dropID {
+		return stats, fmt.Errorf("cortex: cannot merge an entity into itself")
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	stats, err = mergeEntitiesTx(ctx, tx, keepID, dropID)
+	if err != nil {
+		return stats, err
+	}
+	if err := tx.Commit(); err != nil {
+		return stats, fmt.Errorf("cortex: commit merge: %w", err)
+	}
+	return stats, nil
+}
+
+// MergeEntitiesDryRun runs the merge algorithm but always ROLLBACKs the
+// transaction, returning the same MergeStats a real run would produce
+// without writing any changes. Used by `cortex merge --dry-run`.
+func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string) (MergeStats, error) {
+	var stats MergeStats
+	if keepID == dropID {
+		return stats, fmt.Errorf("cortex: cannot merge an entity into itself")
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	return mergeEntitiesTx(ctx, tx, keepID, dropID)
+}
+
+// mergeEntitiesTx performs the merge against the provided transaction.
+// Caller is responsible for Commit or Rollback.
+func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (MergeStats, error) {
+	var stats MergeStats
+
+	keep, err := getEntityTx(ctx, tx, keepID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return stats, fmt.Errorf("cortex: keep entity not found: %s", keepID)
+		}
+		return stats, fmt.Errorf("cortex: load keep entity: %w", err)
+	}
+	drop, err := getEntityTx(ctx, tx, dropID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return stats, fmt.Errorf("cortex: drop entity not found: %s", dropID)
+		}
+		return stats, fmt.Errorf("cortex: load drop entity: %w", err)
+	}
+	if keep.Type != drop.Type {
+		return stats, fmt.Errorf("cortex: cannot merge across types: %s (keep) vs %s (drop)", keep.Type, drop.Type)
+	}
+
+	// Re-target chunks (no collision possible).
+	res, err := tx.ExecContext(ctx,
+		`UPDATE chunks SET entity_id = ? WHERE entity_id = ?`, keepID, dropID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: re-target chunks: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.Chunks = int(n)
+	}
+
+	// Re-target memory_entities, with dedup on (memory_id, entity_id) PK.
+	res, err = tx.ExecContext(ctx,
+		`DELETE FROM memory_entities
+		 WHERE entity_id = ?
+		   AND memory_id IN (SELECT memory_id FROM memory_entities WHERE entity_id = ?)`,
+		dropID, keepID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: dedup memory_entities: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.DupesDropped += int(n)
+	}
+	res, err = tx.ExecContext(ctx,
+		`UPDATE memory_entities SET entity_id = ? WHERE entity_id = ?`, keepID, dropID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: re-target memory_entities: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.Memories = int(n)
+	}
+
+	// Re-target relationships source_id with dedup on (source, target, type).
+	res, err = tx.ExecContext(ctx,
+		`DELETE FROM relationships
+		 WHERE source_id = ?
+		   AND EXISTS (
+			 SELECT 1 FROM relationships k
+			 WHERE k.source_id = ?
+			   AND k.target_id = relationships.target_id
+			   AND k.type      = relationships.type
+		   )`,
+		dropID, keepID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: dedup source rels: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.DupesDropped += int(n)
+	}
+	res, err = tx.ExecContext(ctx,
+		`UPDATE relationships SET source_id = ? WHERE source_id = ?`, keepID, dropID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: re-target source rels: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.Relationships += int(n)
+	}
+
+	// Same for target_id.
+	res, err = tx.ExecContext(ctx,
+		`DELETE FROM relationships
+		 WHERE target_id = ?
+		   AND EXISTS (
+			 SELECT 1 FROM relationships k
+			 WHERE k.target_id = ?
+			   AND k.source_id = relationships.source_id
+			   AND k.type      = relationships.type
+		   )`,
+		dropID, keepID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: dedup target rels: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.DupesDropped += int(n)
+	}
+	res, err = tx.ExecContext(ctx,
+		`UPDATE relationships SET target_id = ? WHERE target_id = ?`, keepID, dropID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: re-target target rels: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.Relationships += int(n)
+	}
+
+	// Drop self-loops created by the merge.
+	res, err = tx.ExecContext(ctx,
+		`DELETE FROM relationships WHERE source_id = ? AND target_id = ?`, keepID, keepID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: drop self-loops: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.DupesDropped += int(n)
+	}
+
+	// Drop the stale entity embedding.
+	res, err = tx.ExecContext(ctx,
+		`DELETE FROM embeddings WHERE ref_id = ? AND ref_type = 'entity'`, dropID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: drop embedding: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.Embeddings = int(n)
+	}
+
+	// Union attributes (keep wins) + record provenance.
+	if keep.Attributes == nil {
+		keep.Attributes = map[string]any{}
+	}
+	for k, v := range drop.Attributes {
+		if _, exists := keep.Attributes[k]; exists {
+			stats.AttrConflicts++
+			continue
+		}
+		keep.Attributes[k] = v
+	}
+	mergeTime := time.Now().UTC()
+	record := mergeRecord{
+		ID:       drop.ID,
+		Name:     drop.Name,
+		Type:     drop.Type,
+		Source:   drop.Source,
+		Attrs:    drop.Attributes,
+		MergedAt: mergeTime,
+	}
+	var existing []any
+	if raw, ok := keep.Attributes["merged_from"]; ok {
+		if asArr, isArr := raw.([]any); isArr {
+			existing = asArr
+		}
+	}
+	existing = append(existing, record)
+	keep.Attributes["merged_from"] = existing
+
+	attrsJSON, err := json.Marshal(keep.Attributes)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: marshal merged attributes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?`,
+		string(attrsJSON), mergeTime, keepID); err != nil {
+		return stats, fmt.Errorf("cortex: update keep attributes: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM entities WHERE id = ?`, dropID); err != nil {
+		return stats, fmt.Errorf("cortex: delete drop entity: %w", err)
+	}
+
+	return stats, nil
+}
+
+// getEntityTx loads an entity by ID using the supplied transaction.
+// Returns sql.ErrNoRows if not found.
+func getEntityTx(ctx context.Context, tx *sql.Tx, id string) (*Entity, error) {
+	var e Entity
+	var attrsJSON sql.NullString
+	err := tx.QueryRowContext(ctx,
+		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at
+		 FROM entities WHERE id = ?`, id,
+	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if attrsJSON.Valid && attrsJSON.String != "" {
+		if err := json.Unmarshal([]byte(attrsJSON.String), &e.Attributes); err != nil {
+			return nil, fmt.Errorf("cortex: unmarshal attributes: %w", err)
+		}
+	}
+	return &e, nil
 }

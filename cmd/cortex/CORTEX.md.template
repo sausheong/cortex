@@ -94,6 +94,17 @@ A healthy knowledge cycle looks like:
 
 The user is responsible for what gets stored. You are responsible for keeping the graph useful — well-summarized, well-linked, and free of cruft.
 
+### Cleaning up duplicates
+
+Over time you'll notice the same real-world entity stored as two separate cortex entities (different spellings, different sources). When you spot one, suggest a merge:
+
+```
+cortex merge <keep-id> <drop-id> --dry-run   # preview
+cortex merge <keep-id> <drop-id>             # commit
+```
+
+Always preview with `--dry-run` first. Merge re-targets every reference (relationships, memories, chunks) and deletes the drop entity; the operation is atomic.
+
 ## Customization
 
 This file is yours to edit. Add project-specific guidance: which entity types matter most here, which sources are authoritative, when to escalate to the user before remembering, custom relationship types you want extracted. The static template ships generic on purpose — make it specific.
