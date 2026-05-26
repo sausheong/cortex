@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -306,7 +307,7 @@ func cmdRecall() {
 
 	for i, r := range results {
 		fmt.Printf("[%d] (%s, score=%.4f, conf=%d%%) %s\n",
-			i+1, r.Type, r.Score, int(r.Confidence*100), r.Content)
+			i+1, r.Type, r.Score, int(math.Round(r.Confidence*100)), r.Content)
 		if r.Source != "" {
 			fmt.Printf("    source: %s\n", r.Source)
 		}
@@ -404,7 +405,7 @@ func cmdEntityGet() {
 	fmt.Printf("Name:       %s\n", entity.Name)
 	fmt.Printf("Type:       %s\n", entity.Type)
 	fmt.Printf("Source:     %s\n", entity.Source)
-	fmt.Printf("Confidence: %.0f%%\n", entity.Confidence*100)
+	fmt.Printf("Confidence: %d%%\n", int(math.Round(entity.Confidence*100)))
 	if len(entity.Attributes) > 0 {
 		fmt.Println("Attributes:")
 		for k, v := range entity.Attributes {

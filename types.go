@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"math"
 	"time"
 )
 
@@ -203,7 +204,7 @@ func WithExtractor(e Extractor) Option {
 // errored: failing an entire ingest because of one bad number from an LLM
 // is worse UX than clamping and continuing.
 func coerceConfidence(c float64) float64 {
-	if c == 0 {
+	if math.IsNaN(c) || c == 0 {
 		return 1.0
 	}
 	if c < 0 {

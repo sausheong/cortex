@@ -54,6 +54,7 @@ func main() {
 			mcp.WithDescription("Recall information from the knowledge graph using multi-strategy retrieval."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("The query to search for")),
 			mcp.WithNumber("limit", mcp.Description("Maximum number of results (default 20)")),
+			mcp.WithNumber("min_confidence", mcp.Description("Filter results below this confidence threshold (0.0-1.0). Default 0 = no filter.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			query, err := req.RequireString("query")
@@ -63,6 +64,12 @@ func main() {
 			var opts []cortex.RecallOption
 			if limit := req.GetInt("limit", 0); limit > 0 {
 				opts = append(opts, cortex.WithLimit(limit))
+			}
+			if mc := req.GetFloat("min_confidence", 0); mc > 0 {
+				if mc > 1 {
+					return mcp.NewToolResultError("min_confidence must be between 0 and 1"), nil
+				}
+				opts = append(opts, cortex.WithMinConfidence(mc))
 			}
 			results, err := cx.Recall(ctx, query, opts...)
 			if err != nil {

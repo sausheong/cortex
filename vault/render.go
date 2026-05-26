@@ -2,6 +2,7 @@ package vault
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -65,7 +66,7 @@ func renderEntity(
 		for _, m := range memories {
 			var confSuffix string
 			if m.Confidence > 0 && m.Confidence < 1.0 {
-				confSuffix = fmt.Sprintf(" (conf %d%%)", int(m.Confidence*100))
+				confSuffix = fmt.Sprintf(" (conf %d%%)", int(math.Round(m.Confidence*100)))
 			}
 			if m.Source != "" {
 				fmt.Fprintf(&b, "- %s%s — `%s`\n", m.Content, confSuffix, m.Source)
