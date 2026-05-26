@@ -19,15 +19,17 @@ type resolvedRel struct {
 }
 
 // renderEntity produces the markdown content of an entity page.
-// Sources is a list of source identifiers (filenames or labels) that
-// contributed to this entity; they are rendered as wikilinks to source
-// pages. Pass nil/empty slices to omit sections.
+// sourceLinks is a list of already-resolved source basenames (no extension,
+// no directory) ready to drop into [[sources/<basename>]] wikilinks. The
+// caller (the exporter) is responsible for resolving raw source strings
+// through any collision map before passing them in. Pass nil/empty slices
+// to omit sections.
 func renderEntity(
 	e cortex.Entity,
 	memories []cortex.Memory,
 	outRels []resolvedRel,
 	inRels []resolvedRel,
-	sources []string,
+	sourceLinks []string,
 	exportedAt time.Time,
 ) string {
 	var b strings.Builder
@@ -77,10 +79,10 @@ func renderEntity(
 			fmt.Fprintf(&b, "- [[%s|%s]] — %s\n", r.OtherPath, r.OtherName, r.Type)
 		}
 	}
-	if len(sources) > 0 {
+	if len(sourceLinks) > 0 {
 		b.WriteString("\n## Sources\n\n")
-		for _, s := range sources {
-			fmt.Fprintf(&b, "- [[sources/%s]]\n", slug(s))
+		for _, link := range sourceLinks {
+			fmt.Fprintf(&b, "- [[sources/%s]]\n", link)
 		}
 	}
 

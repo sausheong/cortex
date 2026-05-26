@@ -65,4 +65,8 @@ func cmdExport() {
 	for _, e := range stats.Errors {
 		fmt.Fprintf(os.Stderr, "  warning: %v\n", e)
 	}
+	if len(stats.Errors) > 0 {
+		fmt.Fprintf(os.Stderr, "export completed with %d warning(s)\n", len(stats.Errors))
+		os.Exit(2)
+	}
 }

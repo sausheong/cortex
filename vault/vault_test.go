@@ -271,6 +271,84 @@ func TestExport_EntityRenameMovesPage(t *testing.T) {
 	}
 }
 
+func TestExport_CollidingSourcesProduceMatchingLinks(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "brain.db")
+	cx, err := cortex.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cx.Close()
+	ctx := context.Background()
+
+	// Two entities, each from a different source, but the two sources
+	// slug to the same base ("notes-intro").
+	a := &cortex.Entity{Type: "person", Name: "AlphaUser", Source: "notes/intro.md"}
+	b := &cortex.Entity{Type: "person", Name: "BetaUser", Source: "notes-intro.md"}
+	if err := cx.PutEntity(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutEntity(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	vaultDir := t.TempDir()
+	if _, err := Export(ctx, cx, Options{VaultDir: vaultDir}); err != nil {
+		t.Fatal(err)
+	}
+
+	// List the source filenames actually on disk.
+	entries, err := os.ReadDir(filepath.Join(vaultDir, "sources"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDisk := map[string]bool{}
+	for _, e := range entries {
+		onDisk[strings.TrimSuffix(e.Name(), ".md")] = true
+	}
+	if len(onDisk) < 2 {
+		t.Fatalf("expected 2+ distinct source files, got %d", len(onDisk))
+	}
+
+	// For each entity page, parse out the [[sources/X]] wikilinks and verify
+	// every X is an actual file on disk.
+	for _, ent := range []*cortex.Entity{a, b} {
+		page := filepath.Join(vaultDir, "people", slug(ent.Name)+".md")
+		body, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatalf("read %s: %v", page, err)
+		}
+		// Naive but sufficient: scan for "[[sources/" and pull until "]]".
+		s := string(body)
+		idx := 0
+		found := 0
+		for {
+			i := strings.Index(s[idx:], "[[sources/")
+			if i < 0 {
+				break
+			}
+			start := idx + i + len("[[sources/")
+			end := strings.Index(s[start:], "]]")
+			if end < 0 {
+				t.Fatalf("malformed wikilink in %s", page)
+			}
+			link := s[start : start+end]
+			// Strip any |alias suffix.
+			if pipe := strings.Index(link, "|"); pipe >= 0 {
+				link = link[:pipe]
+			}
+			if !onDisk[link] {
+				t.Errorf("%s links to [[sources/%s]] but no such file in vault/sources/", ent.Name, link)
+			}
+			found++
+			idx = start + end + 2
+		}
+		if found == 0 {
+			t.Errorf("%s page has no source wikilinks", ent.Name)
+		}
+	}
+}
+
 func TestExport_SourceSlugCollisionHandled(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "brain.db")

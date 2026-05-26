@@ -32,7 +32,7 @@ func TestRenderEntity_Full(t *testing.T) {
 	inRels := []resolvedRel{
 		{Type: "attended", OtherPath: "events/2026-04-02-board-meeting", OtherName: "2026-04-02 board meeting"},
 	}
-	sources := []string{"2026-04-02--coffee-notes", "linkedin-import"}
+	sources := []string{"2026-04-02-coffee-notes", "linkedin-import"}
 
 	got := renderEntity(ent, memories, outRels, inRels, sources, fixedExportTime)
 	assertGolden(t, "entity_full.golden.md", got)

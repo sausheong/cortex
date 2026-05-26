@@ -86,11 +86,41 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 	sourceMemories := map[string][]string{}
 	indexByType := map[string][]indexItem{}
 
+	// First pass: collect every distinct source string referenced anywhere
+	// (entity.Source or memory.Source) so we can build a single canonical
+	// collision-resolved basename map BEFORE rendering any entity page.
+	// This guarantees the [[sources/X]] wikilinks emitted by renderEntity
+	// match the filenames the exporter actually writes.
+	entityMemories := make(map[string][]cortex.Memory, len(entities))
+	entitySources := make(map[string][]string, len(entities))
+	allSources := map[string]struct{}{}
 	for _, e := range entities {
-		meta := pageByID[e.ID]
 		memories, err := c.GetMemoriesByEntity(ctx, e.ID)
 		if err != nil {
 			stats.Errors = append(stats.Errors, fmt.Errorf("memories for %s: %w", e.ID, err))
+			continue
+		}
+		entityMemories[e.ID] = memories
+		sourceSet := map[string]struct{}{}
+		if e.Source != "" {
+			sourceSet[e.Source] = struct{}{}
+			allSources[e.Source] = struct{}{}
+		}
+		for _, m := range memories {
+			if m.Source != "" {
+				sourceSet[m.Source] = struct{}{}
+				allSources[m.Source] = struct{}{}
+			}
+		}
+		entitySources[e.ID] = keysSorted(sourceSet)
+	}
+	sourceBasenames := computeSourceBasenames(allSources)
+
+	for _, e := range entities {
+		meta := pageByID[e.ID]
+		memories, ok := entityMemories[e.ID]
+		if !ok {
+			// memories lookup failed in the first pass and was already recorded.
 			continue
 		}
 		rels, err := c.GetRelationships(ctx, e.ID)
@@ -125,9 +155,16 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 				sourceSet[m.Source] = struct{}{}
 			}
 		}
-		sources := keysSorted(sourceSet)
+		// Resolve each raw source to its collision-aware basename so the
+		// rendered wikilinks match the files the exporter will write below.
+		sourceLinks := make([]string, 0, len(entitySources[e.ID]))
+		for _, s := range entitySources[e.ID] {
+			if base, ok := sourceBasenames[s]; ok {
+				sourceLinks = append(sourceLinks, base)
+			}
+		}
 
-		content := renderEntity(e, memories, outRels, inRels, sources, exportedAt)
+		content := renderEntity(e, memories, outRels, inRels, sourceLinks, exportedAt)
 		hash := hashContent(content)
 		entry, exists := manifest.Pages[e.ID]
 		desiredRel := meta.path + ".md"
@@ -207,24 +244,11 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 
 	// Build canonical filename per source, with collision suffixes so distinct
 	// source strings that slug to the same base do not overwrite each other.
+	// Use the same basename map computed in the first pass so the wikilinks
+	// emitted in entity pages match the files we write.
 	sourceFilenames := map[string]string{} // raw source → filename (without dir)
-	slugCounts := map[string]int{}
 	for s := range sourceEntities {
-		slugCounts[slug(s)]++
-	}
-	for s := range sourceEntities {
-		base := slug(s)
-		if base == "" {
-			// Pathological: source string with no alphanumeric. Use a short hash.
-			h := sha256.Sum256([]byte(s))
-			base = hex.EncodeToString(h[:3])
-		}
-		fn := base + ".md"
-		if slugCounts[slug(s)] > 1 {
-			h := sha256.Sum256([]byte(s))
-			fn = base + "-" + hex.EncodeToString(h[:3]) + ".md"
-		}
-		sourceFilenames[s] = fn
+		sourceFilenames[s] = sourceBasenames[s] + ".md"
 	}
 
 	if !opts.DryRun {
@@ -304,6 +328,38 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 	}
 
 	return stats, nil
+}
+
+// computeSourceBasenames produces, for each distinct source string, the
+// filename (without ".md" extension or directory) that the exporter will
+// write into vault/sources/. When two source strings slug to the same base,
+// each gets a "-<6hex>" suffix derived from the raw source string so the
+// distinct sources are stored in distinct files. Returns an empty map if
+// the input is empty.
+func computeSourceBasenames(sources map[string]struct{}) map[string]string {
+	out := make(map[string]string, len(sources))
+	if len(sources) == 0 {
+		return out
+	}
+	slugCounts := map[string]int{}
+	for s := range sources {
+		slugCounts[slug(s)]++
+	}
+	for s := range sources {
+		base := slug(s)
+		if base == "" {
+			// Pathological: source string with no alphanumeric. Use a short hash.
+			h := sha256.Sum256([]byte(s))
+			base = hex.EncodeToString(h[:3])
+		}
+		name := base
+		if slugCounts[slug(s)] > 1 {
+			h := sha256.Sum256([]byte(s))
+			name = base + "-" + hex.EncodeToString(h[:3])
+		}
+		out[s] = name
+	}
+	return out
 }
 
 func hashContent(s string) string {
