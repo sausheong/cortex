@@ -129,3 +129,50 @@ func TestParseExtractionJSONWithCodeFences(t *testing.T) {
 		t.Errorf("got %d entities, want 1", len(parsed.Entities))
 	}
 }
+
+func TestParseExtractionJSON_PreservesConfidence(t *testing.T) {
+	raw := `{
+		"entities": [
+			{"name": "Alice", "type": "person", "confidence": 0.9}
+		],
+		"relationships": [
+			{"source": "Alice", "target": "Stripe", "type": "works_at", "confidence": 0.6}
+		],
+		"memories": [
+			{"content": "alice joined stripe", "confidence": 0.4}
+		]
+	}`
+	ext, err := parseExtractionJSON(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(ext.Entities) != 1 || ext.Entities[0].Confidence != 0.9 {
+		t.Errorf("entity confidence = %v, want 0.9", ext.Entities[0].Confidence)
+	}
+	if len(ext.Relationships) != 1 || ext.Relationships[0].Confidence != 0.6 {
+		t.Errorf("rel confidence = %v, want 0.6", ext.Relationships[0].Confidence)
+	}
+	if len(ext.Memories) != 1 || ext.Memories[0].Confidence != 0.4 {
+		t.Errorf("memory confidence = %v, want 0.4", ext.Memories[0].Confidence)
+	}
+}
+
+func TestParseExtractionJSON_OmittedConfidenceIsZero(t *testing.T) {
+	// Pre-feature LLM response — no confidence field anywhere.
+	raw := `{
+		"entities": [{"name": "Bob", "type": "person"}],
+		"relationships": [],
+		"memories": [{"content": "bob exists"}]
+	}`
+	ext, err := parseExtractionJSON(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// Parser returns zero — Put layer will coerce to 1.0.
+	if ext.Entities[0].Confidence != 0 {
+		t.Errorf("entity confidence = %v, want 0 (zero, to be coerced upstream)", ext.Entities[0].Confidence)
+	}
+	if ext.Memories[0].Confidence != 0 {
+		t.Errorf("memory confidence = %v, want 0", ext.Memories[0].Confidence)
+	}
+}

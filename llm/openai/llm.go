@@ -178,13 +178,15 @@ func (l *LLM) Summarize(ctx context.Context, texts []string) (string, error) {
 // extractionJSON is the intermediate JSON structure returned by the LLM.
 type extractionJSON struct {
 	Entities []struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
+		Type       string  `json:"type"`
+		Name       string  `json:"name"`
+		Confidence float64 `json:"confidence"`
 	} `json:"entities"`
 	Relationships []struct {
-		Source string `json:"source"`
-		Target string `json:"target"`
-		Type   string `json:"type"`
+		Source     string  `json:"source"`
+		Target     string  `json:"target"`
+		Type       string  `json:"type"`
+		Confidence float64 `json:"confidence"`
 	} `json:"relationships"`
 	Memories []json.RawMessage `json:"memories"`
 }
@@ -212,26 +214,30 @@ func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
 
 	for _, e := range ej.Entities {
 		extraction.Entities = append(extraction.Entities, cortex.Entity{
-			Type: e.Type,
-			Name: e.Name,
+			Type:       e.Type,
+			Name:       e.Name,
+			Confidence: e.Confidence,
 		})
 	}
 
 	for _, r := range ej.Relationships {
 		extraction.Relationships = append(extraction.Relationships, cortex.Relationship{
-			SourceID: r.Source,
-			TargetID: r.Target,
-			Type:     r.Type,
+			SourceID:   r.Source,
+			TargetID:   r.Target,
+			Type:       r.Type,
+			Confidence: r.Confidence,
 		})
 	}
 
 	for _, m := range ej.Memories {
 		var memObj struct {
-			Content string `json:"content"`
+			Content    string  `json:"content"`
+			Confidence float64 `json:"confidence"`
 		}
 		if err := json.Unmarshal(m, &memObj); err == nil && memObj.Content != "" {
 			extraction.Memories = append(extraction.Memories, cortex.Memory{
-				Content: memObj.Content,
+				Content:    memObj.Content,
+				Confidence: memObj.Confidence,
 			})
 			continue
 		}

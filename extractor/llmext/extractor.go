@@ -9,9 +9,19 @@ import (
 // extractionPrompt instructs the LLM to return structured extraction data.
 const extractionPrompt = `Analyze the following text and extract structured knowledge.
 Return a JSON object with the following fields:
-- "entities": array of objects with "name", "type", and optional "attributes" (key-value pairs)
-- "relationships": array of objects with "source" (entity name), "target" (entity name), "type", and optional "attributes"
-- "memories": array of objects with "content" (a concise factual statement) and optional "entity_ids"
+- "entities": array of objects with "name", "type", optional "attributes", and "confidence"
+- "relationships": array of objects with "source" (entity name), "target" (entity name), "type", optional "attributes", and "confidence"
+- "memories": array of objects with "content" (a concise factual statement), optional "entity_ids", and "confidence"
+
+For each item, "confidence" is a float between 0.0 and 1.0 expressing how
+certain you are about that specific extracted claim:
+- 1.0  = directly stated in the text, unambiguous
+- 0.7  = strongly implied or paraphrased
+- 0.4  = inferred or interpretive
+- 0.2  = speculative or weakly supported
+
+Be honest. It is better to mark something low-confidence than to omit it
+or to claim certainty you don't have.
 
 Extract all people, organizations, places, concepts, and other notable entities.
 Identify relationships between entities (e.g., works_at, knows, located_in).
