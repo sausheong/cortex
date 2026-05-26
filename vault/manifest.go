@@ -61,8 +61,9 @@ func loadManifest(path string) (*Manifest, error) {
 	return m, nil
 }
 
-// saveManifest writes the manifest to path, creating parent dirs.
-// The file is written atomically via temp + rename.
+// saveManifest writes the manifest to path. The caller is responsible
+// for ensuring the parent directory exists (the exporter does this once
+// per run). The file is written atomically via temp + rename.
 func saveManifest(path string, m *Manifest) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
