@@ -215,3 +215,24 @@ func coerceConfidence(c float64) float64 {
 	}
 	return c
 }
+
+// MergeStats reports what MergeEntities did (or would do, under dry-run).
+type MergeStats struct {
+	Relationships int // re-targeted (after dedup)
+	Memories      int // memory_entities rows re-targeted
+	Chunks        int // re-targeted
+	Embeddings    int // dropped (stale embedding for drop entity)
+	DupesDropped  int // duplicate relationships + memory_entity rows removed during dedup
+	AttrConflicts int // count of attributes where keep already had a value (keep won)
+}
+
+// mergeRecord is one entry in an entity's `merged_from` attribute array.
+// It snapshots the dropped entity so a merge is recoverable in principle.
+type mergeRecord struct {
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Type     string         `json:"type"`
+	Source   string         `json:"source,omitempty"`
+	Attrs    map[string]any `json:"attrs,omitempty"`
+	MergedAt time.Time      `json:"merged_at"`
+}

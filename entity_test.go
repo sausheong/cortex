@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func openTestDB(t *testing.T) *Cortex {
@@ -314,3 +316,380 @@ func TestPutEntity_ConfidenceClamped(t *testing.T) {
 		}
 	}
 }
+
+// --- Basic merge ---
+
+func TestMergeEntities_BasicMerge_ReTargetsEverything(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+
+	keep := &Entity{Type: "person", Name: "Alice Keep"}
+	drop := &Entity{Type: "person", Name: "Alice Drop"}
+	other := &Entity{Type: "organization", Name: "Stripe"}
+	for _, e := range []*Entity{keep, drop, other} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rel := &Relationship{SourceID: drop.ID, TargetID: other.ID, Type: "works_at"}
+	if err := cx.PutRelationship(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	mem := &Memory{Content: "drop memory content", EntityIDs: []string{drop.ID}}
+	if err := cx.PutMemory(ctx, mem); err != nil {
+		t.Fatal(err)
+	}
+	ch := &Chunk{EntityID: drop.ID, Content: "drop chunk content"}
+	if err := cx.PutChunk(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if stats.Relationships != 1 {
+		t.Errorf("Relationships = %d, want 1", stats.Relationships)
+	}
+	if stats.Memories != 1 {
+		t.Errorf("Memories = %d, want 1", stats.Memories)
+	}
+	if stats.Chunks != 1 {
+		t.Errorf("Chunks = %d, want 1", stats.Chunks)
+	}
+
+	if _, err := cx.GetEntity(ctx, drop.ID); err == nil {
+		t.Error("drop entity should be deleted")
+	}
+	rels, err := cx.GetRelationships(ctx, keep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundReTargeted := false
+	for _, r := range rels {
+		if r.SourceID == keep.ID && r.TargetID == other.ID && r.Type == "works_at" {
+			foundReTargeted = true
+		}
+	}
+	if !foundReTargeted {
+		t.Error("re-targeted relationship not found on keep entity")
+	}
+}
+
+// --- Validation errors ---
+
+func TestMergeEntities_SelfMergeError(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	e := &Entity{Type: "person", Name: "Solo"}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cx.MergeEntities(ctx, e.ID, e.ID)
+	if err == nil {
+		t.Fatal("expected error for self-merge")
+	}
+	if !strings.Contains(err.Error(), "itself") {
+		t.Errorf("error %q should mention 'itself'", err.Error())
+	}
+}
+
+func TestMergeEntities_KeepNotFound(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	drop := &Entity{Type: "person", Name: "Drop"}
+	if err := cx.PutEntity(ctx, drop); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cx.MergeEntities(ctx, "ent_doesnt_exist", drop.ID)
+	if err == nil {
+		t.Fatal("expected error for missing keep")
+	}
+	if !strings.Contains(err.Error(), "keep entity not found") {
+		t.Errorf("error %q should mention 'keep entity not found'", err.Error())
+	}
+}
+
+func TestMergeEntities_DropNotFound(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "Keep"}
+	if err := cx.PutEntity(ctx, keep); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cx.MergeEntities(ctx, keep.ID, "ent_doesnt_exist")
+	if err == nil {
+		t.Fatal("expected error for missing drop")
+	}
+	if !strings.Contains(err.Error(), "drop entity not found") {
+		t.Errorf("error %q should mention 'drop entity not found'", err.Error())
+	}
+}
+
+func TestMergeEntities_TypeMismatch(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	person := &Entity{Type: "person", Name: "Stripe"}
+	org := &Entity{Type: "organization", Name: "Stripe Inc"}
+	if err := cx.PutEntity(ctx, person); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutEntity(ctx, org); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cx.MergeEntities(ctx, person.ID, org.ID)
+	if err == nil {
+		t.Fatal("expected error for type mismatch")
+	}
+	if !strings.Contains(err.Error(), "cannot merge across types") {
+		t.Errorf("error %q should mention 'cannot merge across types'", err.Error())
+	}
+}
+
+// --- Dedup ---
+
+func TestMergeEntities_RelationshipDedup(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop := &Entity{Type: "person", Name: "D"}
+	stripe := &Entity{Type: "organization", Name: "Stripe"}
+	for _, e := range []*Entity{keep, drop, stripe} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutRelationship(ctx, &Relationship{SourceID: e.ID, TargetID: stripe.ID, Type: "works_at"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.DupesDropped == 0 {
+		t.Error("expected duplicate relationship to be dropped")
+	}
+	rels, _ := cx.GetRelationships(ctx, keep.ID, RelTypeFilter("works_at"))
+	count := 0
+	for _, r := range rels {
+		if r.TargetID == stripe.ID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("keep has %d works_at stripe relationships, want 1", count)
+	}
+}
+
+func TestMergeEntities_MemoryEntitiesDedup(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop := &Entity{Type: "person", Name: "D"}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mem := &Memory{Content: "shared memory", EntityIDs: []string{keep.ID, drop.ID}}
+	if err := cx.PutMemory(ctx, mem); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.DupesDropped == 0 {
+		t.Error("expected duplicate memory link to be dropped")
+	}
+	mems, err := cx.GetMemoriesByEntity(ctx, keep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range mems {
+		if m.Content == "shared memory" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 link to shared memory, got %d", count)
+	}
+}
+
+// --- Self-loop cleanup ---
+
+func TestMergeEntities_SelfLoopRemoved(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop := &Entity{Type: "person", Name: "D"}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cx.PutRelationship(ctx, &Relationship{SourceID: drop.ID, TargetID: keep.ID, Type: "knows"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cx.MergeEntities(ctx, keep.ID, drop.ID); err != nil {
+		t.Fatal(err)
+	}
+	rels, _ := cx.GetRelationships(ctx, keep.ID)
+	for _, r := range rels {
+		if r.SourceID == keep.ID && r.TargetID == keep.ID {
+			t.Errorf("found self-loop on keep entity: %+v", r)
+		}
+	}
+}
+
+// --- Attributes ---
+
+func TestMergeEntities_AttributeUnion_KeepWins(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{
+		Type:       "person",
+		Name:       "K",
+		Attributes: map[string]any{"role": "engineer"},
+	}
+	drop := &Entity{
+		Type:       "person",
+		Name:       "D",
+		Attributes: map[string]any{"role": "developer", "team": "payments"},
+	}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.AttrConflicts != 1 {
+		t.Errorf("AttrConflicts = %d, want 1", stats.AttrConflicts)
+	}
+	got, err := cx.GetEntity(ctx, keep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Attributes["role"] != "engineer" {
+		t.Errorf("role = %v, want engineer (keep wins)", got.Attributes["role"])
+	}
+	if got.Attributes["team"] != "payments" {
+		t.Errorf("team = %v, want payments (unioned in)", got.Attributes["team"])
+	}
+	mf, ok := got.Attributes["merged_from"].([]any)
+	if !ok {
+		t.Fatalf("merged_from missing or wrong type: %T %v", got.Attributes["merged_from"], got.Attributes["merged_from"])
+	}
+	if len(mf) != 1 {
+		t.Errorf("merged_from len = %d, want 1", len(mf))
+	}
+}
+
+func TestMergeEntities_MergedFromAppends(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop1 := &Entity{Type: "person", Name: "D1"}
+	drop2 := &Entity{Type: "person", Name: "D2"}
+	for _, e := range []*Entity{keep, drop1, drop2} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cx.MergeEntities(ctx, keep.ID, drop1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cx.MergeEntities(ctx, keep.ID, drop2.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cx.GetEntity(ctx, keep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf, ok := got.Attributes["merged_from"].([]any)
+	if !ok {
+		t.Fatalf("merged_from missing: %v", got.Attributes)
+	}
+	if len(mf) != 2 {
+		t.Errorf("merged_from len = %d, want 2", len(mf))
+	}
+}
+
+// --- Embeddings ---
+
+func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop := &Entity{Type: "person", Name: "D"}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cx.db.ExecContext(ctx,
+		`INSERT INTO embeddings (id, ref_id, ref_type, vector) VALUES (?, ?, 'entity', ?)`,
+		"emb_drop", drop.ID, []byte{0x00}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Embeddings != 1 {
+		t.Errorf("Embeddings = %d, want 1", stats.Embeddings)
+	}
+	var count int
+	if err := cx.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM embeddings WHERE ref_id = ?`, drop.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("embedding for drop entity still exists (count=%d)", count)
+	}
+}
+
+// --- Idempotency ---
+
+func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
+	cx := openTestDB(t)
+	defer cx.Close()
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "K"}
+	drop := &Entity{Type: "person", Name: "D"}
+	for _, e := range []*Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cx.MergeEntities(ctx, keep.ID, drop.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
+	if err == nil {
+		t.Fatal("expected error on second merge")
+	}
+	if !strings.Contains(err.Error(), "drop entity not found") {
+		t.Errorf("error = %v, want 'drop entity not found'", err)
+	}
+}
+
+// keep time import referenced for future use
+var _ = time.Now
