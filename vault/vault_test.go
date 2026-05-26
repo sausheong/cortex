@@ -186,3 +186,125 @@ func mustExist(t *testing.T, root, rel string) {
 		t.Errorf("expected %s to exist: %v", rel, err)
 	}
 }
+
+func TestExport_EmptyGraphArchivesPreviousPages(t *testing.T) {
+	cx, cleanup := seedBrain(t)
+	defer cleanup()
+	vaultDir := t.TempDir()
+	ctx := context.Background()
+
+	// Initial export with content.
+	first, err := Export(ctx, cx, Options{VaultDir: vaultDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Written < 2 {
+		t.Fatalf("setup: expected >=2 entities written, got %d", first.Written)
+	}
+
+	// Wipe the graph entirely.
+	if err := cx.Forget(ctx, cortex.Filter{Source: "notes/intro.md"}); err != nil {
+		t.Fatal(err)
+	}
+	// Also forget Stripe by entity ID — Filter{Source: "notes/intro.md"} won't
+	// catch Stripe because it has no source. Query for all entities and delete.
+	all, _ := cx.FindEntities(ctx, cortex.EntityFilter{})
+	for _, e := range all {
+		if err := cx.Forget(ctx, cortex.Filter{EntityID: e.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Second export — graph is empty.
+	stats, err := Export(ctx, cx, Options{VaultDir: vaultDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Archived == 0 {
+		t.Error("expected archive count > 0 after emptying graph")
+	}
+	// alice and stripe pages must be gone from their type folders.
+	if _, err := os.Stat(filepath.Join(vaultDir, "people/alice-chen.md")); !os.IsNotExist(err) {
+		t.Error("alice page should be archived")
+	}
+	if _, err := os.Stat(filepath.Join(vaultDir, "organizations/stripe.md")); !os.IsNotExist(err) {
+		t.Error("stripe page should be archived")
+	}
+}
+
+func TestExport_EntityRenameMovesPage(t *testing.T) {
+	// NOTE: cortex.PutEntity upserts by (name, type), not by ID — calling
+	// PutEntity with a different Name inserts a brand-new row rather than
+	// updating the existing one. So a true "rename" requires delete-then-add:
+	// the old entity disappears from the graph (its page archives), and a
+	// new entity with a different slug appears (its page is written).
+	cx, cleanup := seedBrain(t)
+	defer cleanup()
+	vaultDir := t.TempDir()
+	ctx := context.Background()
+
+	if _, err := Export(ctx, cx, Options{VaultDir: vaultDir}); err != nil {
+		t.Fatal(err)
+	}
+	// Find alice, delete her, then add "Alice Lin" (different slug).
+	people, _ := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
+	if len(people) == 0 {
+		t.Fatal("expected at least one person")
+	}
+	alice := people[0]
+	if err := cx.Forget(ctx, cortex.Filter{EntityID: alice.ID}); err != nil {
+		t.Fatal(err)
+	}
+	renamed := &cortex.Entity{Type: "person", Name: "Alice Lin", Source: alice.Source}
+	if err := cx.PutEntity(ctx, renamed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Export(ctx, cx, Options{VaultDir: vaultDir}); err != nil {
+		t.Fatal(err)
+	}
+	// Old page should be gone, new page should exist.
+	if _, err := os.Stat(filepath.Join(vaultDir, "people/alice-chen.md")); !os.IsNotExist(err) {
+		t.Error("old alice-chen.md should be removed after rename")
+	}
+	if _, err := os.Stat(filepath.Join(vaultDir, "people/alice-lin.md")); err != nil {
+		t.Errorf("new alice-lin.md should exist: %v", err)
+	}
+}
+
+func TestExport_SourceSlugCollisionHandled(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "brain.db")
+	cx, err := cortex.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cx.Close()
+	ctx := context.Background()
+
+	// Two entities with different sources that slug to the same base.
+	a := &cortex.Entity{Type: "person", Name: "A", Source: "notes/intro.md"}
+	b := &cortex.Entity{Type: "person", Name: "B", Source: "notes-intro.md"}
+	if err := cx.PutEntity(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutEntity(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	vaultDir := t.TempDir()
+	if _, err := Export(ctx, cx, Options{VaultDir: vaultDir}); err != nil {
+		t.Fatal(err)
+	}
+
+	// vault/sources should have TWO distinct files, not one overwriting the other.
+	entries, err := os.ReadDir(filepath.Join(vaultDir, "sources"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) < 2 {
+		t.Errorf("expected >= 2 source files for distinct sources that slug-collide, got %d", len(entries))
+		for _, e := range entries {
+			t.Logf("  found: %s", e.Name())
+		}
+	}
+}

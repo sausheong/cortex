@@ -80,6 +80,7 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 	}
 
 	exportedAt := time.Now().UTC()
+	archiveStamp := exportedAt.Format("2006-01-02T15-04-05")
 
 	sourceEntities := map[string][]sourceEntity{}
 	sourceMemories := map[string][]string{}
@@ -173,37 +174,57 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 	}
 
 	// Archive stale pages: any manifest entry whose ID is no longer in the graph.
-	if len(entities) > 0 || opts.Full {
-		liveIDs := map[string]struct{}{}
-		for _, e := range entities {
-			liveIDs[e.ID] = struct{}{}
+	liveIDs := map[string]struct{}{}
+	for _, e := range entities {
+		liveIDs[e.ID] = struct{}{}
+	}
+	var staleIDs []string
+	for id := range manifest.Pages {
+		if _, ok := liveIDs[id]; !ok {
+			staleIDs = append(staleIDs, id)
 		}
-		var staleIDs []string
-		for id := range manifest.Pages {
-			if _, ok := liveIDs[id]; !ok {
-				staleIDs = append(staleIDs, id)
-			}
-		}
-		if len(staleIDs) > 0 {
-			archiveDir := filepath.Join(opts.VaultDir, "_archive", exportedAt.Format("2006-01-02T15-04-05"))
-			for _, id := range staleIDs {
-				entry := manifest.Pages[id]
-				if !opts.DryRun {
-					src := filepath.Join(opts.VaultDir, entry.Path)
-					dst := filepath.Join(archiveDir, entry.Path)
-					if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-						stats.Errors = append(stats.Errors, err)
-						continue
-					}
-					if err := os.Rename(src, dst); err != nil && !os.IsNotExist(err) {
-						stats.Errors = append(stats.Errors, err)
-						continue
-					}
+	}
+	if len(staleIDs) > 0 {
+		archiveDir := filepath.Join(opts.VaultDir, "_archive", archiveStamp)
+		for _, id := range staleIDs {
+			entry := manifest.Pages[id]
+			if !opts.DryRun {
+				src := filepath.Join(opts.VaultDir, entry.Path)
+				dst := filepath.Join(archiveDir, entry.Path)
+				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+					stats.Errors = append(stats.Errors, err)
+					continue
 				}
-				delete(manifest.Pages, id)
-				stats.Archived++
+				if err := os.Rename(src, dst); err != nil && !os.IsNotExist(err) {
+					stats.Errors = append(stats.Errors, err)
+					continue
+				}
 			}
+			delete(manifest.Pages, id)
+			stats.Archived++
 		}
+	}
+
+	// Build canonical filename per source, with collision suffixes so distinct
+	// source strings that slug to the same base do not overwrite each other.
+	sourceFilenames := map[string]string{} // raw source → filename (without dir)
+	slugCounts := map[string]int{}
+	for s := range sourceEntities {
+		slugCounts[slug(s)]++
+	}
+	for s := range sourceEntities {
+		base := slug(s)
+		if base == "" {
+			// Pathological: source string with no alphanumeric. Use a short hash.
+			h := sha256.Sum256([]byte(s))
+			base = hex.EncodeToString(h[:3])
+		}
+		fn := base + ".md"
+		if slugCounts[slug(s)] > 1 {
+			h := sha256.Sum256([]byte(s))
+			fn = base + "-" + hex.EncodeToString(h[:3]) + ".md"
+		}
+		sourceFilenames[s] = fn
 	}
 
 	if !opts.DryRun {
@@ -211,11 +232,38 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 		if err := os.MkdirAll(sourcesDir, 0o755); err != nil {
 			stats.Errors = append(stats.Errors, err)
 		} else {
+			// Compute the set of source filenames we will write this run.
+			liveSources := map[string]struct{}{}
+			for _, fn := range sourceFilenames {
+				liveSources[fn] = struct{}{}
+			}
+			// Archive existing source files that won't be written this run.
+			existing, _ := os.ReadDir(sourcesDir)
+			for _, ent := range existing {
+				if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".md") {
+					continue
+				}
+				if _, live := liveSources[ent.Name()]; live {
+					continue
+				}
+				archiveDir := filepath.Join(opts.VaultDir, "_archive", archiveStamp, "sources")
+				if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+					stats.Errors = append(stats.Errors, err)
+					continue
+				}
+				src := filepath.Join(sourcesDir, ent.Name())
+				dst := filepath.Join(archiveDir, ent.Name())
+				if err := os.Rename(src, dst); err != nil && !os.IsNotExist(err) {
+					stats.Errors = append(stats.Errors, err)
+					continue
+				}
+				stats.Archived++
+			}
 			for s, ents := range sourceEntities {
 				sort.Slice(ents, func(i, j int) bool { return ents[i].Name < ents[j].Name })
 				p := sourcePage{Source: s, Entities: ents, Memories: dedupSorted(sourceMemories[s])}
 				content := renderSource(p, exportedAt)
-				outPath := filepath.Join(sourcesDir, slug(s)+".md")
+				outPath := filepath.Join(sourcesDir, sourceFilenames[s])
 				if err := os.WriteFile(outPath, []byte(content), 0o644); err != nil {
 					stats.Errors = append(stats.Errors, err)
 				}
