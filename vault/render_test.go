@@ -109,6 +109,23 @@ func TestRenderIndex(t *testing.T) {
 	assertGolden(t, "index.golden.md", got)
 }
 
+func TestRenderEntity_WithConfidence(t *testing.T) {
+	ent := cortex.Entity{
+		ID:         "ent_01HUNSURE",
+		Type:       "person",
+		Name:       "Uncertain Ulrika",
+		Confidence: 0.7,
+		CreatedAt:  time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:  time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+	}
+	memories := []cortex.Memory{
+		{Content: "She may join Stripe", Source: "slack-rumor", Confidence: 0.4},
+		{Content: "She has a brother", Confidence: 1.0},
+	}
+	got := renderEntity(ent, memories, nil, nil, nil, fixedExportTime)
+	assertGolden(t, "entity_with_confidence.golden.md", got)
+}
+
 func TestFormatLogLine(t *testing.T) {
 	ts := time.Date(2026, 5, 26, 14, 32, 10, 0, time.UTC)
 	got := formatLogLine(ts, "export", "47 pages written, 3 archived")
