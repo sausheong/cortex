@@ -1,0 +1,125 @@
+package vault
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/sausheong/cortex"
+)
+
+// resolvedRel is a relationship with both ends resolved to vault paths
+// and display names. The exporter resolves these once when building the
+// in-memory page set; renderers consume them directly.
+type resolvedRel struct {
+	Type      string // e.g. "works_at"
+	OtherPath string // e.g. "organizations/stripe" (no .md suffix)
+	OtherName string // display name for wikilink alias
+}
+
+// renderEntity produces the markdown content of an entity page.
+// Sources is a list of source identifiers (filenames or labels) that
+// contributed to this entity; they are rendered as wikilinks to source
+// pages. Pass nil/empty slices to omit sections.
+func renderEntity(
+	e cortex.Entity,
+	memories []cortex.Memory,
+	outRels []resolvedRel,
+	inRels []resolvedRel,
+	sources []string,
+	exportedAt time.Time,
+) string {
+	var b strings.Builder
+
+	// Frontmatter.
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "cortex_id: %s\n", e.ID)
+	fmt.Fprintf(&b, "type: %s\n", e.Type)
+	fmt.Fprintf(&b, "name: %s\n", yamlString(e.Name))
+	if e.Source != "" {
+		fmt.Fprintf(&b, "source: %s\n", yamlString(e.Source))
+	}
+	fmt.Fprintf(&b, "created_at: %s\n", e.CreatedAt.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "updated_at: %s\n", e.UpdatedAt.UTC().Format(time.RFC3339))
+	if len(e.Attributes) > 0 {
+		b.WriteString("attributes:\n")
+		for _, k := range sortedKeys(e.Attributes) {
+			fmt.Fprintf(&b, "  %s: %s\n", k, yamlString(fmt.Sprint(e.Attributes[k])))
+		}
+	}
+	fmt.Fprintf(&b, "exported_at: %s\n", exportedAt.UTC().Format(time.RFC3339))
+	b.WriteString("---\n\n")
+
+	// Title.
+	fmt.Fprintf(&b, "# %s\n", e.Name)
+
+	// Sections. Each omitted if empty.
+	if len(memories) > 0 {
+		b.WriteString("\n## Memories\n\n")
+		for _, m := range memories {
+			if m.Source != "" {
+				fmt.Fprintf(&b, "- %s — `%s`\n", m.Content, m.Source)
+			} else {
+				fmt.Fprintf(&b, "- %s\n", m.Content)
+			}
+		}
+	}
+	if len(outRels) > 0 {
+		b.WriteString("\n## Relationships\n\n")
+		for _, r := range outRels {
+			fmt.Fprintf(&b, "- %s → [[%s|%s]]\n", r.Type, r.OtherPath, r.OtherName)
+		}
+	}
+	if len(inRels) > 0 {
+		b.WriteString("\n## Backlinks\n\n")
+		for _, r := range inRels {
+			fmt.Fprintf(&b, "- [[%s|%s]] — %s\n", r.OtherPath, r.OtherName, r.Type)
+		}
+	}
+	if len(sources) > 0 {
+		b.WriteString("\n## Sources\n\n")
+		for _, s := range sources {
+			fmt.Fprintf(&b, "- [[sources/%s]]\n", slug(s))
+		}
+	}
+
+	return b.String()
+}
+
+// yamlString wraps a value in double quotes if it contains characters
+// that would confuse a YAML parser. For our purposes (single-line strings
+// from entity names and attribute values), this catches the common cases
+// without pulling in a YAML library.
+func yamlString(s string) string {
+	if needsYAMLQuoting(s) {
+		// Escape backslashes and double quotes.
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `"`, `\"`)
+		return `"` + s + `"`
+	}
+	return s
+}
+
+func needsYAMLQuoting(s string) bool {
+	if s == "" {
+		return true
+	}
+	if strings.ContainsAny(s, ":#&*!|>'\"%@`\n\r\t") {
+		return true
+	}
+	// Leading/trailing whitespace or special leading chars.
+	if s[0] == ' ' || s[0] == '-' || s[0] == '?' || s[len(s)-1] == ' ' {
+		return true
+	}
+	return false
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
