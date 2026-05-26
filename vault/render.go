@@ -123,3 +123,74 @@ func sortedKeys(m map[string]any) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// sourcePage is the input to renderSource: one source identifier and
+// the entities + memories it contributed to.
+type sourcePage struct {
+	Source   string
+	Entities []sourceEntity
+	Memories []string
+}
+
+type sourceEntity struct {
+	Path string
+	Name string
+}
+
+func renderSource(p sourcePage, exportedAt time.Time) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "source: %s\n", yamlString(p.Source))
+	fmt.Fprintf(&b, "exported_at: %s\n", exportedAt.UTC().Format(time.RFC3339))
+	b.WriteString("---\n\n")
+	fmt.Fprintf(&b, "# %s\n", p.Source)
+	if len(p.Entities) > 0 {
+		b.WriteString("\n## Entities\n\n")
+		for _, e := range p.Entities {
+			fmt.Fprintf(&b, "- [[%s|%s]]\n", e.Path, e.Name)
+		}
+	}
+	if len(p.Memories) > 0 {
+		b.WriteString("\n## Memories\n\n")
+		for _, m := range p.Memories {
+			fmt.Fprintf(&b, "- %s\n", m)
+		}
+	}
+	return b.String()
+}
+
+// indexGroup is one section in index.md (e.g. all People entities).
+type indexGroup struct {
+	Heading string
+	Items   []indexItem
+}
+
+type indexItem struct {
+	Path    string
+	Name    string
+	Summary string // optional one-line description
+}
+
+func renderIndex(groups []indexGroup, exportedAt time.Time) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "exported_at: %s\n", exportedAt.UTC().Format(time.RFC3339))
+	b.WriteString("---\n\n# Index\n")
+	for _, g := range groups {
+		fmt.Fprintf(&b, "\n## %s\n\n", g.Heading)
+		for _, it := range g.Items {
+			if it.Summary != "" {
+				fmt.Fprintf(&b, "- [[%s|%s]] — %s\n", it.Path, it.Name, it.Summary)
+			} else {
+				fmt.Fprintf(&b, "- [[%s|%s]]\n", it.Path, it.Name)
+			}
+		}
+	}
+	b.WriteString("\n---\n\nSee also: [[log]]\n")
+	return b.String()
+}
+
+// formatLogLine builds a single log.md entry. Always terminated with \n.
+func formatLogLine(ts time.Time, op, summary string) string {
+	return fmt.Sprintf("## [%s] %s | %s\n", ts.UTC().Format(time.RFC3339), op, summary)
+}

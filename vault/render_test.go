@@ -73,3 +73,47 @@ func assertGolden(t *testing.T, name, got string) {
 		t.Errorf("rendered output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", name, got, string(want))
 	}
 }
+
+func TestRenderSource(t *testing.T) {
+	p := sourcePage{
+		Source: "notes/2026-04-02-coffee.md",
+		Entities: []sourceEntity{
+			{Path: "people/alice-chen", Name: "Alice Chen"},
+			{Path: "organizations/stripe", Name: "Stripe"},
+		},
+		Memories: []string{
+			"Alice is joining Stripe next month",
+			"Stripe is hiring aggressively in payments",
+		},
+	}
+	got := renderSource(p, fixedExportTime)
+	assertGolden(t, "source.golden.md", got)
+}
+
+func TestRenderIndex(t *testing.T) {
+	groups := []indexGroup{
+		{
+			Heading: "People",
+			Items: []indexItem{
+				{Path: "people/alice-chen", Name: "Alice Chen", Summary: "engineer at payments"},
+			},
+		},
+		{
+			Heading: "Organizations",
+			Items: []indexItem{
+				{Path: "organizations/stripe", Name: "Stripe"},
+			},
+		},
+	}
+	got := renderIndex(groups, fixedExportTime)
+	assertGolden(t, "index.golden.md", got)
+}
+
+func TestFormatLogLine(t *testing.T) {
+	ts := time.Date(2026, 5, 26, 14, 32, 10, 0, time.UTC)
+	got := formatLogLine(ts, "export", "47 pages written, 3 archived")
+	want := "## [2026-05-26T14:32:10Z] export | 47 pages written, 3 archived\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
