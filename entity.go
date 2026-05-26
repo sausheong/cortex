@@ -317,13 +317,14 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 		}
 		keep.Attributes[k] = v
 	}
+	mergeTime := time.Now().UTC()
 	record := mergeRecord{
 		ID:       drop.ID,
 		Name:     drop.Name,
 		Type:     drop.Type,
 		Source:   drop.Source,
 		Attrs:    drop.Attributes,
-		MergedAt: time.Now().UTC(),
+		MergedAt: mergeTime,
 	}
 	var existing []any
 	if raw, ok := keep.Attributes["merged_from"]; ok {
@@ -340,7 +341,7 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?`,
-		string(attrsJSON), time.Now().UTC(), keepID); err != nil {
+		string(attrsJSON), mergeTime, keepID); err != nil {
 		return stats, fmt.Errorf("cortex: update keep attributes: %w", err)
 	}
 

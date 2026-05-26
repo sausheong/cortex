@@ -556,7 +556,7 @@ func printMergeStats(s cortex.MergeStats, dryRun bool) {
 	}
 	fmt.Printf("  %d relationships%s re-targeted", s.Relationships, wouldBe)
 	if s.DupesDropped > 0 {
-		fmt.Printf(" (%d duplicates dropped)", s.DupesDropped)
+		fmt.Printf(" (%d duplicate%s dropped)", s.DupesDropped, plural(s.DupesDropped))
 	}
 	fmt.Println()
 	fmt.Printf("  %d memory links%s re-targeted\n", s.Memories, wouldBe)
