@@ -184,6 +184,8 @@ Commands:
   entity get <id>                Show entity details, attributes, and relationships
   forget --source <src>          Remove all knowledge from a source
   forget --entity <id>           Remove a specific entity and all linked data
+  merge <keep-id> <drop-id> [--dry-run]
+                                 Merge drop entity into keep entity; re-target all references
   config                         Show owner identity
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
@@ -218,6 +220,30 @@ cortex export [--vault <dir>] [--full] [--dry-run]
 The vault is laid out as `vault/people/`, `vault/organizations/`, `vault/concepts/`, etc., with one markdown page per entity. An `index.md` catalog and a chronological `log.md` live at the vault root. A hidden `.cortex-export.json` manifest tracks content hashes so subsequent runs only rewrite pages whose content has actually changed. Entities deleted from the graph are moved to `vault/_archive/<timestamp>/`.
 
 Each page carries YAML frontmatter (including the entity's full `cortex_id`) and renders memories, outbound relationships, backlinks, and source attribution. Wikilinks use explicit paths (`[[people/alice-chen|Alice Chen]]`), so the vault is browsable in Obsidian, in a plain editor, or via `grep`.
+
+### `cortex merge`
+
+Merge a duplicate entity into the canonical one.
+
+```bash
+cortex merge <keep-id> <drop-id> [--dry-run]
+```
+
+Re-targets every reference to the drop entity onto the keep entity: relationships, memory links, chunks, and the entity's vector embedding. Duplicate relationships and memory links that would arise from the re-target are collapsed. Self-loops (an edge from drop pointing at keep, which would become keep→keep after merge) are removed. The drop entity is then deleted.
+
+Attributes from the drop entity are unioned into the keep entity. **Keep wins** on duplicate keys — its existing attribute values are preserved. A `merged_from` record (containing the drop entity's name, type, source, and full attribute snapshot at merge time) is appended to the keep entity's attributes for provenance. Multiple merges into the same entity append to the same `merged_from` array.
+
+The whole operation runs in a single SQLite transaction. On any error, all changes are rolled back. `--dry-run` runs the same algorithm and reports identical stats, but always rolls back — useful for previewing a merge before committing to it.
+
+```bash
+$ cortex merge ent_01HKEEP ent_01HDROP --dry-run
+Dry-run: would merge ent_01HDROP → ent_01HKEEP (Alice Chen, person)
+  4 relationships would be re-targeted (1 duplicates dropped)
+  ...
+No changes written.
+```
+
+Errors out (exit 1) if either entity is missing, the IDs are identical, or the entities have different types (e.g. trying to merge a `person` into an `organization`).
 
 ### `cortex init-schema`
 
