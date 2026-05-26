@@ -94,6 +94,36 @@ CREATE TABLE IF NOT EXISTS sync_state (
 );
 `
 
+// ensureColumn adds column to table if it does not already exist.
+// Idempotent — safe to call on every Open. Used in lieu of a migrations
+// framework for single-column additions. ddl is the column definition
+// (everything after the column name in ALTER TABLE), e.g.
+// "REAL NOT NULL DEFAULT 1.0".
+func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("cortex: pragma_table_info(%s): %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)
+	if _, err := db.Exec(stmt); err != nil {
+		return fmt.Errorf("cortex: %s: %w", stmt, err)
+	}
+	return nil
+}
+
 // Open creates or opens a Cortex knowledge graph stored at the given path.
 func Open(path string, opts ...Option) (*Cortex, error) {
 	// Ensure parent directory exists.
@@ -113,6 +143,13 @@ func Open(path string, opts ...Option) (*Cortex, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cortex: apply schema: %w", err)
+	}
+
+	for _, t := range []string{"entities", "relationships", "memories"} {
+		if err := ensureColumn(db, t, "confidence", "REAL NOT NULL DEFAULT 1.0"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("cortex: migrate %s.confidence: %w", t, err)
+		}
 	}
 
 	c := &Cortex{db: db}

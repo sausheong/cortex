@@ -2,9 +2,12 @@ package cortex
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestOpenCreatesDatabase(t *testing.T) {
@@ -177,4 +180,82 @@ func TestSyncState(t *testing.T) {
 	if state != "cursor-456" {
 		t.Fatalf("expected %q, got %q", "cursor-456", state)
 	}
+}
+
+func TestEnsureColumn_AddsMissingColumn(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`CREATE TABLE t (id TEXT PRIMARY KEY, name TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureColumn(db, "t", "confidence", "REAL NOT NULL DEFAULT 1.0"); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	// Idempotent — second call is a no-op.
+	if err := ensureColumn(db, "t", "confidence", "REAL NOT NULL DEFAULT 1.0"); err != nil {
+		t.Fatalf("second call should be no-op: %v", err)
+	}
+
+	// Verify column exists and has the right default.
+	if _, err := db.Exec(`INSERT INTO t (id, name) VALUES ('x', 'hello')`); err != nil {
+		t.Fatal(err)
+	}
+	var c float64
+	if err := db.QueryRow(`SELECT confidence FROM t WHERE id = 'x'`).Scan(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c != 1.0 {
+		t.Errorf("default confidence = %v, want 1.0", c)
+	}
+}
+
+func TestOpen_AddsConfidenceColumnsToLegacyDB(t *testing.T) {
+	t.Skip("requires Task 2 (Entity.Confidence field)")
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+
+	// Build a "legacy" db with only the pre-confidence schema.
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDDL := `
+		CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, attributes TEXT, source TEXT, created_at DATETIME, updated_at DATETIME);
+		CREATE TABLE relationships (id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT, type TEXT NOT NULL, attributes TEXT, source TEXT, created_at DATETIME);
+		CREATE TABLE memories (id TEXT PRIMARY KEY, content TEXT NOT NULL, source TEXT, created_at DATETIME, updated_at DATETIME);
+	`
+	if _, err := db.Exec(legacyDDL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO entities (id, type, name) VALUES ('legacy1', 'person', 'Old Alice')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	// Open with the new code — should add columns without errors.
+	cx, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer cx.Close()
+
+	// Legacy row should now have confidence=1.0.
+	e, err := cx.GetEntity(context.Background(), "legacy1")
+	if err != nil {
+		t.Fatalf("GetEntity: %v", err)
+	}
+	_ = e
+	// TODO(task-2): un-skip and uncomment when Entity.Confidence is added.
+	// if e.Confidence != 1.0 {
+	// 	t.Errorf("legacy row confidence = %v, want 1.0", e.Confidence)
+	// }
 }
