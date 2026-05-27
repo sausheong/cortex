@@ -15,7 +15,7 @@ func registerTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- remember ---
 	s.AddTool(
 		mcp.NewTool("remember",
-			mcp.WithDescription("Store content in the knowledge graph. Extracts entities, relationships, memories, and chunks."),
+			mcp.WithDescription("Save a fact to the user's personal knowledge graph (cortex). Call this whenever the user shares information about themselves, a person, a project, a decision, or a preference that would be useful in a future conversation. Entities and relationships are extracted automatically."),
 			mcp.WithString("content", mcp.Required(), mcp.Description("The text content to remember")),
 			mcp.WithString("source", mcp.Description("Optional source label for the content")),
 		),
@@ -38,7 +38,7 @@ func registerTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- recall ---
 	s.AddTool(
 		mcp.NewTool("recall",
-			mcp.WithDescription("Recall information from the knowledge graph using multi-strategy retrieval."),
+			mcp.WithDescription("Search the user's personal knowledge graph (cortex). This contains everything the user has told the assistant to remember about themselves, their work, the people they know, and their projects. USE FIRST for any question about who/what/why — before web search, before any other tool. The web does not know the user's personal context; this does."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("The query to search for")),
 			mcp.WithNumber("limit", mcp.Description("Maximum number of results (default 20)")),
 			mcp.WithNumber("min_confidence", mcp.Description("Filter results below this confidence threshold (0.0-1.0). Default 0 = no filter.")),
