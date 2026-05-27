@@ -227,6 +227,37 @@ func registerTools(s *server.MCPServer, cx *cortex.Cortex) {
 			}
 		},
 	)
+
+	// --- merge ---
+	s.AddTool(
+		mcp.NewTool("merge",
+			mcp.WithDescription("Merge one entity into another, re-targeting all relationships, memory links, and chunks. Use to clean up duplicate entities surfaced by lint."),
+			mcp.WithString("keep_id", mcp.Required(), mcp.Description("Entity ID to keep")),
+			mcp.WithString("drop_id", mcp.Required(), mcp.Description("Entity ID to merge into keep and delete")),
+			mcp.WithBoolean("dry_run", mcp.Description("Simulate the merge and roll back; returns the stats without modifying the graph")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			keepID, err := req.RequireString("keep_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			dropID, err := req.RequireString("drop_id")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			dryRun := req.GetBool("dry_run", false)
+			var stats cortex.MergeStats
+			if dryRun {
+				stats, err = cx.MergeEntitiesDryRun(ctx, keepID, dropID)
+			} else {
+				stats, err = cx.MergeEntities(ctx, keepID, dropID)
+			}
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(stats)
+		},
+	)
 }
 
 func jsonResult(v any) (*mcp.CallToolResult, error) {

@@ -149,3 +149,80 @@ func textContent(t *testing.T, r *mcp.CallToolResult) string {
 	}
 	return tc.Text
 }
+
+func TestMergeTool_RoundTrip(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
+	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	if err := cx.PutEntity(ctx, keep); err != nil {
+		t.Fatalf("PutEntity keep: %v", err)
+	}
+	if err := cx.PutEntity(ctx, drop); err != nil {
+		t.Fatalf("PutEntity drop: %v", err)
+	}
+	if err := cx.PutRelationship(ctx, &cortex.Relationship{
+		SourceID: drop.ID, TargetID: keep.ID, Type: "duplicate_of",
+	}); err != nil {
+		t.Fatalf("PutRelationship: %v", err)
+	}
+
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "merge"
+	callReq.Params.Arguments = map[string]any{
+		"keep_id": keep.ID,
+		"drop_id": drop.ID,
+	}
+	resp, err := c.CallTool(ctx, callReq)
+	if err != nil {
+		t.Fatalf("CallTool merge: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("merge returned error: %+v", resp.Content)
+	}
+	var stats cortex.MergeStats
+	if err := json.Unmarshal([]byte(textContent(t, resp)), &stats); err != nil {
+		t.Fatalf("unmarshal MergeStats: %v", err)
+	}
+	if stats.Relationships < 1 {
+		t.Errorf("expected at least 1 relationship re-targeted, got %d", stats.Relationships)
+	}
+	// Drop entity should be gone.
+	if _, err := cx.GetEntity(ctx, drop.ID); err == nil {
+		t.Errorf("expected drop entity %s to be deleted", drop.ID)
+	}
+}
+
+func TestMergeTool_DryRun(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
+	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	if err := cx.PutEntity(ctx, keep); err != nil {
+		t.Fatalf("PutEntity keep: %v", err)
+	}
+	if err := cx.PutEntity(ctx, drop); err != nil {
+		t.Fatalf("PutEntity drop: %v", err)
+	}
+
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "merge"
+	callReq.Params.Arguments = map[string]any{
+		"keep_id": keep.ID,
+		"drop_id": drop.ID,
+		"dry_run": true,
+	}
+	resp, err := c.CallTool(ctx, callReq)
+	if err != nil {
+		t.Fatalf("CallTool merge dry-run: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("merge dry-run returned error: %+v", resp.Content)
+	}
+	// Drop entity should STILL exist.
+	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
+		t.Errorf("dry-run should not delete drop entity: %v", err)
+	}
+}
