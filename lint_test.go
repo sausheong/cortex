@@ -403,3 +403,93 @@ func TestLint_CountsPopulated(t *testing.T) {
 		t.Errorf("MemoryCount = %d, want 1", r.MemoryCount)
 	}
 }
+
+// --- Test 13: Render markdown ---
+
+func TestLint_RenderMarkdown(t *testing.T) {
+	r := LintReport{
+		EntityCount:       10,
+		RelationshipCount: 5,
+		MemoryCount:       7,
+		Orphans: []EntityRef{
+			{ID: "ent_01", Name: "Floating", Type: "concept"},
+		},
+		NearDuplicates: []DuplicatePair{
+			{Type: "person", A: EntityRef{ID: "ent_02", Name: "Alice Chen", Type: "person"}, B: EntityRef{ID: "ent_03", Name: "alice chen", Type: "person"}},
+		},
+		UnlinkedMemories: []MemoryRef{
+			{ID: "mem_01", Content: "loose memory", Source: "slack-export", Confidence: 1.0},
+		},
+	}
+	got := renderLintMarkdown(r)
+
+	if !strings.Contains(got, "Scanned 10 entities, 5 relationships, 7 memories.") {
+		t.Errorf("missing header summary, got:\n%s", got)
+	}
+	if !strings.Contains(got, "## Orphan entities (1)") {
+		t.Errorf("missing orphans heading, got:\n%s", got)
+	}
+	if !strings.Contains(got, "ent_01") {
+		t.Errorf("missing orphan ID, got:\n%s", got)
+	}
+	if !strings.Contains(got, "## Near-duplicate entity names (1 pair") {
+		t.Errorf("missing near-duplicates heading, got:\n%s", got)
+	}
+	if !strings.Contains(got, "ent_02") || !strings.Contains(got, "ent_03") {
+		t.Errorf("missing duplicate IDs, got:\n%s", got)
+	}
+	if !strings.Contains(got, "## Memories with no entity links (1)") {
+		t.Errorf("missing unlinked memories heading, got:\n%s", got)
+	}
+	if !strings.Contains(got, "loose memory") {
+		t.Errorf("missing memory content, got:\n%s", got)
+	}
+	if strings.Contains(got, "## Dead sources") {
+		t.Errorf("empty section should be omitted, got:\n%s", got)
+	}
+	if strings.Contains(got, "## Entities without memories") {
+		t.Errorf("empty section should be omitted, got:\n%s", got)
+	}
+}
+
+func TestLint_RenderMarkdown_HealthyGraph(t *testing.T) {
+	r := LintReport{EntityCount: 100, RelationshipCount: 50, MemoryCount: 200}
+	got := renderLintMarkdown(r)
+
+	if !strings.Contains(got, "Scanned 100 entities") {
+		t.Errorf("missing summary: %s", got)
+	}
+	if strings.Contains(got, "## Orphan") || strings.Contains(got, "## Near-duplicate") ||
+		strings.Contains(got, "## Memories") || strings.Contains(got, "## Dead") {
+		t.Errorf("healthy graph should have no finding sections, got:\n%s", got)
+	}
+}
+
+func TestLint_RenderMarkdown_LowConfidenceSkippedNote(t *testing.T) {
+	r := LintReport{EntityCount: 10, RelationshipCount: 5, MemoryCount: 7}
+	got := renderLintMarkdown(r)
+	if !strings.Contains(got, "Low-confidence memories (skipped") {
+		t.Errorf("expected skipped note, got:\n%s", got)
+	}
+}
+
+func TestLint_RenderMarkdown_LowConfidenceWithFindings(t *testing.T) {
+	r := LintReport{
+		EntityCount:       10,
+		RelationshipCount: 5,
+		MemoryCount:       7,
+		LowConfidenceMemories: []MemoryRef{
+			{ID: "mem_lc", Content: "shaky claim", Source: "slack", Confidence: 0.2},
+		},
+	}
+	got := renderLintMarkdown(r)
+	if !strings.Contains(got, "## Low-confidence memories (1)") {
+		t.Errorf("missing low-confidence section, got:\n%s", got)
+	}
+	if !strings.Contains(got, "mem_lc") {
+		t.Errorf("missing memory id, got:\n%s", got)
+	}
+	if strings.Contains(got, "skipped") {
+		t.Errorf("should not show skipped note when section populated, got:\n%s", got)
+	}
+}
