@@ -9,30 +9,42 @@ Inspired by [GBrain](https://github.com/garrytan/gbrain) (operational model), [C
 ## How It Works
 
 ```
-Signal arrives (note, conversation)
-  -> Hybrid extraction (deterministic + LLM)
-     -> Entities: Alice (person), Stripe (org), distributed systems (concept)
-     -> Relationships: Alice --works_at--> Stripe
-     -> Memories: "Alice is joining Stripe next month"
-  -> Store in unified graph (SQLite)
-  -> Embed for semantic search
+Ingest
+  Signal arrives (note, conversation)
+    -> Hybrid extraction (deterministic + LLM)
+       -> Entities: Alice (person), Stripe (org), distributed systems (concept)
+       -> Relationships: Alice --works_at--> Stripe
+       -> Memories: "Alice is joining Stripe next month" (confidence: 0.9)
+    -> Store in unified graph (SQLite)
+    -> Embed for semantic search
 
-Query arrives ("What do I know about Alice?")
-  -> LLM decomposes into sub-queries
-  -> Parallel search: memories + keywords + vectors + graph traversal
-  -> Reciprocal Rank Fusion merges results
-  -> Ranked results with provenance
+Query
+  ("What do I know about Alice?")
+    -> LLM decomposes into sub-queries
+    -> Parallel search: memories + keywords + vectors + graph traversal
+    -> Reciprocal Rank Fusion merges results
+    -> Ranked results with provenance + confidence
+
+Maintain
+  Project   -> cortex export --vault ./vault   (browsable Obsidian-compatible projection)
+  Tidy      -> cortex lint                     (orphans, near-duplicates, dead sources)
+  Reconcile -> cortex merge <keep-id> <drop-id>   (atomic dedup with provenance)
+  Brief     -> cortex init-schema              (drops CORTEX.md agent contract for AI clients)
 ```
 
-Every cycle through this loop adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. You never start from zero.
+Every cycle through ingest/query adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. The maintain loop (export, lint, merge) is what keeps the graph healthy as it grows — run periodically, ideally by an agent reading the lint report and acting on its suggestions. You never start from zero.
 
 ## Features
 
 - **Unified knowledge graph** — people, organizations, concepts, events, documents as first-class nodes with typed relationships
 - **Remember / Recall / Forget** — simple high-level API inspired by mem0
 - **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
+- **Confidence scores** — every extracted entity, relationship, and memory carries a 0–1 confidence value the LLM assigns at ingest. Filter results with `--min-confidence`; lower-confidence claims show inline in vault pages and recall output
 - **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
 - **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
+- **Obsidian-compatible vault export** — `cortex export` projects the graph as a browsable markdown vault with frontmatter, wikilinks, and backlinks. Incremental change detection via a hidden manifest
+- **Agent contract** — `cortex init-schema` drops a `CORTEX.md` into a project that tells any LLM-based agent how to use cortex as the knowledge layer (when to recall, when to remember, what not to store)
+- **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report
 - **Three interfaces** — CLI, MCP stdio server, HTTP/REST API
 - **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
