@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net"
+	"net/http"
+	"strings"
 )
 
 // isLoopback reports whether the given host:port address binds only the
@@ -17,4 +20,23 @@ func isLoopback(addr string) bool {
 		return true
 	}
 	return false
+}
+
+// bearerAuthMiddleware wraps next with a constant-time Bearer-token check
+// against expected. Returns 401 with a JSON {"error":"unauthorized"} body
+// on any mismatch (missing header, wrong scheme, wrong token).
+func bearerAuthMiddleware(next http.Handler, expected string) http.Handler {
+	want := []byte(expected)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(h, prefix) ||
+			subtle.ConstantTimeCompare([]byte(h[len(prefix):]), want) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
