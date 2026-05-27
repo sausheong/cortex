@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -15,15 +16,66 @@ import (
 	oaillm "github.com/sausheong/cortex/llm/openai"
 )
 
+type config struct {
+	transport string
+	addr      string
+	token     string
+}
+
+func parseFlags(args []string) (config, error) {
+	cfg := config{
+		transport: envOr("CORTEX_TRANSPORT", "stdio"),
+		addr:      envOr("CORTEX_ADDR", "127.0.0.1:8080"),
+		token:     os.Getenv("CORTEX_AUTH_TOKEN"),
+	}
+
+	fs := flag.NewFlagSet("cortex-mcp", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	transport := fs.String("transport", cfg.transport, "transport: stdio | http")
+	addr := fs.String("addr", cfg.addr, "host:port for http transport")
+
+	if err := fs.Parse(args[1:]); err != nil {
+		return config{}, err
+	}
+	cfg.transport = *transport
+	cfg.addr = *addr
+
+	switch cfg.transport {
+	case "stdio", "http":
+	default:
+		return config{}, fmt.Errorf("invalid --transport %q (must be stdio or http)", cfg.transport)
+	}
+	return cfg, nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func main() {
+	cfg, err := parseFlags(os.Args)
+	if err != nil {
+		os.Exit(2)
+	}
+
 	cx := openCortex()
 	defer cx.Close()
 
 	s := server.NewMCPServer("cortex", "1.0.0", server.WithToolCapabilities(false))
 	registerTools(s, cx)
 
-	if err := server.ServeStdio(s); err != nil {
-		fmt.Fprintf(os.Stderr, "mcp server error: %v\n", err)
+	var serveErr error
+	switch cfg.transport {
+	case "stdio":
+		serveErr = serveStdio(s)
+	case "http":
+		serveErr = serveHTTP(s, cfg.addr, cfg.token)
+	}
+	if serveErr != nil {
+		fmt.Fprintf(os.Stderr, "mcp server error: %v\n", serveErr)
 		os.Exit(1)
 	}
 }
