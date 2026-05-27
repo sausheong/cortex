@@ -1,6 +1,9 @@
-BINARY_DIR := bin
+BINARY_DIR   := bin
+DIST_DIR     := $(BINARY_DIR)/dist
+PLATFORMS    := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64 windows-amd64 windows-arm64
+DIST_TARGETS := $(addprefix dist-,$(PLATFORMS))
 
-.PHONY: all build clean test test-v test-cover vet tidy install run-mcp run-mcp-http
+.PHONY: all build clean test test-v test-cover vet tidy install run-mcp run-mcp-http dist $(DIST_TARGETS)
 
 all: build
 
@@ -38,3 +41,16 @@ run-mcp: build
 
 run-mcp-http: build
 	$(BINARY_DIR)/cortex-mcp --transport http
+
+dist: $(DIST_TARGETS)
+	@echo "Release artifacts written to $(DIST_DIR)/"
+	@ls -1 $(DIST_DIR)/
+
+$(DIST_TARGETS):
+	@mkdir -p $(DIST_DIR)
+	@OS=`echo $@ | sed 's/^dist-//' | cut -d- -f1`; \
+	ARCH=`echo $@ | sed 's/^dist-//' | cut -d- -f2`; \
+	EXT=`[ "$$OS" = "windows" ] && echo .exe || echo ""`; \
+	echo "Building $$OS/$$ARCH..."; \
+	CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build -o $(DIST_DIR)/cortex-$$OS-$$ARCH$$EXT     ./cmd/cortex/     && \
+	CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build -o $(DIST_DIR)/cortex-mcp-$$OS-$$ARCH$$EXT ./cmd/cortex-mcp/
