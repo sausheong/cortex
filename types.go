@@ -236,3 +236,66 @@ type mergeRecord struct {
 	Attrs    map[string]any `json:"attrs,omitempty"`
 	MergedAt time.Time      `json:"merged_at"`
 }
+
+// --- Lint ---
+
+// LintReport summarizes the cleanup candidates the lint scan found.
+type LintReport struct {
+	EntityCount       int
+	RelationshipCount int
+	MemoryCount       int
+
+	Orphans               []EntityRef
+	EntitiesNoMemories    []EntityRef
+	NearDuplicates        []DuplicatePair
+	DeadSources           []string
+	UnlinkedMemories      []MemoryRef
+	LowConfidenceMemories []MemoryRef // populated only when WithLowConfidence is set
+}
+
+// EntityRef is a minimal entity descriptor for lint findings.
+type EntityRef struct {
+	ID   string
+	Name string
+	Type string
+}
+
+// DuplicatePair is one pair of entities that share a type and have
+// case-insensitively-equal names.
+type DuplicatePair struct {
+	Type string
+	A    EntityRef
+	B    EntityRef
+}
+
+// MemoryRef is a minimal memory descriptor for lint findings.
+// Content is truncated to ~80 chars + "..." if longer.
+type MemoryRef struct {
+	ID         string
+	Content    string
+	Source     string
+	Confidence float64
+}
+
+// LintOption configures Lint behavior.
+type LintOption func(*lintConfig)
+
+type lintConfig struct {
+	lowConfidence          bool
+	lowConfidenceThreshold float64
+}
+
+// WithLowConfidence enables the low-confidence memories section
+// (skipped by default).
+func WithLowConfidence() LintOption {
+	return func(c *lintConfig) { c.lowConfidence = true }
+}
+
+// WithLowConfidenceThreshold sets the cutoff for "low confidence"
+// (default 0.3) and implicitly enables the section.
+func WithLowConfidenceThreshold(t float64) LintOption {
+	return func(c *lintConfig) {
+		c.lowConfidence = true
+		c.lowConfidenceThreshold = t
+	}
+}

@@ -186,6 +186,8 @@ Commands:
   forget --entity <id>           Remove a specific entity and all linked data
   merge <keep-id> <drop-id> [--dry-run]
                                  Merge drop entity into keep entity; re-target all references
+  lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
+                                 Scan the graph for cleanup candidates; print markdown report
   config                         Show owner identity
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
@@ -244,6 +246,27 @@ No changes written.
 ```
 
 Errors out (exit 1) if either entity is missing, the IDs are identical, or the entities have different types (e.g. trying to merge a `person` into an `organization`).
+
+### `cortex lint`
+
+Scan the graph for cleanup candidates and print a markdown report.
+
+```bash
+cortex lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
+```
+
+Pure read operation — never modifies the graph. Six checks run on every invocation:
+
+- **Orphan entities** — no relationships, no memory links. Often extraction noise.
+- **Entities without memories** — have relationships but nothing said about them.
+- **Near-duplicate entity names** — same type + case-insensitively-equal name. Direct candidates for `cortex merge`.
+- **Dead sources** — source strings on memory rows with no matching live entity.
+- **Unlinked memories** — memories not joined to any entity; findable via search but invisible to graph traversal.
+- **Low-confidence memories** — opt-in via `--low-confidence`. Default threshold 0.3; override with `--low-confidence-threshold <n>` (which also enables the section).
+
+Output is markdown by default — empty sections are omitted so a healthy graph shows just the count summary. Use `--out <path>` to write the report to a file.
+
+Lint is informational. Even when findings are present, exit code is 0.
 
 ### `cortex init-schema`
 
