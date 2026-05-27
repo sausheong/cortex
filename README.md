@@ -186,7 +186,7 @@ Commands:
   forget --entity <id>           Remove a specific entity and all linked data
   merge <keep-id> <drop-id> [--dry-run]
                                  Merge drop entity into keep entity; re-target all references
-  lint [--low-confidence] [--out <file>]
+  lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
                                  Scan the graph for cleanup candidates; print markdown report
   config                         Show owner identity
   config --name <name>           Update owner name
