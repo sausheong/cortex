@@ -258,6 +258,42 @@ func registerTools(s *server.MCPServer, cx *cortex.Cortex) {
 			return jsonResult(stats)
 		},
 	)
+
+	// --- lint ---
+	s.AddTool(
+		mcp.NewTool("lint",
+			mcp.WithDescription("Scan the graph for cleanup candidates: orphans, near-duplicates, dead sources, unlinked memories."),
+			mcp.WithBoolean("low_confidence", mcp.Description("Include low-confidence memories section")),
+			mcp.WithNumber("low_confidence_threshold", mcp.Description("Confidence threshold 0-1; implies low_confidence=true")),
+			mcp.WithString("format", mcp.Description("Output format: json (default) or markdown"), mcp.Enum("json", "markdown")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var opts []cortex.LintOption
+			thresholdSet := req.GetFloat("low_confidence_threshold", -1) >= 0
+			if thresholdSet {
+				th := req.GetFloat("low_confidence_threshold", 0)
+				if th < 0 || th > 1 {
+					return mcp.NewToolResultError("low_confidence_threshold must be between 0 and 1"), nil
+				}
+				opts = append(opts, cortex.WithLowConfidenceThreshold(th))
+			} else if req.GetBool("low_confidence", false) {
+				opts = append(opts, cortex.WithLowConfidence())
+			}
+			report, err := cx.Lint(ctx, opts...)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			format := req.GetString("format", "json")
+			switch format {
+			case "json", "":
+				return jsonResult(report)
+			case "markdown":
+				return mcp.NewToolResultText(cortex.RenderLintMarkdown(report)), nil
+			default:
+				return mcp.NewToolResultError(fmt.Sprintf("unknown format: %s", format)), nil
+			}
+		},
+	)
 }
 
 func jsonResult(v any) (*mcp.CallToolResult, error) {

@@ -74,8 +74,12 @@ func TestRegisterTools_AllToolsListed(t *testing.T) {
 	for _, tl := range resp.Tools {
 		got[tl.Name] = true
 	}
-	// Task 6 verifies the 8 existing tools. Tasks 7-8 will extend this to 10.
-	want := []string{"remember", "recall", "forget", "get_entity", "find_entities", "get_relationships", "traverse", "search"}
+	want := []string{
+		"remember", "recall", "forget",
+		"get_entity", "find_entities", "get_relationships",
+		"traverse", "search",
+		"merge", "lint",
+	}
 	for _, name := range want {
 		if !got[name] {
 			t.Errorf("missing tool: %s", name)
@@ -224,5 +228,95 @@ func TestMergeTool_DryRun(t *testing.T) {
 	// Drop entity should STILL exist.
 	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
 		t.Errorf("dry-run should not delete drop entity: %v", err)
+	}
+}
+
+func TestLintTool_JSON(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	// Seed an orphan entity (no relationships, no memory links).
+	orphan := &cortex.Entity{Type: "concept", Name: "Mauve"}
+	if err := cx.PutEntity(ctx, orphan); err != nil {
+		t.Fatalf("PutEntity orphan: %v", err)
+	}
+
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "lint"
+	callReq.Params.Arguments = map[string]any{} // default format=json
+
+	resp, err := c.CallTool(ctx, callReq)
+	if err != nil {
+		t.Fatalf("CallTool lint: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("lint returned error: %+v", resp.Content)
+	}
+	var report cortex.LintReport
+	if err := json.Unmarshal([]byte(textContent(t, resp)), &report); err != nil {
+		t.Fatalf("unmarshal LintReport: %v", err)
+	}
+	foundOrphan := false
+	for _, e := range report.Orphans {
+		if e.ID == orphan.ID {
+			foundOrphan = true
+			break
+		}
+	}
+	if !foundOrphan {
+		t.Errorf("expected orphan %s in report, got %+v", orphan.ID, report.Orphans)
+	}
+}
+
+func TestLintTool_Markdown(t *testing.T) {
+	cx := newTestCortex(t)
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "lint"
+	callReq.Params.Arguments = map[string]any{"format": "markdown"}
+
+	resp, err := c.CallTool(context.Background(), callReq)
+	if err != nil {
+		t.Fatalf("CallTool lint markdown: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("lint markdown returned error: %+v", resp.Content)
+	}
+	text := textContent(t, resp)
+	if !strings.Contains(text, "# Cortex Lint Report") {
+		t.Errorf("markdown output missing header: %s", text)
+	}
+}
+
+func TestLintTool_ThresholdImpliesLowConfidence(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	// Seed a memory with explicit low confidence so it shows up under threshold 0.5.
+	mem := &cortex.Memory{Content: "shaky claim", Confidence: 0.2}
+	if err := cx.PutMemory(ctx, mem); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "lint"
+	callReq.Params.Arguments = map[string]any{
+		"format":                   "json",
+		"low_confidence_threshold": 0.5,
+		// note: low_confidence flag NOT set
+	}
+	resp, err := c.CallTool(ctx, callReq)
+	if err != nil {
+		t.Fatalf("CallTool lint: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("lint returned error: %+v", resp.Content)
+	}
+	var report cortex.LintReport
+	if err := json.Unmarshal([]byte(textContent(t, resp)), &report); err != nil {
+		t.Fatalf("unmarshal LintReport: %v", err)
+	}
+	if len(report.LowConfidenceMemories) == 0 {
+		t.Errorf("threshold should imply low_confidence=true; got empty LowConfidenceMemories")
 	}
 }
