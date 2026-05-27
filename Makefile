@@ -1,6 +1,6 @@
 BINARY_DIR := bin
 
-.PHONY: all build clean test test-v test-cover vet tidy install run-http run-mcp
+.PHONY: all build clean test test-v test-cover vet tidy install run-mcp run-mcp-http
 
 all: build
 
@@ -8,7 +8,6 @@ build:
 	@mkdir -p $(BINARY_DIR)
 	go build -o $(BINARY_DIR)/cortex ./cmd/cortex/
 	go build -o $(BINARY_DIR)/cortex-mcp ./cmd/cortex-mcp/
-	go build -o $(BINARY_DIR)/cortex-http ./cmd/cortex-http/
 
 test:
 	go test ./... -count=1
@@ -32,10 +31,10 @@ clean:
 	rm -f coverage.out coverage.html
 
 install: build
-	cp $(BINARY_DIR)/cortex $(BINARY_DIR)/cortex-mcp $(BINARY_DIR)/cortex-http /usr/local/bin/
-
-run-http: build
-	$(BINARY_DIR)/cortex-http
+	cp $(BINARY_DIR)/cortex $(BINARY_DIR)/cortex-mcp /usr/local/bin/
 
 run-mcp: build
 	$(BINARY_DIR)/cortex-mcp
+
+run-mcp-http: build
+	$(BINARY_DIR)/cortex-mcp --transport http

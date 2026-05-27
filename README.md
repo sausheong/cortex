@@ -45,7 +45,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Obsidian-compatible vault export** — `cortex export` projects the graph as a browsable markdown vault with frontmatter, wikilinks, and backlinks. Incremental change detection via a hidden manifest
 - **Agent contract** — `cortex init-schema` drops a `CORTEX.md` into a project that tells any LLM-based agent how to use cortex as the knowledge layer (when to recall, when to remember, what not to store)
 - **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report
-- **Three interfaces** — CLI, MCP stdio server, HTTP/REST API
+- **Two interfaces** — CLI and MCP server (stdio or streamable HTTP)
 - **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
 
@@ -56,7 +56,6 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - [Setup](#setup)
 - [CLI Reference](#cli-reference)
 - [MCP Server](#using-as-an-mcp-server)
-- [HTTP/REST Server](#using-as-an-httprest-server)
 - [Go Library](#using-as-a-go-library)
 - [Architecture](#architecture)
 - [API Reference](#core-api-reference)
@@ -89,7 +88,7 @@ cd cortex
 make
 
 # Or build individually
-make build          # cortex, cortex-mcp, cortex-http -> bin/
+make build          # cortex, cortex-mcp -> bin/
 
 # Optional: install to /usr/local/bin
 sudo make install
@@ -337,6 +336,30 @@ Add to your MCP server configuration:
 }
 ```
 
+### HTTP transport
+
+Cortex can also serve MCP over streamable HTTP for clients that can't or won't drive a subprocess:
+
+```bash
+# Default: listens on 127.0.0.1:8080, MCP endpoint at /mcp
+bin/cortex-mcp --transport http
+
+# Bind elsewhere
+bin/cortex-mcp --transport http --addr 0.0.0.0:9000
+
+# With bearer-token auth (required if you expose the port beyond localhost)
+CORTEX_AUTH_TOKEN=$(openssl rand -hex 32) bin/cortex-mcp --transport http
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8080/healthz
+# {"status":"ok"}
+```
+
+Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Flags win over env. Stdio remains the default — `cortex-mcp` with no arguments behaves exactly as before.
+
 ### Available MCP Tools
 
 | Tool | Description | Required Params | Optional Params |
@@ -353,83 +376,6 @@ Add to your MCP server configuration:
 The `search` tool's `mode` parameter accepts `keyword`, `vector`, or `memory` to select the search strategy directly, bypassing query decomposition.
 
 The `traverse` tool's `edge_types` parameter accepts a comma-separated list of relationship types to follow (e.g., `"works_at,knows"`).
-
----
-
-## Using as an HTTP/REST Server
-
-### Build and Run
-
-```bash
-make build
-
-OPENAI_API_KEY=sk-... CORTEX_DB=brain.db bin/cortex-http
-# cortex-http listening on :8080
-
-# Or use the make shortcut:
-make run-http
-```
-
-### Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/remember` | Ingest content |
-| GET | `/recall` | Natural language query |
-| DELETE | `/forget` | Remove knowledge |
-| GET | `/entity/{id}` | Get entity by ID |
-| GET | `/entities` | Search entities |
-| GET | `/relationships/{entity_id}` | Get relationships |
-| GET | `/traverse/{entity_id}` | Walk graph |
-| GET | `/search` | Direct search |
-
-### Examples
-
-**Remember:**
-```bash
-curl -X POST localhost:8080/remember \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Alice works at Stripe as a staff engineer", "source": "manual"}'
-
-# Response: {"status": "remembered"}
-```
-
-**Recall:**
-```bash
-curl 'localhost:8080/recall?q=who+works+at+Stripe&limit=5'
-
-# Response: [{"type":"memory","content":"Alice works at Stripe...","score":0.032,...}, ...]
-```
-
-**Find entities:**
-```bash
-curl 'localhost:8080/entities?type=person'
-
-# Response: [{"id":"01J...","type":"person","name":"Alice",...}, ...]
-```
-
-**Traverse the graph:**
-```bash
-curl 'localhost:8080/traverse/01JXYZ...?depth=2&edge_types=works_at,knows'
-
-# Response: {"entities":[...],"relationships":[...]}
-```
-
-**Direct search:**
-```bash
-curl 'localhost:8080/search?q=distributed+systems&mode=vector&limit=5'
-
-# Response: [{"id":"...","content":"Alice works on distributed systems...",...}, ...]
-```
-
-**Forget:**
-```bash
-curl -X DELETE 'localhost:8080/forget?source=markdown'
-
-# Response: {"status": "forgotten"}
-```
-
-All endpoints return JSON. Errors use `{"error": "message"}` with appropriate HTTP status codes (400 for bad input, 404 for not found, 500 for internal errors).
 
 ---
 
@@ -605,8 +551,7 @@ cortex/
 │   └── conversation/        # Conversation message connector
 ├── cmd/
 │   ├── cortex/              # CLI
-│   ├── cortex-mcp/          # MCP stdio server
-│   └── cortex-http/         # HTTP/REST server
+│   └── cortex-mcp/          # MCP server (stdio + streamable HTTP)
 └── internal/testutil/       # Test mocks and helpers
 ```
 
@@ -906,7 +851,7 @@ Cortex uses embedded SQLite via [`modernc.org/sqlite`](https://pkg.go.dev/modern
 
 ### Design Choices
 
-- **WAL mode** — enables concurrent reads while writing; important when the MCP/HTTP server handles queries during ingestion
+- **WAL mode** — enables concurrent reads while writing; important when the MCP server handles queries during ingestion
 - **FTS5** — SQLite's full-text search extension for fast keyword matching
 - **Brute-force cosine similarity** — vector embeddings stored as BLOBs, similarity computed in Go. Performant for personal-scale data (<100K vectors). Can be swapped for [sqlite-vec](https://github.com/asg017/sqlite-vec) when mature Go bindings are available.
 - **ULIDs** — time-sortable, globally unique, URL-safe identifiers for all entities
@@ -1028,8 +973,10 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORTEX_DB` | `brain.db` | Database file path (CLI, MCP, HTTP) |
-| `CORTEX_PORT` | `8080` | HTTP server listen port |
+| `CORTEX_DB` | `brain.db` | Database file path (CLI, MCP) |
+| `CORTEX_TRANSPORT` | `stdio` | MCP transport: `stdio` or `http` |
+| `CORTEX_ADDR` | `127.0.0.1:8080` | Listen address when transport is `http` |
+| `CORTEX_AUTH_TOKEN` | _(unset)_ | Bearer token required for HTTP transport on non-loopback binds |
 
 ### Example Configurations
 
@@ -1081,8 +1028,8 @@ make vet          Run go vet
 make tidy         Run go mod tidy
 make clean        Remove bin/ and coverage files
 make install      Copy binaries to /usr/local/bin
-make run-http     Build and run HTTP server
-make run-mcp      Build and run MCP server
+make run-mcp      Build and run MCP server (stdio)
+make run-mcp-http Build and run MCP server (streamable HTTP)
 ```
 
 ## Running Tests
