@@ -105,6 +105,18 @@ cortex merge <keep-id> <drop-id>             # commit
 
 Always preview with `--dry-run` first. Merge re-targets every reference (relationships, memories, chunks) and deletes the drop entity; the operation is atomic.
 
+### Linting the graph
+
+`cortex lint` runs a fast read-only scan and prints a markdown report of cleanup candidates: orphan entities, near-duplicate names, unlinked memories, and more. No LLM required. Run it periodically — weekly is a reasonable cadence for an actively-used brain.
+
+```
+cortex lint                       # full report to stdout
+cortex lint --out lint-report.md  # write to file
+cortex lint --low-confidence      # also surface memories the extractor was unsure about
+```
+
+The report's near-duplicate pairs are direct inputs to `cortex merge`. Other findings (orphans, unlinked memories) usually mean `cortex forget` or just leaving them alone.
+
 ## Customization
 
 This file is yours to edit. Add project-specific guidance: which entity types matter most here, which sources are authoritative, when to escalate to the user before remembering, custom relationship types you want extracted. The static template ships generic on purpose — make it specific.
