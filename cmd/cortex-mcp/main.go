@@ -58,6 +58,7 @@ func envOr(key, fallback string) string {
 func main() {
 	cfg, err := parseFlags(os.Args)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
