@@ -67,6 +67,8 @@ func main() {
 		cmdExport()
 	case "init-schema":
 		cmdInitSchema()
+	case "lint":
+		cmdLint()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -99,7 +101,9 @@ Commands:
   export [--vault <dir>] [--full] [--dry-run]
                                  Export the knowledge graph as an Obsidian-compatible markdown vault
   init-schema [<dir>] [--force]
-                                 Write CORTEX.md (generic agent contract) to <dir> (default: cwd)`)
+                                 Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
+  lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
+                                 Scan the graph for cleanup candidates (orphans, near-duplicates, etc.)`)
 }
 
 func openCortex() *cortex.Cortex {

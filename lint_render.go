@@ -76,3 +76,9 @@ func renderLintMarkdown(r LintReport) string {
 
 	return b.String()
 }
+
+// RenderLintMarkdown formats a LintReport as a human-readable markdown
+// document. Exported wrapper for CLI consumption.
+func RenderLintMarkdown(r LintReport) string {
+	return renderLintMarkdown(r)
+}
