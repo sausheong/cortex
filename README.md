@@ -1053,3 +1053,4 @@ OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
 # Run Anthropic integration tests (requires API key)
 ANTHROPIC_API_KEY=sk-ant-... go test ./llm/anthropic/ -v
 ```
+
