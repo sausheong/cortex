@@ -17,8 +17,7 @@ Treat cortex as your long-term memory. Read from it before answering questions. 
 These are available via:
 
 - **CLI** — `cortex recall "..."`, `cortex remember "..."`, etc.
-- **MCP** — the `cortex-mcp` server exposes them as MCP tools.
-- **HTTP** — `cortex-http` exposes them as REST endpoints.
+- **MCP** — `cortex mcp` serves them as MCP tools (stdio by default, `--transport http` for HTTP).
 
 Use whichever surface is configured in this project.
 

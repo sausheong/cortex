@@ -31,8 +31,7 @@ for plat in "${PLATFORMS[@]}"; do
   rm -rf "$stage"
   mkdir -p "$stage"
 
-  cp "cortex-${plat}${ext}"     "${stage}/cortex${ext}"
-  cp "cortex-mcp-${plat}${ext}" "${stage}/cortex-mcp${ext}"
+  cp "cortex-${plat}${ext}" "${stage}/cortex${ext}"
   [ ${#EXTRAS[@]} -gt 0 ] && cp "${EXTRAS[@]}" "$stage/"
 
   if [ "$os" = "windows" ]; then

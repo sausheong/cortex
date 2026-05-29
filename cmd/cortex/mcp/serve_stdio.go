@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"fmt"
@@ -10,6 +10,6 @@ import (
 // serveStdio runs the MCP server on stdin/stdout. Blocks until the connection
 // closes or errors.
 func serveStdio(s *server.MCPServer) error {
-	fmt.Fprintln(os.Stderr, "cortex-mcp: stdio transport ready")
+	fmt.Fprintln(os.Stderr, "cortex mcp: stdio transport ready")
 	return server.ServeStdio(s)
 }

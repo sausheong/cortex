@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func newTestCortex(t *testing.T) *cortex.Cortex {
 func newTestClient(t *testing.T, cx *cortex.Cortex) *client.Client {
 	t.Helper()
 	s := server.NewMCPServer("cortex-test", "0.0.0", server.WithToolCapabilities(false))
-	registerTools(s, cx)
+	RegisterTools(s, cx)
 	httpServer := server.NewTestStreamableHTTPServer(s)
 	t.Cleanup(httpServer.Close)
 

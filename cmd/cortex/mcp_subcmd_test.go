@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func TestParseFlags_Defaults(t *testing.T) {
-	cfg, err := parseFlags([]string{"cortex-mcp"})
+func TestParseMCPFlags_Defaults(t *testing.T) {
+	cfg, err := parseMCPFlags(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -18,8 +18,8 @@ func TestParseFlags_Defaults(t *testing.T) {
 	}
 }
 
-func TestParseFlags_TransportHTTP(t *testing.T) {
-	cfg, err := parseFlags([]string{"cortex-mcp", "--transport", "http"})
+func TestParseMCPFlags_TransportHTTP(t *testing.T) {
+	cfg, err := parseMCPFlags([]string{"--transport", "http"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -28,8 +28,8 @@ func TestParseFlags_TransportHTTP(t *testing.T) {
 	}
 }
 
-func TestParseFlags_AddrOverride(t *testing.T) {
-	cfg, err := parseFlags([]string{"cortex-mcp", "--transport", "http", "--addr", "0.0.0.0:9000"})
+func TestParseMCPFlags_AddrOverride(t *testing.T) {
+	cfg, err := parseMCPFlags([]string{"--transport", "http", "--addr", "0.0.0.0:9000"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,10 +38,10 @@ func TestParseFlags_AddrOverride(t *testing.T) {
 	}
 }
 
-func TestParseFlags_EnvFallback(t *testing.T) {
+func TestParseMCPFlags_EnvFallback(t *testing.T) {
 	t.Setenv("CORTEX_TRANSPORT", "http")
 	t.Setenv("CORTEX_ADDR", ":9999")
-	cfg, err := parseFlags([]string{"cortex-mcp"})
+	cfg, err := parseMCPFlags(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,9 +53,9 @@ func TestParseFlags_EnvFallback(t *testing.T) {
 	}
 }
 
-func TestParseFlags_FlagBeatsEnv(t *testing.T) {
+func TestParseMCPFlags_FlagBeatsEnv(t *testing.T) {
 	t.Setenv("CORTEX_TRANSPORT", "http")
-	cfg, err := parseFlags([]string{"cortex-mcp", "--transport", "stdio"})
+	cfg, err := parseMCPFlags([]string{"--transport", "stdio"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,23 +64,23 @@ func TestParseFlags_FlagBeatsEnv(t *testing.T) {
 	}
 }
 
-func TestParseFlags_InvalidTransport(t *testing.T) {
-	_, err := parseFlags([]string{"cortex-mcp", "--transport", "carrier-pigeon"})
+func TestParseMCPFlags_InvalidTransport(t *testing.T) {
+	_, err := parseMCPFlags([]string{"--transport", "carrier-pigeon"})
 	if err == nil {
 		t.Fatal("expected error for invalid transport")
 	}
 }
 
-func TestParseFlags_UnknownFlag(t *testing.T) {
-	_, err := parseFlags([]string{"cortex-mcp", "--what"})
+func TestParseMCPFlags_UnknownFlag(t *testing.T) {
+	_, err := parseMCPFlags([]string{"--what"})
 	if err == nil {
 		t.Fatal("expected error for unknown flag")
 	}
 }
 
-func TestParseFlags_TokenFromEnv(t *testing.T) {
+func TestParseMCPFlags_TokenFromEnv(t *testing.T) {
 	t.Setenv("CORTEX_AUTH_TOKEN", "s3cret")
-	cfg, err := parseFlags([]string{"cortex-mcp"})
+	cfg, err := parseMCPFlags(nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

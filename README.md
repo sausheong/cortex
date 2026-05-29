@@ -84,11 +84,8 @@ Without an OpenAI key, cortex still works but is limited to deterministic extrac
 git clone https://github.com/sausheong/cortex.git
 cd cortex
 
-# Build all three binaries to bin/
-make
-
-# Or build individually
-make build          # cortex, cortex-mcp -> bin/
+# Build the cortex binary to bin/
+make build          # bin/cortex
 
 # Optional: install to /usr/local/bin
 sudo make install
@@ -309,7 +306,8 @@ Add to `~/.claude/server.json`:
 {
   "mcpServers": {
     "cortex": {
-      "command": "/path/to/cortex-mcp",
+      "command": "/path/to/cortex",
+      "args": ["mcp"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "CORTEX_DB": "/path/to/brain.db"
@@ -326,8 +324,8 @@ Add to your MCP server configuration:
 ```json
 {
   "cortex": {
-    "command": "/path/to/cortex-mcp",
-    "args": [],
+    "command": "/path/to/cortex",
+    "args": ["mcp"],
     "env": {
       "OPENAI_API_KEY": "sk-...",
       "CORTEX_DB": "/path/to/brain.db"
@@ -342,13 +340,13 @@ Cortex can also serve MCP over streamable HTTP for clients that can't or won't d
 
 ```bash
 # Default: listens on 127.0.0.1:8080, MCP endpoint at /mcp
-bin/cortex-mcp --transport http
+bin/cortex mcp --transport http
 
 # Bind elsewhere
-bin/cortex-mcp --transport http --addr 0.0.0.0:9000
+bin/cortex mcp --transport http --addr 0.0.0.0:9000
 
 # With bearer-token auth (required if you expose the port beyond localhost)
-CORTEX_AUTH_TOKEN=$(openssl rand -hex 32) bin/cortex-mcp --transport http
+CORTEX_AUTH_TOKEN=$(openssl rand -hex 32) bin/cortex mcp --transport http
 ```
 
 Health check:
@@ -358,7 +356,7 @@ curl http://127.0.0.1:8080/healthz
 # {"status":"ok"}
 ```
 
-Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Flags win over env. Stdio remains the default — `cortex-mcp` with no arguments behaves exactly as before.
+Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Flags win over env. Stdio remains the default — `cortex mcp` with no arguments serves stdio.
 
 ### Available MCP Tools
 
@@ -550,8 +548,8 @@ cortex/
 │   ├── files/               # File directory connector (md, csv, yaml, json, txt, etc.)
 │   └── conversation/        # Conversation message connector
 ├── cmd/
-│   ├── cortex/              # CLI
-│   └── cortex-mcp/          # MCP server (stdio + streamable HTTP)
+│   └── cortex/              # CLI + MCP server (cortex mcp subcommand)
+│       └── mcp/             # MCP server package (stdio + streamable HTTP)
 └── internal/testutil/       # Test mocks and helpers
 ```
 

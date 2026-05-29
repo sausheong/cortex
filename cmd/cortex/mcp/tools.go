@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"context"
@@ -11,7 +11,9 @@ import (
 	"github.com/sausheong/cortex"
 )
 
-func registerTools(s *server.MCPServer, cx *cortex.Cortex) {
+// RegisterTools attaches the cortex tool set to an MCP server. Exposed so
+// the cortex CLI can wire it up before serving on stdio or HTTP.
+func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- remember ---
 	s.AddTool(
 		mcp.NewTool("remember",

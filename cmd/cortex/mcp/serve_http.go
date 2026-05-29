@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"fmt"
@@ -43,6 +43,6 @@ func maybeWarnNonLoopback(w io.Writer, addr, token string) {
 func serveHTTP(s *server.MCPServer, addr, token string) error {
 	mux := buildHTTPMux(s, token)
 	maybeWarnNonLoopback(os.Stderr, addr, token)
-	fmt.Fprintf(os.Stderr, "cortex-mcp: streamable-http transport ready on %s/mcp\n", addr)
+	fmt.Fprintf(os.Stderr, "cortex mcp: streamable-http transport ready on %s/mcp\n", addr)
 	return http.ListenAndServe(addr, mux)
 }

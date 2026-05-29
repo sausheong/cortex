@@ -69,6 +69,8 @@ func main() {
 		cmdInitSchema()
 	case "lint":
 		cmdLint()
+	case "mcp":
+		cmdMCP()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -103,7 +105,9 @@ Commands:
   init-schema [<dir>] [--force]
                                  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
-                                 Scan the graph for cleanup candidates (orphans, near-duplicates, etc.)`)
+                                 Scan the graph for cleanup candidates (orphans, near-duplicates, etc.)
+  mcp [--transport stdio|http] [--addr host:port]
+                                 Run the MCP server (Claude Desktop, Claude Code, other MCP clients)`)
 }
 
 func openCortex() *cortex.Cortex {
