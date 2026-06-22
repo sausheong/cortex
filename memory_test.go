@@ -199,8 +199,8 @@ func TestSearchMemories_RanksByRelevance(t *testing.T) {
 
 	// Two memories; the query term appears in both, but one is a closer match.
 	for _, content := range []string{
-		"Alice prefers dark roast coffee",
 		"Bob mentioned coffee once in passing about Alice and Stripe and billing",
+		"Alice prefers dark roast coffee",
 	} {
 		if err := c.PutMemory(ctx, &Memory{Content: content}); err != nil {
 			t.Fatalf("PutMemory: %v", err)
