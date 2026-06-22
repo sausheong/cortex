@@ -121,3 +121,48 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 	}
 	return chunks, nil
 }
+
+// SearchMemoryVector embeds the query and performs a brute-force vector
+// search over memory embeddings (ref_type='memory'), returning the matching
+// memories ordered by cosine similarity. These embeddings are written at
+// ingest by Remember but were previously never searched.
+func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int) ([]Memory, error) {
+	if c.cfg.embedder == nil {
+		return nil, fmt.Errorf("cortex: no embedder configured")
+	}
+
+	vecs, err := c.cfg.embedder.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("cortex: embed query: %w", err)
+	}
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("cortex: embedder returned no vectors")
+	}
+
+	results, err := c.searchVectorRaw(ctx, vecs[0], "memory", limit)
+	if err != nil {
+		return nil, err
+	}
+
+	memories := make([]Memory, 0, len(results))
+	for _, r := range results {
+		var m Memory
+		err := c.db.QueryRowContext(ctx,
+			`SELECT id, content, source, confidence, created_at, updated_at
+			 FROM memories WHERE id = ?`, r.refID,
+		).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt)
+		if err == sql.ErrNoRows {
+			continue // embedding exists but memory was deleted
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cortex: get memory %s: %w", r.refID, err)
+		}
+		entityIDs, err := c.loadMemoryEntityIDs(ctx, m.ID)
+		if err != nil {
+			return nil, err
+		}
+		m.EntityIDs = entityIDs
+		memories = append(memories, m)
+	}
+	return memories, nil
+}
