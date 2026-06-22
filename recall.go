@@ -95,6 +95,8 @@ func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQ
 	return []StructuredQuery{
 		{Type: "keyword_search", Params: map[string]any{"query": query}},
 		{Type: "memory_lookup", Params: map[string]any{"query": query}},
+		{Type: "memory_vector", Params: map[string]any{"query": query}},
+		{Type: "vector_search", Params: map[string]any{"query": query}},
 	}
 }
 
@@ -109,6 +111,8 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 	switch sq.Type {
 	case "memory_lookup":
 		return c.recallMemories(ctx, query, limit)
+	case "memory_vector":
+		return c.recallMemoryVector(ctx, query, limit)
 	case "keyword_search":
 		return c.recallKeyword(ctx, query, limit)
 	case "vector_search":
@@ -122,6 +126,31 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 
 func (c *Cortex) recallMemories(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
 	mems, err := c.SearchMemories(ctx, query, limit)
+	if err != nil || len(mems) == 0 {
+		return nil, nil
+	}
+
+	items := make([]rankedItem, len(mems))
+	results := make(map[string]Result, len(mems))
+	for i, m := range mems {
+		key := "mem:" + m.ID
+		items[i] = rankedItem{id: key, rank: i}
+		results[key] = Result{
+			Type:       "memory",
+			Content:    m.Content,
+			Confidence: m.Confidence,
+			EntityIDs:  m.EntityIDs,
+			Source:     m.Source,
+		}
+	}
+	return items, results
+}
+
+func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
+	if c.cfg.embedder == nil {
+		return nil, nil
+	}
+	mems, err := c.SearchMemoryVector(ctx, query, limit)
 	if err != nil || len(mems) == 0 {
 		return nil, nil
 	}

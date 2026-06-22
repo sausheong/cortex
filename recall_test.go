@@ -365,3 +365,34 @@ func TestRecall_WithMinConfidence_FiltersBelow(t *testing.T) {
 		}
 	}
 }
+
+func TestRecall_UsesMemoryVector(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Quarterly board meeting is in Zurich"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatalf("putEmbedding: %v", err)
+	}
+
+	// Decompose into memory_vector only, to isolate the new path.
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_vector", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Quarterly board meeting is in Zurich", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) == 0 || results[0].Content != m.Content {
+		t.Fatalf("expected memory via vector path, got %+v", results)
+	}
+}
