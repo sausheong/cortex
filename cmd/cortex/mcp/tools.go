@@ -40,7 +40,7 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- recall ---
 	s.AddTool(
 		mcp.NewTool("recall",
-			mcp.WithDescription("Search the user's personal knowledge graph (cortex). This contains everything the user has told the assistant to remember about themselves, their work, the people they know, and their projects. USE FIRST for any question about who/what/why — before web search, before any other tool. The web does not know the user's personal context; this does."),
+			mcp.WithDescription("Search the user's personal knowledge graph (cortex). This contains everything the user has told the assistant to remember about themselves, their work, the people they know, and their projects. USE FIRST for any question about who/what/why — before web search, before any other tool. The web does not know the user's personal context; this does. The response includes an \"abstain\" flag: when true, cortex has nothing relevant — tell the user you don't have that information rather than guessing."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("The query to search for")),
 			mcp.WithNumber("limit", mcp.Description("Maximum number of results (default 20)")),
 			mcp.WithNumber("min_confidence", mcp.Description("Filter results below this confidence threshold (0.0-1.0). Default 0 = no filter.")),
@@ -60,11 +60,11 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 				}
 				opts = append(opts, cortex.WithMinConfidence(mc))
 			}
-			results, err := cx.Recall(ctx, query, opts...)
+			out, err := cx.RecallWithStrength(ctx, query, opts...)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return jsonResult(results)
+			return jsonResult(out)
 		},
 	)
 
