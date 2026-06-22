@@ -431,3 +431,51 @@ func TestRecall_ConfidenceWeightsRanking(t *testing.T) {
 		t.Fatalf("expected high-confidence memory first, got %q", results[0].Content)
 	}
 }
+
+func TestRecall_ReinjectsSourceChunk(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	const src = "meeting-notes-2026-06"
+	// A memory and a chunk that share a source.
+	if err := c.PutMemory(ctx, &Memory{
+		Content: "Decision: adopt Postgres for analytics",
+		Source:  src,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ch := &Chunk{
+		Content:  "After debating SQLite vs Postgres, the team decided to adopt Postgres for analytics because of concurrent writers.",
+		Metadata: map[string]any{"source": src},
+	}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Postgres analytics decision", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	var mem *Result
+	for i := range results {
+		if results[i].Type == "memory" {
+			mem = &results[i]
+			break
+		}
+	}
+	if mem == nil {
+		t.Fatal("expected a memory result")
+	}
+	excerpt, ok := mem.Metadata["source_excerpt"].(string)
+	if !ok || excerpt != ch.Content {
+		t.Fatalf("expected source_excerpt to be the chunk content, got %v", mem.Metadata["source_excerpt"])
+	}
+}

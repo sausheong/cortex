@@ -148,13 +148,17 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int) ([
 	for i, m := range mems {
 		key := "mem:" + m.ID
 		items[i] = rankedItem{id: key, rank: i}
-		results[key] = Result{
+		res := Result{
 			Type:       "memory",
 			Content:    m.Content,
 			Confidence: m.Confidence,
 			EntityIDs:  m.EntityIDs,
 			Source:     m.Source,
 		}
+		if excerpt := c.firstChunkBySource(ctx, m.Source); excerpt != "" {
+			res.Metadata = map[string]any{"source_excerpt": excerpt}
+		}
+		results[key] = res
 	}
 	return items, results
 }
@@ -173,13 +177,17 @@ func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int
 	for i, m := range mems {
 		key := "mem:" + m.ID
 		items[i] = rankedItem{id: key, rank: i}
-		results[key] = Result{
+		res := Result{
 			Type:       "memory",
 			Content:    m.Content,
 			Confidence: m.Confidence,
 			EntityIDs:  m.EntityIDs,
 			Source:     m.Source,
 		}
+		if excerpt := c.firstChunkBySource(ctx, m.Source); excerpt != "" {
+			res.Metadata = map[string]any{"source_excerpt": excerpt}
+		}
+		results[key] = res
 	}
 	return items, results
 }
