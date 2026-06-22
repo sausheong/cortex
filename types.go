@@ -56,6 +56,22 @@ type Result struct {
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
+// RecallResult wraps a ranked recall with an aggregate strength signal and
+// an abstention hint. Strength is the confidence-weighted score of the top
+// result (0 when empty). Abstain is true when the engine has nothing
+// sufficiently relevant — a cue for agents to say "I don't know that"
+// rather than fabricate an answer.
+type RecallResult struct {
+	Results  []Result `json:"results"`
+	Strength float64  `json:"strength"`
+	Abstain  bool     `json:"abstain"`
+}
+
+// AbstainThreshold is the confidence-weighted top-score below which
+// RecallWithStrength advises abstention. Tuned conservatively: the goal is
+// to catch empty/irrelevant recalls, not to suppress weak-but-real hits.
+const AbstainThreshold = 0.005
+
 type Filter struct {
 	EntityID string
 	Source   string

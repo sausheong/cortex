@@ -8,6 +8,22 @@ import (
 	"sync"
 )
 
+// RecallWithStrength runs Recall and adds an aggregate strength score plus
+// an abstention hint. Use this when the caller (e.g. an agent) needs to
+// decide whether the knowledge graph actually knows the answer.
+func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...RecallOption) (RecallResult, error) {
+	results, err := c.Recall(ctx, query, opts...)
+	if err != nil {
+		return RecallResult{}, err
+	}
+	out := RecallResult{Results: results}
+	if len(results) > 0 {
+		out.Strength = results[0].Score
+	}
+	out.Abstain = out.Strength < AbstainThreshold
+	return out, nil
+}
+
 // Recall searches the knowledge graph using multiple retrieval strategies,
 // merges the results via reciprocal rank fusion, and returns a unified
 // ranked list of Result items.

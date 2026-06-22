@@ -479,3 +479,55 @@ func TestRecall_ReinjectsSourceChunk(t *testing.T) {
 		t.Fatalf("expected source_excerpt to be the chunk content, got %v", mem.Metadata["source_excerpt"])
 	}
 }
+
+func TestRecallWithStrength_AbstainsWhenEmpty(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	// Nothing stored → no results → abstain.
+	out, err := c.RecallWithStrength(ctx, "anything at all")
+	if err != nil {
+		t.Fatalf("RecallWithStrength: %v", err)
+	}
+	if !out.Abstain {
+		t.Fatalf("expected Abstain=true on empty recall, got %+v", out)
+	}
+	if out.Strength != 0 {
+		t.Fatalf("expected Strength 0 on empty recall, got %v", out.Strength)
+	}
+}
+
+func TestRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	if err := c.PutMemory(ctx, &Memory{Content: "User's name is Sau Sheong", Confidence: 1.0}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	out, err := c.RecallWithStrength(ctx, "What is the user's name")
+	if err != nil {
+		t.Fatalf("RecallWithStrength: %v", err)
+	}
+	if out.Abstain {
+		t.Fatalf("expected Abstain=false with a confident hit, got %+v", out)
+	}
+	if out.Strength <= 0 {
+		t.Fatalf("expected positive strength, got %v", out.Strength)
+	}
+}
