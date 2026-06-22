@@ -167,3 +167,27 @@ func TestPutMemory_ConfidenceClamped(t *testing.T) {
 		t.Errorf("Confidence = %v, want 0.0 (clamped)", results[0].Confidence)
 	}
 }
+
+func TestPutMemory_PopulatesFTS(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice migrated the billing service to Stripe"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	// The FTS table must contain the memory, joinable by rowid.
+	var got string
+	err := c.db.QueryRowContext(ctx,
+		`SELECT m.content FROM memories m
+		 JOIN memories_fts f ON m.rowid = f.rowid
+		 WHERE memories_fts MATCH ?`, "Stripe",
+	).Scan(&got)
+	if err != nil {
+		t.Fatalf("expected FTS match for memory, got error: %v", err)
+	}
+	if got != m.Content {
+		t.Fatalf("FTS content mismatch: got %q want %q", got, m.Content)
+	}
+}

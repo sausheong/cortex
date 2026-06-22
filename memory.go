@@ -23,13 +23,24 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO memories (id, content, source, confidence, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Content, m.Source, m.Confidence, m.CreatedAt, m.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)
+	}
+
+	rowID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("cortex: memory last insert id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO memories_fts (rowid, content) VALUES (?, ?)`,
+		rowID, m.Content,
+	); err != nil {
+		return fmt.Errorf("cortex: insert memory fts: %w", err)
 	}
 
 	// Insert entity links into junction table.

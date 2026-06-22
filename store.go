@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS memories (
 	updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+	content,
+	content_rowid='rowid'
+);
+
 CREATE TABLE IF NOT EXISTS memory_entities (
 	memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
 	entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
