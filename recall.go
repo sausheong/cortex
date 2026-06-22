@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -52,14 +53,26 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Merge via reciprocal rank fusion.
 	merged := rrfMerge(lists, 60)
 
-	// Build final results from merged ranked items.
+	// Build final results from merged ranked items, weighting the fusion
+	// score by each result's confidence so equally-ranked items are broken
+	// by how certain we are about them. Confidence is in [0,1]; coerced at
+	// ingest so unset == 1.0 (no penalty).
 	final := make([]Result, 0, len(merged))
 	for _, item := range merged {
 		if r, ok := resultMap[item.id]; ok {
-			r.Score = item.score
+			conf := r.Confidence
+			if conf <= 0 {
+				conf = 1.0 // defensive: treat unset/zero as full confidence
+			}
+			r.Score = item.score * conf
 			final = append(final, r)
 		}
 	}
+
+	// Re-sort by the confidence-weighted score (rrfMerge sorted by raw score).
+	sort.SliceStable(final, func(i, j int) bool {
+		return final[i].Score > final[j].Score
+	})
 
 	// Apply min-confidence filter (post-RRF, pre-limit).
 	if cfg.minConfidence > 0 {

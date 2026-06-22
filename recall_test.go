@@ -396,3 +396,38 @@ func TestRecall_UsesMemoryVector(t *testing.T) {
 		t.Fatalf("expected memory via vector path, got %+v", results)
 	}
 }
+
+func TestRecall_ConfidenceWeightsRanking(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two memories matching the same query at similar FTS rank, different
+	// confidence. The higher-confidence one should rank first after weighting.
+	low := &Memory{Content: "Project Phoenix ships in March", Confidence: 0.3}
+	high := &Memory{Content: "Project Phoenix ships in April", Confidence: 0.95}
+	if err := c.PutMemory(ctx, low); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, high); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Project Phoenix ships", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Content != high.Content {
+		t.Fatalf("expected high-confidence memory first, got %q", results[0].Content)
+	}
+}
