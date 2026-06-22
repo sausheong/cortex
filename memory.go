@@ -60,29 +60,24 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	return nil
 }
 
-// SearchMemories performs a LIKE-based keyword search on memory content.
-// The query is split into words and any word match counts. Entity links
-// are loaded from memory_entities for each result.
+// SearchMemories performs an FTS5 full-text search on memory content,
+// ranked by relevance (best first). The query is sanitized into a safe
+// FTS5 MATCH expression. Entity links are loaded from memory_entities for
+// each result.
 func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([]Memory, error) {
-	words := strings.Fields(query)
-	if len(words) == 0 {
+	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
 
-	// Build OR conditions for each word.
-	var conditions []string
-	var args []any
-	for _, word := range words {
-		conditions = append(conditions, "content LIKE ?")
-		args = append(args, "%"+word+"%")
-	}
-
-	sqlQuery := `SELECT id, content, source, confidence, created_at, updated_at
-		FROM memories WHERE ` + strings.Join(conditions, " OR ") + `
-		LIMIT ?`
-	args = append(args, limit)
-
-	rows, err := c.db.QueryContext(ctx, sqlQuery, args...)
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at
+		 FROM memories m
+		 JOIN memories_fts f ON m.rowid = f.rowid
+		 WHERE memories_fts MATCH ?
+		 ORDER BY f.rank
+		 LIMIT ?`,
+		ftsQuery(query), limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: search memories: %w", err)
 	}
@@ -173,4 +168,20 @@ func (c *Cortex) loadMemoryEntityIDs(ctx context.Context, memoryID string) ([]st
 		return nil, fmt.Errorf("cortex: iterate entity IDs: %w", err)
 	}
 	return ids, nil
+}
+
+// ftsQuery turns an arbitrary user string into a safe FTS5 MATCH expression:
+// each whitespace-separated token is wrapped in double quotes (escaping any
+// embedded quotes) and OR-joined, so no token is interpreted as FTS syntax.
+// Returns "" for an all-whitespace input (caller should treat as no-op).
+func ftsQuery(q string) string {
+	fields := strings.Fields(q)
+	if len(fields) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(fields))
+	for i, f := range fields {
+		quoted[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+	}
+	return strings.Join(quoted, " OR ")
 }

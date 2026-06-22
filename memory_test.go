@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 )
 
@@ -189,5 +190,67 @@ func TestPutMemory_PopulatesFTS(t *testing.T) {
 	}
 	if got != m.Content {
 		t.Fatalf("FTS content mismatch: got %q want %q", got, m.Content)
+	}
+}
+
+func TestSearchMemories_RanksByRelevance(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two memories; the query term appears in both, but one is a closer match.
+	for _, content := range []string{
+		"Alice prefers dark roast coffee",
+		"Bob mentioned coffee once in passing about Alice and Stripe and billing",
+	} {
+		if err := c.PutMemory(ctx, &Memory{Content: content}); err != nil {
+			t.Fatalf("PutMemory: %v", err)
+		}
+	}
+
+	got, err := c.SearchMemories(ctx, "dark roast coffee", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	// FTS5 rank should put the focused "dark roast coffee" memory first.
+	if got[0].Content != "Alice prefers dark roast coffee" {
+		t.Fatalf("expected dark-roast memory ranked first, got %q", got[0].Content)
+	}
+}
+
+func TestOpen_BackfillsMemoriesFTS(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// First open: insert a memory, then bypass FTS to simulate an old DB by
+	// clearing the FTS table.
+	c, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ctx := context.Background()
+	if err := c.PutMemory(ctx, &Memory{Content: "legacy memory about Saturn"}); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	if _, err := c.db.ExecContext(ctx, `DELETE FROM memories_fts`); err != nil {
+		t.Fatalf("clear fts: %v", err)
+	}
+	c.Close()
+
+	// Reopen: backfill must repopulate FTS.
+	c2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer c2.Close()
+
+	got, err := c2.SearchMemories(ctx, "Saturn", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 backfilled result, got %d", len(got))
 	}
 }

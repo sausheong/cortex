@@ -157,6 +157,16 @@ func Open(path string, opts ...Option) (*Cortex, error) {
 		}
 	}
 
+	// Backfill memories_fts for databases created before the FTS table existed.
+	if _, err := db.Exec(
+		`INSERT INTO memories_fts (rowid, content)
+		 SELECT m.rowid, m.content FROM memories m
+		 WHERE m.rowid NOT IN (SELECT rowid FROM memories_fts)`,
+	); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cortex: backfill memories_fts: %w", err)
+	}
+
 	c := &Cortex{db: db}
 	for _, o := range opts {
 		o(&c.cfg)

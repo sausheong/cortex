@@ -71,7 +71,7 @@ func (c *Cortex) SearchKeyword(ctx context.Context, query string, limit int) ([]
 		 WHERE chunks_fts MATCH ?
 		 ORDER BY f.rank
 		 LIMIT ?`,
-		query, limit,
+		ftsQuery(query), limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: keyword search: %w", err)
