@@ -54,3 +54,104 @@ func TestParseMergeArgs_UnknownFlag(t *testing.T) {
 		t.Error("expected error for unknown flag")
 	}
 }
+
+func TestParseRememberArgs_Defaults(t *testing.T) {
+	text, speaker, source, err := parseRememberArgs([]string{"alice", "likes", "coffee"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "alice likes coffee" {
+		t.Errorf("text = %q, want %q", text, "alice likes coffee")
+	}
+	if speaker != "" {
+		t.Errorf("speaker = %q, want empty", speaker)
+	}
+	if source != "" {
+		t.Errorf("source = %q, want empty", source)
+	}
+}
+
+func TestParseRememberArgs_Speaker(t *testing.T) {
+	text, speaker, source, err := parseRememberArgs([]string{"likes", "coffee", "--speaker", "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "likes coffee" {
+		t.Errorf("text = %q, want %q", text, "likes coffee")
+	}
+	if speaker != "user" {
+		t.Errorf("speaker = %q, want user", speaker)
+	}
+	if source != "" {
+		t.Errorf("source = %q, want empty", source)
+	}
+}
+
+func TestParseRememberArgs_Source(t *testing.T) {
+	text, speaker, source, err := parseRememberArgs([]string{"--source", "notes.md", "the", "fact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "the fact" {
+		t.Errorf("text = %q, want %q", text, "the fact")
+	}
+	if speaker != "" {
+		t.Errorf("speaker = %q, want empty", speaker)
+	}
+	if source != "notes.md" {
+		t.Errorf("source = %q, want notes.md", source)
+	}
+}
+
+func TestParseRememberArgs_SpeakerAndSource(t *testing.T) {
+	text, speaker, source, err := parseRememberArgs([]string{"a", "fact", "--speaker", "assistant", "--source", "chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "a fact" {
+		t.Errorf("text = %q, want %q", text, "a fact")
+	}
+	if speaker != "assistant" {
+		t.Errorf("speaker = %q, want assistant", speaker)
+	}
+	if source != "chat" {
+		t.Errorf("source = %q, want chat", source)
+	}
+}
+
+func TestParseRememberArgs_MissingFlagValue(t *testing.T) {
+	_, _, _, err := parseRememberArgs([]string{"a", "fact", "--speaker"})
+	if err == nil {
+		t.Error("expected error for --speaker with no value")
+	}
+	_, _, _, err = parseRememberArgs([]string{"a", "fact", "--source"})
+	if err == nil {
+		t.Error("expected error for --source with no value")
+	}
+}
+
+func TestParseRememberArgs_EmptyText(t *testing.T) {
+	_, _, _, err := parseRememberArgs([]string{})
+	if err == nil {
+		t.Error("expected error for no text")
+	}
+	_, _, _, err = parseRememberArgs([]string{"--speaker", "user"})
+	if err == nil {
+		t.Error("expected error for flags-only with no text")
+	}
+}
+
+func TestParseRememberArgs_UnknownBecomesText(t *testing.T) {
+	// Non-flag args (and flags other than --speaker/--source) join into text,
+	// matching the prior behavior of joining all args as the fact text.
+	text, speaker, source, err := parseRememberArgs([]string{"some", "--weird", "thing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "some --weird thing" {
+		t.Errorf("text = %q, want %q", text, "some --weird thing")
+	}
+	if speaker != "" || source != "" {
+		t.Errorf("speaker/source should be empty, got %q/%q", speaker, source)
+	}
+}
