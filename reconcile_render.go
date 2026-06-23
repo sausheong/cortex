@@ -33,7 +33,7 @@ func RenderReconcileMarkdown(r ReconcileReport) string {
 	if len(r.Rejected) > 0 {
 		b.WriteString("## Rejected by gate\n\n")
 		for _, rj := range r.Rejected {
-			fmt.Fprintf(&b, "- %s ⟶ %s: %s\n", rj.StaleID, rj.SupersededByID, rj.Reason)
+			fmt.Fprintf(&b, "- %s -> %s: %s\n", rj.StaleID, rj.SupersededByID, rj.Reason)
 		}
 	}
 

@@ -302,7 +302,8 @@ type Supersession struct {
 }
 
 // RejectedPair is an LLM-flagged contradiction that the deterministic gate
-// rejected (e.g. wrong supersession direction, already invalidated).
+// rejected (e.g. wrong supersession direction, or an id not in the current
+// candidate set).
 type RejectedPair struct {
 	StaleID        string
 	SupersededByID string
@@ -322,15 +323,7 @@ type ReconcileReport struct {
 // ReconcileOption configures a Reconcile run.
 type ReconcileOption func(*reconcileConfig)
 
-type reconcileConfig struct {
-	apply bool // false = dry-run (default)
-}
-
-// withApply is internal; the public apply entry point is ApplyReconcile
-// (Task 5). Kept unexported so the default Reconcile is always dry-run.
-func withApply() ReconcileOption {
-	return func(c *reconcileConfig) { c.apply = true }
-}
+type reconcileConfig struct{}
 
 // mergeRecord is one entry in an entity's `merged_from` attribute array.
 // It snapshots the dropped entity so a merge is recoverable in principle.
