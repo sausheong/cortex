@@ -432,6 +432,43 @@ func TestRecall_ConfidenceWeightsRanking(t *testing.T) {
 	}
 }
 
+func TestRecall_ZeroConfidenceRanksLast(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two memories matching the same query. One has a genuine 0.0 confidence
+	// (the least-trustworthy state — a negative input clamps to 0.0 at ingest),
+	// the other 0.5. The 0.0 one must NOT be rescued to the top; the 0.5 one
+	// must rank above it.
+	zero := &Memory{Content: "Project Hydra ships in May", Confidence: -0.1}
+	mid := &Memory{Content: "Project Hydra ships in June", Confidence: 0.5}
+	if err := c.PutMemory(ctx, zero); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, mid); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Project Hydra ships", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Content != mid.Content {
+		t.Fatalf("expected 0.5-confidence memory first (0.0 must not be rescued to top), got %q", results[0].Content)
+	}
+}
+
 func TestRecall_ReinjectsSourceChunk(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

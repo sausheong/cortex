@@ -72,13 +72,16 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Build final results from merged ranked items, weighting the fusion
 	// score by each result's confidence so equally-ranked items are broken
 	// by how certain we are about them. Confidence is in [0,1]; coerced at
-	// ingest so unset == 1.0 (no penalty).
+	// ingest so unset == 1.0 (no penalty). A genuine 0.0 is the least-
+	// trustworthy state and is preserved (not rescued), so it ranks last.
 	final := make([]Result, 0, len(merged))
 	for _, item := range merged {
 		if r, ok := resultMap[item.id]; ok {
 			conf := r.Confidence
-			if conf <= 0 {
-				conf = 1.0 // defensive: treat unset/zero as full confidence
+			if conf < 0 {
+				conf = 0 // defensive: confidence is coerced to [0,1] at ingest; a
+				// negative here would only come from direct struct misuse.
+				// A genuine 0.0 is the least-trustworthy state and must rank last.
 			}
 			r.Score = item.score * conf
 			final = append(final, r)
