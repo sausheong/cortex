@@ -319,6 +319,19 @@ type ReconcileReport struct {
 	SkipReason      string
 }
 
+// ReconcileOption configures a Reconcile run.
+type ReconcileOption func(*reconcileConfig)
+
+type reconcileConfig struct {
+	apply bool // false = dry-run (default)
+}
+
+// withApply is internal; the public apply entry point is ApplyReconcile
+// (Task 5). Kept unexported so the default Reconcile is always dry-run.
+func withApply() ReconcileOption {
+	return func(c *reconcileConfig) { c.apply = true }
+}
+
 // mergeRecord is one entry in an entity's `merged_from` attribute array.
 // It snapshots the dropped entity so a merge is recoverable in principle.
 type mergeRecord struct {
