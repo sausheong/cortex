@@ -176,6 +176,7 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mo
 			Confidence: m.Confidence,
 			EntityIDs:  m.EntityIDs,
 			Source:     m.Source,
+			Speaker:    m.Speaker,
 		}
 		if excerpt := c.firstChunkBySource(ctx, m.Source); excerpt != "" {
 			res.Metadata = map[string]any{"source_excerpt": excerpt}
@@ -205,6 +206,7 @@ func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int
 			Confidence: m.Confidence,
 			EntityIDs:  m.EntityIDs,
 			Source:     m.Source,
+			Speaker:    m.Speaker,
 		}
 		if excerpt := c.firstChunkBySource(ctx, m.Source); excerpt != "" {
 			res.Metadata = map[string]any{"source_excerpt": excerpt}

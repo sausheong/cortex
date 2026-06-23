@@ -61,6 +61,7 @@ type Result struct {
 	Confidence float64        `json:"confidence"`
 	EntityIDs  []string       `json:"entity_ids,omitempty"`
 	Source     string         `json:"source,omitempty"`
+	Speaker    string         `json:"speaker,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 

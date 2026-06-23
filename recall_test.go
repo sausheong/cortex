@@ -713,3 +713,32 @@ func TestRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
 		t.Fatalf("WithIncludeInvalid should override the as-of filter, got %d", len(got))
 	}
 }
+
+func TestRecall_SurfacesSpeaker(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	if err := c.PutMemory(ctx, &Memory{Content: "Standups moved to 10am", Speaker: "assistant"}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_lookup", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "standups", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	var mem *Result
+	for i := range results {
+		if results[i].Type == "memory" {
+			mem = &results[i]
+			break
+		}
+	}
+	if mem == nil || mem.Speaker != "assistant" {
+		t.Fatalf("expected memory result with speaker 'assistant', got %+v", results)
+	}
+}
