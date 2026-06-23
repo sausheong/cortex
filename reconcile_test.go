@@ -2,6 +2,8 @@ package cortex
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -223,5 +225,146 @@ func TestReconcile_SkipsWithoutReconciler(t *testing.T) {
 	}
 	if !rep.Skipped {
 		t.Fatal("expected Skipped=true when no Reconciler is configured")
+	}
+}
+
+func TestReconcileReport_JSONRoundTrip(t *testing.T) {
+	orig := ReconcileReport{
+		EntitiesScanned: 2,
+		MemoriesScanned: 5,
+		Proposed: []Supersession{{
+			StaleID: "s1", StaleContent: "budget 5000",
+			SupersededByID: "n1", SupersededByContent: "budget 10000",
+			Reason: "changed", InvalidAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		}},
+		Rejected: []RejectedPair{{StaleID: "s2", SupersededByID: "n2", Reason: "not newer"}},
+	}
+
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Snake_case tags must be present in the wire form.
+	for _, want := range []string{`"stale_id"`, `"superseded_by_id"`, `"invalid_at"`, `"proposed"`, `"entities_scanned"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected JSON to contain %s, got: %s", want, data)
+		}
+	}
+
+	var back ReconcileReport
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(back.Proposed) != 1 || back.Proposed[0].StaleID != "s1" ||
+		!back.Proposed[0].InvalidAt.Equal(orig.Proposed[0].InvalidAt) {
+		t.Fatalf("round-trip mismatch: %+v", back)
+	}
+	if back.EntitiesScanned != 2 || len(back.Rejected) != 1 {
+		t.Fatalf("round-trip lost fields: %+v", back)
+	}
+}
+
+func TestApplyReconcileReport_AppliesReviewed(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Dana"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	older := &Memory{Content: "Dana's role is IC", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	newer := &Memory{Content: "Dana's role is Manager", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+
+	// A report as if produced by an earlier dry-run.
+	report := ReconcileReport{
+		Proposed: []Supersession{{
+			StaleID: older.ID, SupersededByID: newer.ID,
+			Reason: "promoted", InvalidAt: newer.CreatedAt,
+		}},
+	}
+
+	applied, err := c.ApplyReconcileReport(ctx, report)
+	if err != nil {
+		t.Fatalf("ApplyReconcileReport: %v", err)
+	}
+	if len(applied.Proposed) != 1 {
+		t.Fatalf("expected 1 applied, got %d (rejected=%d)", len(applied.Proposed), len(applied.Rejected))
+	}
+	// older now hidden from default recall; newer remains.
+	got, err := c.SearchMemories(ctx, "Dana role", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != newer.ID {
+		t.Fatalf("expected only newer valid, got %d", len(got))
+	}
+}
+
+func TestApplyReconcileReport_SkipsStaleProposal(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Eli"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	older := &Memory{Content: "Eli's city is Rome", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	newer := &Memory{Content: "Eli's city is Oslo", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+
+	// The graph changed since the dry-run: the stale memory was ALREADY invalidated.
+	cut := newer.CreatedAt
+	if err := c.InvalidateMemory(ctx, older.ID, &cut); err != nil {
+		t.Fatal(err)
+	}
+
+	report := ReconcileReport{
+		Proposed: []Supersession{{
+			StaleID: older.ID, SupersededByID: newer.ID,
+			Reason: "stale", InvalidAt: newer.CreatedAt,
+		}},
+	}
+
+	applied, err := c.ApplyReconcileReport(ctx, report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied.Proposed) != 0 {
+		t.Fatalf("expected 0 applied (stale already invalid), got %d", len(applied.Proposed))
+	}
+	if len(applied.Rejected) != 1 {
+		t.Fatalf("expected 1 rejected by re-validation, got %d", len(applied.Rejected))
+	}
+}
+
+func TestApplyReconcileReport_SkippedInputUnchanged(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	in := ReconcileReport{Skipped: true, SkipReason: "no reconciler"}
+	out, err := c.ApplyReconcileReport(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Skipped || len(out.Proposed) != 0 {
+		t.Fatalf("skipped input should pass through unchanged, got %+v", out)
 	}
 }

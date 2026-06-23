@@ -197,8 +197,9 @@ Commands:
                                  Merge drop entity into keep entity; re-target all references
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
                                  Scan the graph for cleanup candidates; print markdown report
-  reconcile [--apply] [--out <file>]
-                                 Soft-invalidate memories superseded by newer facts (dry-run by default)
+  reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]
+                                 Soft-invalidate memories superseded by newer facts (dry-run by default);
+                                 --json saves a dry-run report, --apply --from <file> applies a reviewed one
   config                         Show owner identity
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
@@ -284,10 +285,17 @@ Lint is informational. Even when findings are present, exit code is 0.
 Detect and resolve contradicting memories where a newer fact supersedes an older one.
 
 ```bash
-cortex reconcile [--apply] [--out <file>]
+cortex reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]
 ```
 
-Dry-run by default: prints a markdown report of proposed supersessions and writes nothing. Pass `--apply` to soft-invalidate each superseded memory — it drops out of default `recall` but remains reachable via `as_of` / `include_invalid`, so nothing is destroyed. `--out <path>` writes the report to a file instead of stdout.
+Dry-run by default: prints a markdown report of proposed supersessions and writes nothing. `--out <path>` writes that report to a file instead of stdout, and `--json <path>` additionally writes it as a machine-readable JSON report for later reviewed apply (see below).
+
+There are two ways to apply:
+
+- **One-shot** — `cortex reconcile --apply` detects and applies in a single run. Convenient for autonomous use, but detection and application happen back-to-back with no review step.
+- **Reviewed** — `cortex reconcile --json report.json` captures a dry-run, you inspect it, then `cortex reconcile --apply --from report.json` applies exactly those proposals. The `--from` path **re-validates** each proposal against the current graph and **never re-detects** — proposals that no longer hold are skipped and listed as rejected (e.g. a memory that was already invalidated or deleted between the dry-run and the apply). `--from` requires `--apply`.
+
+Either way, applying soft-invalidates each superseded memory — it drops out of default `recall` but remains reachable via `as_of` / `include_invalid`, so nothing is destroyed.
 
 Detection requires an LLM provider that implements conflict detection — the shipped Anthropic and OpenAI providers do. Without such a provider, reconcile reports nothing and exits cleanly. Resolution itself is deterministic: only a strictly-newer, currently-valid memory may supersede an older one.
 

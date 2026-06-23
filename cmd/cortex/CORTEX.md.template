@@ -135,11 +135,20 @@ The report's near-duplicate pairs are direct inputs to `cortex merge`. Other fin
 
 ```
 cortex reconcile                  # dry-run report
-cortex reconcile --apply          # soft-invalidate superseded memories
+cortex reconcile --apply          # one-shot: detect and soft-invalidate in one run
 cortex reconcile --out recon.md   # write the report to a file
 ```
 
 Applying soft-invalidates each superseded memory: it drops out of default recall but stays reachable via `as_of` / `include_invalid`. Detection needs an LLM provider that implements conflict detection (anthropic and openai do); without one, reconcile reports nothing and skips. Scope is per-entity — only memories that share a linked entity are compared against each other.
+
+For a review-then-apply workflow, capture a dry-run to JSON, eyeball it, then apply exactly those proposals:
+
+```
+cortex reconcile --json report.json          # dry-run, save the proposals
+cortex reconcile --apply --from report.json  # apply the reviewed report
+```
+
+The `--from` path re-validates each proposal against the current graph and never re-detects — proposals that no longer hold (e.g. a memory already invalidated or deleted since the dry-run) are skipped. Plain `--apply` (no `--from`) still does one-shot detect-and-apply.
 
 ## Customization
 

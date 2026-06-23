@@ -264,3 +264,26 @@ func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *tim
 	}
 	return nil
 }
+
+// getMemoryByID loads a single memory by id regardless of validity state
+// (no currently-valid filter), including its temporal fields. Returns
+// (nil, nil) if no such memory exists. Used by reconciliation's apply-time
+// re-validation, which must distinguish "missing" from "already invalidated".
+func (c *Cortex) getMemoryByID(ctx context.Context, id string) (*Memory, error) {
+	var m Memory
+	var vat, iat, eat sql.NullTime
+	err := c.db.QueryRowContext(ctx,
+		`SELECT id, content, source, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
+		 FROM memories WHERE id = ?`, id,
+	).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cortex: get memory by id: %w", err)
+	}
+	m.ValidAt = nullTimePtr(vat)
+	m.InvalidAt = nullTimePtr(iat)
+	m.ExpiredAt = nullTimePtr(eat)
+	return &m, nil
+}

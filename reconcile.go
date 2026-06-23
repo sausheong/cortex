@@ -144,3 +144,73 @@ func (c *Cortex) allEntityIDs(ctx context.Context) ([]string, error) {
 	}
 	return ids, nil
 }
+
+// ApplyReconcileReport applies a previously-produced reconcile report WITHOUT
+// re-running detection — this is the reviewed-apply path that closes the gap
+// where a dry-run and a separate --apply could diverge. Each proposed
+// supersession is re-validated against current state before invalidation:
+// the stale memory must still be currently valid, the superseding memory must
+// still exist, be currently valid, and be strictly newer than the stale one.
+// Proposals that no longer hold are skipped and recorded in the returned
+// report's Rejected list with a reason. A Skipped input report is returned
+// unchanged. The returned report's Proposed list contains only the
+// supersessions that were actually applied.
+func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileReport) (ReconcileReport, error) {
+	if report.Skipped {
+		return report, nil
+	}
+
+	out := ReconcileReport{
+		EntitiesScanned: report.EntitiesScanned,
+		MemoriesScanned: report.MemoriesScanned,
+	}
+
+	for _, p := range report.Proposed {
+		stale, err := c.getMemoryByID(ctx, p.StaleID)
+		if err != nil {
+			return out, err
+		}
+		newer, err := c.getMemoryByID(ctx, p.SupersededByID)
+		if err != nil {
+			return out, err
+		}
+
+		reason, ok := revalidateSupersession(stale, newer)
+		if !ok {
+			out.Rejected = append(out.Rejected, RejectedPair{
+				StaleID: p.StaleID, SupersededByID: p.SupersededByID, Reason: reason,
+			})
+			continue
+		}
+
+		invalidAt := p.InvalidAt
+		if err := c.InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
+			return out, fmt.Errorf("cortex: apply reviewed supersession (stale %s): %w", p.StaleID, err)
+		}
+		out.Proposed = append(out.Proposed, p)
+	}
+
+	return out, nil
+}
+
+// revalidateSupersession re-checks the deterministic gate against current
+// memory state. Returns ("", true) when the supersession may be applied,
+// or (reason, false) when it must be skipped.
+func revalidateSupersession(stale, newer *Memory) (string, bool) {
+	if stale == nil {
+		return "stale memory no longer exists", false
+	}
+	if newer == nil {
+		return "superseding memory no longer exists", false
+	}
+	if stale.ExpiredAt != nil || stale.InvalidAt != nil {
+		return "stale memory no longer current", false
+	}
+	if newer.ExpiredAt != nil || newer.InvalidAt != nil {
+		return "superseding memory no longer current", false
+	}
+	if !newer.CreatedAt.After(stale.CreatedAt) {
+		return "superseding memory no longer strictly newer", false
+	}
+	return "", true
+}
