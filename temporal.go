@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -57,4 +58,37 @@ func (m temporalMode) clause(alias string) (string, []any) {
 		return validAsOfClause(alias, *m.asOf)
 	}
 	return currentlyValidClause(alias), nil
+}
+
+// eventTimeLayouts are the date formats ParseEventTime accepts, tried in
+// order. More specific formats come first so "2026-03-15" is not matched as
+// a bare year. All are interpreted in UTC; a month-only or year-only date
+// resolves to the first day (and first month) of the period.
+var eventTimeLayouts = []string{
+	time.RFC3339,
+	"2006-01-02",
+	"2006-01",
+	"January 2006",
+	"Jan 2006",
+	"2006",
+}
+
+// ParseEventTime turns a natural-language or ISO date string into a UTC
+// *time.Time, or nil when the string is empty or unparseable. It is the
+// lenient front-door for LLM-supplied event times (memory valid_at): the
+// extractor may emit "March 2026", "2026-03", an RFC3339 stamp, or nothing
+// at all, and any failure degrades to nil (NULL in storage) rather than
+// failing the ingest.
+func ParseEventTime(s string) *time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	for _, layout := range eventTimeLayouts {
+		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil {
+			u := t.UTC()
+			return &u
+		}
+	}
+	return nil
 }
