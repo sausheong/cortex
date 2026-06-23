@@ -66,6 +66,31 @@ func TestRemember(t *testing.T) {
 	}
 }
 
+func TestRemember_StampsSpeaker(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Memories: []Memory{{Content: "Likes terse PR descriptions"}},
+			}, nil
+		},
+	})
+
+	if err := c.Remember(ctx, "I like terse PR descriptions", WithSpeaker("user")); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	found, err := c.SearchMemories(ctx, "terse PR descriptions", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(found) != 1 || found[0].Speaker != "user" {
+		t.Fatalf("expected speaker 'user' stamped on ingest, got %+v", found)
+	}
+}
+
 func TestRememberNoExtractor(t *testing.T) {
 	c := openTestDB(t)
 	c.SetExtractor(nil)
@@ -462,5 +487,58 @@ func TestRemember_EventTimeFlowsToAsOfRecall(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("memory should be included as-of %v, but was not returned", after)
+	}
+}
+
+// recordingEmbedder captures every text passed to Embed, for asserting what
+// gets embedded. Deterministic 8-dim vectors like testEmbedder.
+type recordingEmbedder struct {
+	embedded []string
+}
+
+func (e *recordingEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	e.embedded = append(e.embedded, texts...)
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = make([]float32, 8) // value doesn't matter for this test
+	}
+	return out, nil
+}
+func (e *recordingEmbedder) Dimensions() int { return 8 }
+
+func TestRemember_EmbedsFactAugmentedMemory(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	rec := &recordingEmbedder{}
+	c.SetEmbedder(rec)
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Entities: []Entity{
+					{Name: "Alice", Type: "person"},
+					{Name: "Stripe", Type: "org"},
+				},
+				Memories: []Memory{{Content: "ships in April"}},
+			}, nil
+		},
+	})
+
+	if err := c.Remember(ctx, "Alice says Stripe ships in April"); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	// The memory must have been embedded with entity context prepended, not bare.
+	var sawAugmented bool
+	for _, txt := range rec.embedded {
+		if txt == "Entities: Alice, Stripe. ships in April" {
+			sawAugmented = true
+		}
+		if txt == "ships in April" {
+			t.Fatalf("memory was embedded bare, expected fact-augmented; embedded=%v", rec.embedded)
+		}
+	}
+	if !sawAugmented {
+		t.Fatalf("expected fact-augmented memory embedding, embedded=%v", rec.embedded)
 	}
 }

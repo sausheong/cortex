@@ -382,3 +382,30 @@ func TestPutMemory_PersistsValidAt(t *testing.T) {
 		t.Fatalf("expected invalid_at/expired_at nil, got invalid=%v expired=%v", got.InvalidAt, got.ExpiredAt)
 	}
 }
+
+func TestPutMemory_PersistsSpeaker(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Prefers async standups", Speaker: "user"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	got, err := c.getMemoryByID(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("getMemoryByID: %v", err)
+	}
+	if got == nil || got.Speaker != "user" {
+		t.Fatalf("expected speaker 'user', got %+v", got)
+	}
+
+	// And via FTS search read path.
+	found, err := c.SearchMemories(ctx, "async standups", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(found) != 1 || found[0].Speaker != "user" {
+		t.Fatalf("expected speaker via search, got %+v", found)
+	}
+}

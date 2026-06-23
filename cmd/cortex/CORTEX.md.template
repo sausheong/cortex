@@ -54,6 +54,8 @@ Remember when:
 
 Use the user's own words when possible. The extraction pipeline will pull out entities and relationships.
 
+- When it matters who said something — the user vs. you (the assistant) vs. a document — pass a speaker label so the fact is attributable. Use `--speaker` on the CLI or the `speaker` field on the MCP tool. "assistant" marks facts you inferred or stated; "user" marks what the user told you directly.
+
 ## What NOT to remember
 
 Cortex is for knowledge that compounds, not for ephemeral state. Do **not** store:

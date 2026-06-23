@@ -96,18 +96,31 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		allEntityIDs = append(allEntityIDs, id)
 	}
 
+	// Entity-context names for fact-augmented memory embeddings (3.1).
+	entityNames := make([]string, 0, len(nameToID))
+	for name := range nameToID {
+		entityNames = append(entityNames, name)
+	}
+
 	for i := range extraction.Memories {
 		m := &extraction.Memories[i]
 		m.EntityIDs = allEntityIDs
 		if cfg.source != "" && m.Source == "" {
 			m.Source = cfg.source
 		}
+		if cfg.speaker != "" && m.Speaker == "" {
+			m.Speaker = cfg.speaker
+		}
 		if err := c.PutMemory(ctx, m); err != nil {
 			return fmt.Errorf("cortex: store memory: %w", err)
 		}
-		// Embed the memory if embedder is configured.
+		// Embed the memory if embedder is configured. Embed the
+		// fact-augmented key (entity context + content), not the bare
+		// content, so thin memories are findable by their entities. The
+		// stored content and FTS index keep the original text.
 		if c.cfg.embedder != nil {
-			vecs, err := c.cfg.embedder.Embed(ctx, []string{m.Content})
+			augmented := augmentForEmbedding(m.Content, entityNames)
+			vecs, err := c.cfg.embedder.Embed(ctx, []string{augmented})
 			if err != nil {
 				return fmt.Errorf("cortex: embed memory: %w", err)
 			}

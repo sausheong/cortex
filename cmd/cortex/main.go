@@ -251,18 +251,56 @@ func cmdInit() {
 	storeOwner(cx, name, nickname, emails)
 }
 
+// parseRememberArgs extracts --speaker and --source flags from the remember
+// command's args; all other args (including unrecognized flags) join into the
+// fact text, matching the prior behavior of joining everything as text.
+func parseRememberArgs(args []string) (text, speaker, source string, err error) {
+	var textParts []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--speaker":
+			if i+1 >= len(args) {
+				return "", "", "", fmt.Errorf("--speaker requires a value")
+			}
+			speaker = args[i+1]
+			i++
+		case "--source":
+			if i+1 >= len(args) {
+				return "", "", "", fmt.Errorf("--source requires a value")
+			}
+			source = args[i+1]
+			i++
+		default:
+			textParts = append(textParts, args[i])
+		}
+	}
+	if len(textParts) == 0 {
+		return "", "", "", fmt.Errorf("remember requires <text>")
+	}
+	return strings.Join(textParts, " "), speaker, source, nil
+}
+
 func cmdRemember() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: cortex remember <text>")
+	text, speaker, source, err := parseRememberArgs(os.Args[2:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintln(os.Stderr, "usage: cortex remember <text> [--speaker <s>] [--source <s>]")
 		os.Exit(1)
 	}
 
-	text := strings.Join(os.Args[2:], " ")
 	cx := openCortex()
 	defer cx.Close()
 
+	var opts []cortex.RememberOption
+	if speaker != "" {
+		opts = append(opts, cortex.WithSpeaker(speaker))
+	}
+	if source != "" {
+		opts = append(opts, cortex.WithSource(source))
+	}
+
 	ctx := context.Background()
-	if err := cx.Remember(ctx, text); err != nil {
+	if err := cx.Remember(ctx, text, opts...); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

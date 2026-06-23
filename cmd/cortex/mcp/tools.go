@@ -21,6 +21,7 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithDescription("Save a fact to the user's personal knowledge graph (cortex). Call this whenever the user shares information about themselves, a person, a project, a decision, or a preference that would be useful in a future conversation. Entities and relationships are extracted automatically."),
 			mcp.WithString("content", mcp.Required(), mcp.Description("The text content to remember")),
 			mcp.WithString("source", mcp.Description("Optional source label for the content")),
+			mcp.WithString("speaker", mcp.Description("Who asserted this (e.g. \"user\", \"assistant\", a document name). Optional provenance label.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			content, err := req.RequireString("content")
@@ -30,6 +31,9 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			var opts []cortex.RememberOption
 			if src := req.GetString("source", ""); src != "" {
 				opts = append(opts, cortex.WithSource(src))
+			}
+			if spk := req.GetString("speaker", ""); spk != "" {
+				opts = append(opts, cortex.WithSpeaker(spk))
 			}
 			if err := cx.Remember(ctx, content, opts...); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil

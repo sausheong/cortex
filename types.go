@@ -41,6 +41,7 @@ type Memory struct {
 	Content    string    `json:"content"`
 	EntityIDs  []string  `json:"entity_ids,omitempty"`
 	Source     string    `json:"source,omitempty"`
+	Speaker    string    `json:"speaker,omitempty"`
 	Confidence float64   `json:"confidence"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -60,6 +61,7 @@ type Result struct {
 	Confidence float64        `json:"confidence"`
 	EntityIDs  []string       `json:"entity_ids,omitempty"`
 	Source     string         `json:"source,omitempty"`
+	Speaker    string         `json:"speaker,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
@@ -163,12 +165,21 @@ type StructuredQuery struct {
 type RememberOption func(*rememberConfig)
 type rememberConfig struct {
 	source       string
+	speaker      string
 	contentType  string
 	maxChunkSize int // max characters per chunk before splitting (0 = no split)
 }
 
 func WithSource(source string) RememberOption {
 	return func(c *rememberConfig) { c.source = source }
+}
+
+// WithSpeaker stamps a speaker/provenance label (e.g. "user", "assistant",
+// a document name) on every memory ingested in this Remember call, unless
+// the extractor already set one. Records who asserted the fact, so
+// attribution questions and assistant-statement recall work.
+func WithSpeaker(speaker string) RememberOption {
+	return func(c *rememberConfig) { c.speaker = speaker }
 }
 
 func WithContentType(ct string) RememberOption {

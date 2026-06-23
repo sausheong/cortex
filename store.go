@@ -164,6 +164,11 @@ func Open(path string, opts ...Option) (*Cortex, error) {
 		}
 	}
 
+	if err := ensureColumn(db, "memories", "speaker", "TEXT"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cortex: migrate memories.speaker: %w", err)
+	}
+
 	// Backfill memories_fts for databases created before the FTS table existed.
 	if _, err := db.Exec(
 		`INSERT INTO memories_fts (rowid, content)

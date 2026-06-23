@@ -33,10 +33,14 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	}
 	defer tx.Rollback()
 
+	var speaker any
+	if m.Speaker != "" {
+		speaker = m.Speaker
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO memories (id, content, source, confidence, created_at, updated_at, valid_at, invalid_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Content, m.Source, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt,
+		`INSERT INTO memories (id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)
@@ -92,7 +96,7 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 	args = append(args, limit)
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
+		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memories_fts f ON m.rowid = f.rowid
 		 WHERE memories_fts MATCH ? AND `+clause+`
@@ -108,9 +112,13 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
+		var spk sql.NullString
 		var vat, iat, eat sql.NullTime
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
+		}
+		if spk.Valid {
+			m.Speaker = spk.String
 		}
 		m.ValidAt = nullTimePtr(vat)
 		m.InvalidAt = nullTimePtr(iat)
@@ -148,7 +156,7 @@ func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, m
 	args = append(args, targs...)
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
+		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id
 		 WHERE me.entity_id = ? AND `+clause,
@@ -162,9 +170,13 @@ func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, m
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
+		var spk sql.NullString
 		var vat, iat, eat sql.NullTime
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
+		}
+		if spk.Valid {
+			m.Speaker = spk.String
 		}
 		m.ValidAt = nullTimePtr(vat)
 		m.InvalidAt = nullTimePtr(iat)
@@ -271,16 +283,20 @@ func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *tim
 // re-validation, which must distinguish "missing" from "already invalidated".
 func (c *Cortex) getMemoryByID(ctx context.Context, id string) (*Memory, error) {
 	var m Memory
+	var spk sql.NullString
 	var vat, iat, eat sql.NullTime
 	err := c.db.QueryRowContext(ctx,
-		`SELECT id, content, source, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
+		`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
 		 FROM memories WHERE id = ?`, id,
-	).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
+	).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get memory by id: %w", err)
+	}
+	if spk.Valid {
+		m.Speaker = spk.String
 	}
 	m.ValidAt = nullTimePtr(vat)
 	m.InvalidAt = nullTimePtr(iat)
