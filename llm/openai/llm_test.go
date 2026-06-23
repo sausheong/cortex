@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestExtractIntegration(t *testing.T) {
@@ -174,5 +175,29 @@ func TestParseExtractionJSON_OmittedConfidenceIsZero(t *testing.T) {
 	}
 	if ext.Memories[0].Confidence != 0 {
 		t.Errorf("memory confidence = %v, want 0", ext.Memories[0].Confidence)
+	}
+}
+
+func TestParseExtractionJSON_ReadsValidAt(t *testing.T) {
+	raw := `{"entities":[],"relationships":[],"memories":[
+		{"content":"Alice joined Stripe","valid_at":"2026-03"},
+		{"content":"Bob likes tea"}
+	]}`
+	ex, err := parseExtractionJSON(raw)
+	if err != nil {
+		t.Fatalf("parseExtractionJSON: %v", err)
+	}
+	if len(ex.Memories) != 2 {
+		t.Fatalf("expected 2 memories, got %d", len(ex.Memories))
+	}
+	if ex.Memories[0].ValidAt == nil {
+		t.Fatal("expected ValidAt set on first memory")
+	}
+	want := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if !ex.Memories[0].ValidAt.Equal(want) {
+		t.Fatalf("ValidAt = %v, want %v", ex.Memories[0].ValidAt, want)
+	}
+	if ex.Memories[1].ValidAt != nil {
+		t.Fatal("expected nil ValidAt on memory without valid_at")
 	}
 }

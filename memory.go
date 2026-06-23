@@ -34,9 +34,9 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO memories (id, content, source, confidence, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Content, m.Source, m.Confidence, m.CreatedAt, m.UpdatedAt,
+		`INSERT INTO memories (id, content, source, confidence, created_at, updated_at, valid_at, invalid_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Content, m.Source, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)

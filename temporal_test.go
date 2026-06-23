@@ -37,3 +37,42 @@ func TestValidAsOfClause(t *testing.T) {
 		}
 	}
 }
+
+func TestParseEventTime(t *testing.T) {
+	mustUTC := func(y int, mo time.Month, d int) *time.Time {
+		v := time.Date(y, mo, d, 0, 0, 0, 0, time.UTC)
+		return &v
+	}
+
+	cases := []struct {
+		in   string
+		want *time.Time
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"not a date", nil},
+		{"2026-03-15", mustUTC(2026, 3, 15)},
+		{"2026-03", mustUTC(2026, 3, 1)},
+		{"2026", mustUTC(2026, 1, 1)},
+		{"March 2026", mustUTC(2026, 3, 1)},
+		{"Mar 2026", mustUTC(2026, 3, 1)},
+		{"2026-03-15T00:00:00Z", mustUTC(2026, 3, 15)},
+	}
+
+	for _, tc := range cases {
+		got := ParseEventTime(tc.in)
+		if tc.want == nil {
+			if got != nil {
+				t.Errorf("ParseEventTime(%q) = %v, want nil", tc.in, got)
+			}
+			continue
+		}
+		if got == nil {
+			t.Errorf("ParseEventTime(%q) = nil, want %v", tc.in, tc.want)
+			continue
+		}
+		if !got.Equal(*tc.want) {
+			t.Errorf("ParseEventTime(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}

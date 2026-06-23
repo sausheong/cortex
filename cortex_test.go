@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRemember(t *testing.T) {
@@ -396,4 +397,70 @@ func (m *mockExtractor) Extract(ctx context.Context, content, contentType string
 		return m.extractFn(ctx, content, contentType)
 	}
 	return &Extraction{}, nil
+}
+
+func TestRemember_EventTimeFlowsToAsOfRecall(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	when := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Memories: []Memory{
+					{Content: "Alice joined Stripe", ValidAt: &when},
+				},
+			}, nil
+		},
+	})
+	// Force the memory_lookup path so recall reads memories (with temporal mode).
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	if err := c.Remember(ctx, "Alice joined Stripe in March 2026"); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	// Backdate created_at so the as-of window is meaningful: validAsOfClause also
+	// gates on created_at <= t (system-time), not just valid_at (event-time). See
+	// TestRecall_WithAsOf. Without this, the memory ingested "now" is excluded from
+	// any as-of in the past regardless of its event-time.
+	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := c.db.ExecContext(ctx,
+		`UPDATE memories SET created_at = ?`, ingest); err != nil {
+		t.Fatalf("backdate created_at: %v", err)
+	}
+
+	// As of February 2026, the fact was not yet true → excluded.
+	before := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	got, err := c.Recall(ctx, "Stripe", WithAsOf(before))
+	if err != nil {
+		t.Fatalf("Recall before: %v", err)
+	}
+	for _, r := range got {
+		if r.Content == "Alice joined Stripe" {
+			t.Fatalf("memory should be excluded as-of %v, but was returned", before)
+		}
+	}
+
+	// As of April 2026, the fact was true → included.
+	after := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	got, err = c.Recall(ctx, "Stripe", WithAsOf(after))
+	if err != nil {
+		t.Fatalf("Recall after: %v", err)
+	}
+	var found bool
+	for _, r := range got {
+		if r.Content == "Alice joined Stripe" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("memory should be included as-of %v, but was not returned", after)
+	}
 }

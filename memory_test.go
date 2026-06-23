@@ -353,3 +353,32 @@ func TestSearchMemories_HidesInvalidated(t *testing.T) {
 		t.Fatalf("expected only the current memory after invalidation, got %d results", len(got))
 	}
 }
+
+func TestPutMemory_PersistsValidAt(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	when := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	m := &Memory{Content: "Alice joined Stripe", ValidAt: &when}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	got, err := c.getMemoryByID(ctx, m.ID)
+	if err != nil {
+		t.Fatalf("getMemoryByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected memory, got nil")
+	}
+	if got.ValidAt == nil {
+		t.Fatal("expected ValidAt to be persisted, got nil")
+	}
+	if !got.ValidAt.Equal(when) {
+		t.Fatalf("ValidAt mismatch: got %v want %v", got.ValidAt, when)
+	}
+	// A memory with only valid_at set must still be currently valid (not retired).
+	if got.InvalidAt != nil || got.ExpiredAt != nil {
+		t.Fatalf("expected invalid_at/expired_at nil, got invalid=%v expired=%v", got.InvalidAt, got.ExpiredAt)
+	}
+}

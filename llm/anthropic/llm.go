@@ -15,11 +15,13 @@ const defaultExtractionPrompt = `Analyze the following text and extract structur
 Return a JSON object with the following fields:
 - "entities": array of objects with "name" (string) and "type" (string)
 - "relationships": array of objects with "source" (string, entity name), "target" (string, entity name), and "type" (string)
-- "memories": array of objects with "content" (string, a concise factual statement)
+- "memories": array of objects with "content" (string, a concise factual statement) and optional "valid_at" (string: when the fact became true in the world, e.g. "2026-03", "March 2026", "2026-03-15"; omit if the text gives no time)
 
 Extract all people, organizations, places, concepts, and other notable entities.
 Identify relationships between entities (e.g., works_at, knows, located_in).
 Create memories for key facts and statements.
+
+When a memory states when something became true (a start date, a join date, an "as of" date), set "valid_at" to that date. Do not guess; omit it if the text does not say.
 
 Return ONLY valid JSON, no markdown formatting or code fences.`
 
@@ -283,11 +285,13 @@ func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
 		var memObj struct {
 			Content    string  `json:"content"`
 			Confidence float64 `json:"confidence"`
+			ValidAt    string  `json:"valid_at"`
 		}
 		if err := json.Unmarshal(m, &memObj); err == nil && memObj.Content != "" {
 			extraction.Memories = append(extraction.Memories, cortex.Memory{
 				Content:    memObj.Content,
 				Confidence: memObj.Confidence,
+				ValidAt:    cortex.ParseEventTime(memObj.ValidAt),
 			})
 			continue
 		}
