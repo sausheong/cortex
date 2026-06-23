@@ -8,6 +8,28 @@ import (
 	"sync"
 )
 
+// augmentForEmbedding prepends a memory's linked-entity context to its
+// content for the purpose of embedding only (fact-augmented keys, à la
+// Anthropic Contextual Retrieval). The stored content, FTS index, and
+// query-side embedding are unaffected — this text is passed solely to the
+// embedder at ingest, so a semantically-thin memory ("ships in April")
+// becomes findable by the entities it concerns. Names are sorted for a
+// deterministic key; blank names are dropped; with no names the content is
+// returned unchanged.
+func augmentForEmbedding(content string, entityNames []string) string {
+	names := make([]string, 0, len(entityNames))
+	for _, n := range entityNames {
+		if strings.TrimSpace(n) != "" {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return content
+	}
+	sort.Strings(names)
+	return "Entities: " + strings.Join(names, ", ") + ". " + content
+}
+
 // RecallWithStrength runs Recall and adds an aggregate strength score plus
 // an abstention hint. Use this when the caller (e.g. an agent) needs to
 // decide whether the knowledge graph actually knows the answer.
