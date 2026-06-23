@@ -105,7 +105,7 @@ func cmdReconcile() {
 		fmt.Printf("wrote JSON report to %s\n", jsonOut)
 	}
 
-	md := cortex.RenderReconcileMarkdown(report)
+	md := cortex.RenderReconcileMarkdownMode(report, apply)
 	if out != "" {
 		if wErr := os.WriteFile(out, []byte(md), 0o644); wErr != nil {
 			fmt.Fprintf(os.Stderr, "write report: %v\n", wErr)
