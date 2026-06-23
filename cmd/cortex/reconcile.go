@@ -18,13 +18,13 @@ func cmdReconcile() {
 			apply = true
 		case "--out":
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "usage: cortex reconcile [--apply] [--out <file>]")
+				fmt.Fprintln(os.Stderr, "usage: cortex reconcile [--apply] [--out <file>]\n  --apply re-runs detection (it does not apply a previous dry-run's output)")
 				os.Exit(1)
 			}
 			i++
 			out = args[i]
 		default:
-			fmt.Fprintln(os.Stderr, "usage: cortex reconcile [--apply] [--out <file>]")
+			fmt.Fprintln(os.Stderr, "usage: cortex reconcile [--apply] [--out <file>]\n  --apply re-runs detection (it does not apply a previous dry-run's output)")
 			os.Exit(1)
 		}
 	}

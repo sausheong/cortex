@@ -99,12 +99,17 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 	return report, nil
 }
 
-// ApplyReconcile runs the reconcile scan and then soft-invalidates each
-// proposed stale memory (setting invalid_at to the superseding memory's
-// created_at). Returns the report describing what was applied. On the first
-// invalidation error it returns that error; supersessions applied before the
-// failure remain applied (soft-invalidation is reversible). Returns the
-// Skipped report unchanged when no Reconciler is configured.
+// ApplyReconcile RE-RUNS detection (it calls Reconcile, a fresh LLM pass) and
+// then soft-invalidates each proposed stale memory (setting invalid_at to the
+// superseding memory's created_at). It does NOT consume a prior dry-run report:
+// if the graph changed or the LLM returned different output since an earlier
+// Reconcile call, the applied set may differ from what that dry-run showed. The
+// deterministic gate still bounds what can be applied (strictly-newer + both
+// currently valid), so divergence is limited to which gated pairs surface.
+// Returns the report describing what was applied. On the first invalidation
+// error it returns that error; supersessions applied before the failure remain
+// applied (soft-invalidation is reversible). Returns the Skipped report
+// unchanged when no Reconciler is configured.
 func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (ReconcileReport, error) {
 	report, err := c.Reconcile(ctx, opts...)
 	if err != nil || report.Skipped {
