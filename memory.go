@@ -83,7 +83,7 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memories_fts f ON m.rowid = f.rowid
-		 WHERE memories_fts MATCH ?
+		 WHERE memories_fts MATCH ? AND `+currentlyValidClause("m")+`
 		 ORDER BY f.rank
 		 LIMIT ?`,
 		ftsQuery(query), limit,
@@ -127,7 +127,7 @@ func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Me
 		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id
-		 WHERE me.entity_id = ?`,
+		 WHERE me.entity_id = ? AND `+currentlyValidClause("m"),
 		entityID,
 	)
 	if err != nil {

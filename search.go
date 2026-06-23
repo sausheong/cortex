@@ -150,7 +150,7 @@ func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int
 		var vat, iat, eat sql.NullTime
 		err := c.db.QueryRowContext(ctx,
 			`SELECT id, content, source, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
-			 FROM memories WHERE id = ?`, r.refID,
+			 FROM memories WHERE id = ? AND `+currentlyValidClause("")+``, r.refID,
 		).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but memory was deleted

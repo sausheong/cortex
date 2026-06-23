@@ -317,3 +317,39 @@ func TestInvalidateMemory_NotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent memory, got nil")
 	}
 }
+
+func TestSearchMemories_HidesInvalidated(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	stale := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	current := &Memory{Content: "Alice's budget is 10000"}
+	if err := c.PutMemory(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before invalidation: both match.
+	got, err := c.SearchMemories(ctx, "budget", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 before invalidation, got %d", len(got))
+	}
+
+	// Invalidate the stale one.
+	if err := c.InvalidateMemory(ctx, stale.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = c.SearchMemories(ctx, "budget", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != current.ID {
+		t.Fatalf("expected only the current memory after invalidation, got %d results", len(got))
+	}
+}
