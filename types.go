@@ -41,6 +41,7 @@ type Memory struct {
 	Content    string    `json:"content"`
 	EntityIDs  []string  `json:"entity_ids,omitempty"`
 	Source     string    `json:"source,omitempty"`
+	Speaker    string    `json:"speaker,omitempty"`
 	Confidence float64   `json:"confidence"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`

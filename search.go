@@ -156,19 +156,23 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 	memories := make([]Memory, 0, len(results))
 	for _, r := range results {
 		var m Memory
+		var spk sql.NullString
 		var vat, iat, eat sql.NullTime
 		// Arg order: ref id first, then temporal args.
 		args := []any{r.refID}
 		args = append(args, targs...)
 		err := c.db.QueryRowContext(ctx,
-			`SELECT id, content, source, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
+			`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
 			 FROM memories WHERE id = ? AND `+clause, args...,
-		).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
+		).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but memory was deleted
 		}
 		if err != nil {
 			return nil, fmt.Errorf("cortex: get memory %s: %w", r.refID, err)
+		}
+		if spk.Valid {
+			m.Speaker = spk.String
 		}
 		m.ValidAt = nullTimePtr(vat)
 		m.InvalidAt = nullTimePtr(iat)
