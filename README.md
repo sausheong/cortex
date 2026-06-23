@@ -28,11 +28,12 @@ Query
 Maintain
   Project   -> cortex export --vault ./vault   (browsable Obsidian-compatible projection)
   Tidy      -> cortex lint                     (orphans, near-duplicates, dead sources)
-  Reconcile -> cortex merge <keep-id> <drop-id>   (atomic dedup with provenance)
+  Dedup     -> cortex merge <keep-id> <drop-id>   (atomic dedup with provenance)
+  Reconcile -> cortex reconcile               (soft-invalidate memories superseded by newer facts)
   Brief     -> cortex init-schema              (drops CORTEX.md agent contract for AI clients)
 ```
 
-Every cycle through ingest/query adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. The maintain loop (export, lint, merge) is what keeps the graph healthy as it grows — run periodically, ideally by an agent reading the lint report and acting on its suggestions. You never start from zero.
+Every cycle through ingest/query adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. The maintain loop (export, lint, merge, reconcile) is what keeps the graph healthy as it grows — run periodically, ideally by an agent reading the lint report and acting on its suggestions. You never start from zero.
 
 ## Features
 
@@ -44,7 +45,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
 - **Obsidian-compatible vault export** — `cortex export` projects the graph as a browsable markdown vault with frontmatter, wikilinks, and backlinks. Incremental change detection via a hidden manifest
 - **Agent contract** — `cortex init-schema` drops a `CORTEX.md` into a project that tells any LLM-based agent how to use cortex as the knowledge layer (when to recall, when to remember, what not to store)
-- **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report
+- **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report. `cortex reconcile` detects newer memories that supersede older contradicting ones and soft-invalidates the stale ones (dry-run by default)
 - **Two interfaces** — CLI and MCP server (stdio or streamable HTTP)
 - **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
@@ -196,6 +197,8 @@ Commands:
                                  Merge drop entity into keep entity; re-target all references
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
                                  Scan the graph for cleanup candidates; print markdown report
+  reconcile [--apply] [--out <file>]
+                                 Soft-invalidate memories superseded by newer facts (dry-run by default)
   config                         Show owner identity
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
@@ -275,6 +278,20 @@ Pure read operation — never modifies the graph. Six checks run on every invoca
 Output is markdown by default — empty sections are omitted so a healthy graph shows just the count summary. Use `--out <path>` to write the report to a file.
 
 Lint is informational. Even when findings are present, exit code is 0.
+
+### `cortex reconcile`
+
+Detect and resolve contradicting memories where a newer fact supersedes an older one.
+
+```bash
+cortex reconcile [--apply] [--out <file>]
+```
+
+Dry-run by default: prints a markdown report of proposed supersessions and writes nothing. Pass `--apply` to soft-invalidate each superseded memory — it drops out of default `recall` but remains reachable via `as_of` / `include_invalid`, so nothing is destroyed. `--out <path>` writes the report to a file instead of stdout.
+
+Detection requires an LLM provider that implements conflict detection — the shipped Anthropic and OpenAI providers do. Without such a provider, reconcile reports nothing and exits cleanly. Resolution itself is deterministic: only a strictly-newer, currently-valid memory may supersede an older one.
+
+Scope is **per-entity**: cortex only compares memories that share a linked entity. Contradictions between memories with no common entity are not detected.
 
 ### `cortex init-schema`
 
