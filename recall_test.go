@@ -264,9 +264,10 @@ func resultTypes(results []Result) []string {
 
 // mockLLM is a test-only LLM mock.
 type mockLLM struct {
-	extractFn   func(ctx context.Context, text, prompt string) (ExtractionResult, error)
-	decomposeFn func(ctx context.Context, query string) ([]StructuredQuery, error)
-	summarizeFn func(ctx context.Context, texts []string) (string, error)
+	extractFn         func(ctx context.Context, text, prompt string) (ExtractionResult, error)
+	decomposeFn       func(ctx context.Context, query string) ([]StructuredQuery, error)
+	summarizeFn       func(ctx context.Context, texts []string) (string, error)
+	detectConflictsFn func(ctx context.Context, memories []Memory) ([]ConflictPair, error)
 }
 
 func (m *mockLLM) Extract(ctx context.Context, text, prompt string) (ExtractionResult, error) {
@@ -288,6 +289,28 @@ func (m *mockLLM) Summarize(ctx context.Context, texts []string) (string, error)
 		return m.summarizeFn(ctx, texts)
 	}
 	return "", nil
+}
+
+func (m *mockLLM) DetectConflicts(ctx context.Context, memories []Memory) ([]ConflictPair, error) {
+	if m.detectConflictsFn != nil {
+		return m.detectConflictsFn(ctx, memories)
+	}
+	return nil, nil
+}
+
+func TestMockLLM_SatisfiesReconciler(t *testing.T) {
+	var r Reconciler = &mockLLM{
+		detectConflictsFn: func(_ context.Context, mems []Memory) ([]ConflictPair, error) {
+			return []ConflictPair{{StaleID: "x", SupersededByID: "y", Reason: "test"}}, nil
+		},
+	}
+	got, err := r.DetectConflicts(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].SupersededByID != "y" {
+		t.Fatalf("unexpected detection result: %+v", got)
+	}
 }
 
 func TestRecall_ResultIncludesConfidence(t *testing.T) {
