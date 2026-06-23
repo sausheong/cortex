@@ -2,6 +2,8 @@ package cortex
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -223,5 +225,41 @@ func TestReconcile_SkipsWithoutReconciler(t *testing.T) {
 	}
 	if !rep.Skipped {
 		t.Fatal("expected Skipped=true when no Reconciler is configured")
+	}
+}
+
+func TestReconcileReport_JSONRoundTrip(t *testing.T) {
+	orig := ReconcileReport{
+		EntitiesScanned: 2,
+		MemoriesScanned: 5,
+		Proposed: []Supersession{{
+			StaleID: "s1", StaleContent: "budget 5000",
+			SupersededByID: "n1", SupersededByContent: "budget 10000",
+			Reason: "changed", InvalidAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		}},
+		Rejected: []RejectedPair{{StaleID: "s2", SupersededByID: "n2", Reason: "not newer"}},
+	}
+
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Snake_case tags must be present in the wire form.
+	for _, want := range []string{`"stale_id"`, `"superseded_by_id"`, `"invalid_at"`, `"proposed"`, `"entities_scanned"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected JSON to contain %s, got: %s", want, data)
+		}
+	}
+
+	var back ReconcileReport
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(back.Proposed) != 1 || back.Proposed[0].StaleID != "s1" ||
+		!back.Proposed[0].InvalidAt.Equal(orig.Proposed[0].InvalidAt) {
+		t.Fatalf("round-trip mismatch: %+v", back)
+	}
+	if back.EntitiesScanned != 2 || len(back.Rejected) != 1 {
+		t.Fatalf("round-trip lost fields: %+v", back)
 	}
 }

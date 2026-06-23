@@ -293,31 +293,31 @@ type MergeStats struct {
 // dry-run: StaleID will be soft-invalidated with InvalidAt, because the newer
 // SupersededByID memory contradicts it.
 type Supersession struct {
-	StaleID             string
-	StaleContent        string
-	SupersededByID      string
-	SupersededByContent string
-	Reason              string
-	InvalidAt           time.Time
+	StaleID             string    `json:"stale_id"`
+	StaleContent        string    `json:"stale_content"`
+	SupersededByID      string    `json:"superseded_by_id"`
+	SupersededByContent string    `json:"superseded_by_content"`
+	Reason              string    `json:"reason"`
+	InvalidAt           time.Time `json:"invalid_at"`
 }
 
 // RejectedPair is an LLM-flagged contradiction that the deterministic gate
 // rejected (e.g. wrong supersession direction, or an id not in the current
 // candidate set).
 type RejectedPair struct {
-	StaleID        string
-	SupersededByID string
-	Reason         string // why the gate rejected it
+	StaleID        string `json:"stale_id"`
+	SupersededByID string `json:"superseded_by_id"`
+	Reason         string `json:"reason"` // why the gate rejected it
 }
 
 // ReconcileReport summarizes a reconcile dry-run.
 type ReconcileReport struct {
-	EntitiesScanned int
-	MemoriesScanned int
-	Proposed        []Supersession
-	Rejected        []RejectedPair
-	Skipped         bool // true when no Reconciler-capable LLM is configured
-	SkipReason      string
+	EntitiesScanned int            `json:"entities_scanned"`
+	MemoriesScanned int            `json:"memories_scanned"`
+	Proposed        []Supersession `json:"proposed"`
+	Rejected        []RejectedPair `json:"rejected"`
+	Skipped         bool           `json:"skipped"` // true when no Reconciler-capable LLM is configured
+	SkipReason      string         `json:"skip_reason,omitempty"`
 }
 
 // ReconcileOption configures a Reconcile run.
