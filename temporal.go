@@ -39,3 +39,22 @@ func validAsOfClause(alias string, t time.Time) (string, []any) {
 	)
 	return clause, []any{t, t, t, t}
 }
+
+// temporalMode selects which validity predicate a memory read applies.
+type temporalMode struct {
+	includeInvalid bool
+	asOf           *time.Time
+}
+
+// clause returns the SQL fragment (no leading AND) and its args for this
+// mode. includeInvalid → always-true ("1=1", no args). asOf set →
+// validAsOfClause. Otherwise → currentlyValidClause.
+func (m temporalMode) clause(alias string) (string, []any) {
+	if m.includeInvalid {
+		return "1=1", nil
+	}
+	if m.asOf != nil {
+		return validAsOfClause(alias, *m.asOf)
+	}
+	return currentlyValidClause(alias), nil
+}

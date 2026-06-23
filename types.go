@@ -166,9 +166,11 @@ func WithMaxChunkChars(n int) RememberOption {
 
 type RecallOption func(*recallConfig)
 type recallConfig struct {
-	limit         int
-	source        string
-	minConfidence float64
+	limit          int
+	source         string
+	minConfidence  float64
+	asOf           *time.Time // non-nil → recall as the graph was valid at this time
+	includeInvalid bool       // true → no validity filter (include retired memories)
 }
 
 func WithLimit(n int) RecallOption {
@@ -184,6 +186,19 @@ func WithSourceFilter(source string) RecallOption {
 // merge, before the limit cap.
 func WithMinConfidence(c float64) RecallOption {
 	return func(cfg *recallConfig) { cfg.minConfidence = c }
+}
+
+// WithAsOf recalls memories as they were valid at time t (point-in-time
+// history). Mutually exclusive with WithIncludeInvalid, which takes
+// precedence if both are set.
+func WithAsOf(t time.Time) RecallOption {
+	return func(c *recallConfig) { c.asOf = &t }
+}
+
+// WithIncludeInvalid includes retired/invalidated memories in recall
+// (no validity filtering). Takes precedence over WithAsOf.
+func WithIncludeInvalid() RecallOption {
+	return func(c *recallConfig) { c.includeInvalid = true }
 }
 
 type RelFilter func(*relFilterConfig)

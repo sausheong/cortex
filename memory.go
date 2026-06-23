@@ -75,18 +75,30 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 // FTS5 MATCH expression. Entity links are loaded from memory_entities for
 // each result.
 func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([]Memory, error) {
+	return c.searchMemoriesMode(ctx, query, limit, temporalMode{})
+}
+
+// searchMemoriesMode is the temporal-mode-aware backing for SearchMemories.
+// The validity predicate is derived from mode (default = currently-valid).
+func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int, mode temporalMode) ([]Memory, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
+
+	clause, targs := mode.clause("m")
+	// Arg order: MATCH placeholder first, then temporal args, then limit.
+	args := []any{ftsQuery(query)}
+	args = append(args, targs...)
+	args = append(args, limit)
 
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memories_fts f ON m.rowid = f.rowid
-		 WHERE memories_fts MATCH ? AND `+currentlyValidClause("m")+`
+		 WHERE memories_fts MATCH ? AND `+clause+`
 		 ORDER BY f.rank
 		 LIMIT ?`,
-		ftsQuery(query), limit,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: search memories: %w", err)
@@ -123,12 +135,24 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 // GetMemoriesByEntity returns all memories linked to the given entity.
 // Entity links are loaded from memory_entities for each result.
 func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Memory, error) {
+	return c.getMemoriesByEntityMode(ctx, entityID, temporalMode{})
+}
+
+// getMemoriesByEntityMode is the temporal-mode-aware backing for
+// GetMemoriesByEntity. The validity predicate is derived from mode
+// (default = currently-valid).
+func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, mode temporalMode) ([]Memory, error) {
+	clause, targs := mode.clause("m")
+	// Arg order: entity_id first, then temporal args.
+	args := []any{entityID}
+	args = append(args, targs...)
+
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id
-		 WHERE me.entity_id = ? AND `+currentlyValidClause("m"),
-		entityID,
+		 WHERE me.entity_id = ? AND `+clause,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get memories by entity: %w", err)
