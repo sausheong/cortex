@@ -61,6 +61,22 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Decompose the query into sub-queries.
 	subQueries := c.decomposeQuery(ctx, query)
 
+	// Time-aware query expansion (3.2): if the decomposition carries a
+	// temporal_filter, derive a recall-global event-time window from its
+	// parsed from/to and narrow the memory read paths by it. Absent or
+	// unparseable bounds degrade to no narrowing.
+	for _, sq := range subQueries {
+		if sq.Type != "temporal_filter" {
+			continue
+		}
+		if fromStr, ok := sq.Params["from"].(string); ok {
+			mode.rangeFrom = ParseEventTime(fromStr)
+		}
+		if toStr, ok := sq.Params["to"].(string); ok {
+			mode.rangeTo = ParseEventTime(toStr)
+		}
+	}
+
 	// Execute sub-queries in parallel, collecting ranked lists and results.
 	var (
 		mu        sync.Mutex
@@ -167,6 +183,8 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 
 	switch sq.Type {
 	case "memory_lookup":
+		return c.recallMemories(ctx, query, limit, mode)
+	case "temporal_filter":
 		return c.recallMemories(ctx, query, limit, mode)
 	case "memory_vector":
 		return c.recallMemoryVector(ctx, query, limit, mode)

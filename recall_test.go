@@ -761,3 +761,38 @@ func TestAugmentForEmbedding(t *testing.T) {
 		t.Fatalf("blank-token case: got %q want %q", got, want)
 	}
 }
+
+func TestRecall_TemporalFilterNarrowsByEventTime(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	jan := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	mar := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	if err := c.PutMemory(ctx, &Memory{Content: "budget was 5000", ValidAt: &jan}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, &Memory{Content: "budget was 9000", ValidAt: &mar}); err != nil {
+		t.Fatal(err)
+	}
+
+	// LLM decomposes into a temporal_filter scoped to Q1 (Jan–Mar 1).
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "temporal_filter", Params: map[string]any{
+					"query": q,
+					"from":  "2026-01-01",
+					"to":    "2026-03-01",
+				}},
+			}, nil
+		},
+	})
+
+	got, err := c.Recall(ctx, "what was the budget in Q1", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "budget was 5000" {
+		t.Fatalf("expected only the Q1 memory, got %+v", got)
+	}
+}
