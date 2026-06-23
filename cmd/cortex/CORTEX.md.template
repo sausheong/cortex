@@ -38,7 +38,7 @@ Recall before:
 
 After you recall, honor the result:
 
-- When `recall` returns `"abstain": true`, cortex has no relevant knowledge. Say you don't have that information — do not invent an answer or fall back to assumptions.
+- When `recall` returns `"abstain": true`, any matches are too weak or low-confidence to rely on. Say you don't have reliable information — do not invent an answer or fall back to assumptions.
 
 The cost of an extra recall is low; the cost of contradicting a prior decision because you didn't check is high.
 
