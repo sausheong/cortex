@@ -152,3 +152,39 @@ func TestRRFMerge(t *testing.T) {
 		t.Errorf("expected C to be ranked third, got %q", merged[2].id)
 	}
 }
+
+func TestMMRRerank_PrefersDiversity(t *testing.T) {
+	// Three candidates: A and B are near-identical vectors (redundant),
+	// C is distinct. By raw relevance order: A, B, C. MMR with moderate
+	// lambda should pull C ahead of B (diversity) once A is picked.
+	a := mmrCandidate{id: "A", score: 0.9, vec: []float32{1, 0, 0}}
+	b := mmrCandidate{id: "B", score: 0.8, vec: []float32{0.99, 0.01, 0}}
+	cc := mmrCandidate{id: "C", score: 0.7, vec: []float32{0, 1, 0}}
+
+	got := mmrRerank([]mmrCandidate{a, b, cc}, 0.5, 3)
+	if len(got) != 3 {
+		t.Fatalf("expected 3, got %v", got)
+	}
+	if got[0] != "A" {
+		t.Fatalf("expected A first (highest relevance), got %q", got[0])
+	}
+	if got[1] != "C" {
+		t.Fatalf("expected C second (diversity over redundant B), got %v", got)
+	}
+}
+
+func TestMMRRerank_NoVectorsFallsBackToRelevance(t *testing.T) {
+	// No vectors → pure relevance order, stable.
+	items := []mmrCandidate{
+		{id: "X", score: 0.5},
+		{id: "Y", score: 0.9},
+		{id: "Z", score: 0.7},
+	}
+	got := mmrRerank(items, 0.5, 3)
+	want := []string{"Y", "Z", "X"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("relevance fallback: got %v want %v", got, want)
+		}
+	}
+}
