@@ -70,6 +70,9 @@ type RecallResult struct {
 // AbstainThreshold is the confidence-weighted top-score below which
 // RecallWithStrength advises abstention. Tuned conservatively: the goal is
 // to catch empty/irrelevant recalls, not to suppress weak-but-real hits.
+// Calibration: a single RRF hit scores 1/(k+1) with k=60, i.e. ~0.0164, so
+// 0.005 sits just below that floor multiplied by a low confidence — raising
+// it much further risks abstaining on every single-hit recall.
 const AbstainThreshold = 0.005
 
 type Filter struct {
