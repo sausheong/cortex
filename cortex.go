@@ -102,6 +102,9 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if cfg.source != "" && m.Source == "" {
 			m.Source = cfg.source
 		}
+		if cfg.speaker != "" && m.Speaker == "" {
+			m.Speaker = cfg.speaker
+		}
 		if err := c.PutMemory(ctx, m); err != nil {
 			return fmt.Errorf("cortex: store memory: %w", err)
 		}

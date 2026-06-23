@@ -66,6 +66,31 @@ func TestRemember(t *testing.T) {
 	}
 }
 
+func TestRemember_StampsSpeaker(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Memories: []Memory{{Content: "Likes terse PR descriptions"}},
+			}, nil
+		},
+	})
+
+	if err := c.Remember(ctx, "I like terse PR descriptions", WithSpeaker("user")); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	found, err := c.SearchMemories(ctx, "terse PR descriptions", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(found) != 1 || found[0].Speaker != "user" {
+		t.Fatalf("expected speaker 'user' stamped on ingest, got %+v", found)
+	}
+}
+
 func TestRememberNoExtractor(t *testing.T) {
 	c := openTestDB(t)
 	c.SetExtractor(nil)
