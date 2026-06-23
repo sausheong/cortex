@@ -2,10 +2,20 @@ package cortex
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// nullTimePtr converts a sql.NullTime to a *time.Time (nil when not valid).
+func nullTimePtr(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	t := nt.Time
+	return &t
+}
 
 // PutMemory inserts a memory and its entity links into the database.
 // The operation is wrapped in a transaction. The memory's ID, CreatedAt,
@@ -70,7 +80,7 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 	}
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at
+		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memories_fts f ON m.rowid = f.rowid
 		 WHERE memories_fts MATCH ?
@@ -86,9 +96,13 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var vat, iat, eat sql.NullTime
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
+		m.ValidAt = nullTimePtr(vat)
+		m.InvalidAt = nullTimePtr(iat)
+		m.ExpiredAt = nullTimePtr(eat)
 		memories = append(memories, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -110,7 +124,7 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 // Entity links are loaded from memory_entities for each result.
 func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Memory, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at
+		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id
 		 WHERE me.entity_id = ?`,
@@ -124,9 +138,13 @@ func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Me
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var vat, iat, eat sql.NullTime
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
+		m.ValidAt = nullTimePtr(vat)
+		m.InvalidAt = nullTimePtr(iat)
+		m.ExpiredAt = nullTimePtr(eat)
 		memories = append(memories, m)
 	}
 	if err := rows.Err(); err != nil {

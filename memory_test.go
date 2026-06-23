@@ -254,3 +254,26 @@ func TestOpen_BackfillsMemoriesFTS(t *testing.T) {
 		t.Fatalf("expected 1 backfilled result, got %d", len(got))
 	}
 }
+
+func TestMemory_TemporalColumnsRoundTrip(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	// Freshly ingested memory: temporal fields are nil (NULL in DB).
+	got, err := c.SearchMemories(ctx, "budget", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 memory, got %d", len(got))
+	}
+	if got[0].ValidAt != nil || got[0].InvalidAt != nil || got[0].ExpiredAt != nil {
+		t.Fatalf("expected nil temporal fields on fresh memory, got valid=%v invalid=%v expired=%v",
+			got[0].ValidAt, got[0].InvalidAt, got[0].ExpiredAt)
+	}
+}

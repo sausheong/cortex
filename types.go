@@ -44,6 +44,13 @@ type Memory struct {
 	Confidence float64   `json:"confidence"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// Bi-temporal fields (Tier 2a). Pointers so SQL NULL is representable.
+	// ValidAt/InvalidAt are event-time (when the fact became / stopped being
+	// true). ExpiredAt is ingestion-time (when the system retired the memory).
+	// All nil on memories written by the standard ingest path.
+	ValidAt   *time.Time `json:"valid_at,omitempty"`
+	InvalidAt *time.Time `json:"invalid_at,omitempty"`
+	ExpiredAt *time.Time `json:"expired_at,omitempty"`
 }
 
 type Result struct {
