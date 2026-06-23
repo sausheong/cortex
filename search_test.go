@@ -121,3 +121,30 @@ func TestStoreAndSearchEmbedding(t *testing.T) {
 		t.Errorf("expected content %q, got %q", ch1.Content, chunks[0].Content)
 	}
 }
+
+func TestSearchMemoryVector(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	// PutMemory does not embed; Remember does. Embed explicitly via the
+	// same path Remember uses by storing a memory then its embedding.
+	m := &Memory{Content: "Alice loves hiking in the Alps"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	vecs, err := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatalf("putEmbedding: %v", err)
+	}
+
+	got, err := c.SearchMemoryVector(ctx, "Alice loves hiking in the Alps", 10)
+	if err != nil {
+		t.Fatalf("SearchMemoryVector: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != m.ID {
+		t.Fatalf("expected to find memory %s, got %+v", m.ID, got)
+	}
+}

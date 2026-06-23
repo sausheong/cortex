@@ -316,6 +316,11 @@ func (c *Cortex) deleteOrphanedMemories(ctx context.Context, tx *sql.Tx) error {
 			return fmt.Errorf("cortex: delete orphaned memory embedding: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM memories_fts WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)`, id,
+		); err != nil {
+			return fmt.Errorf("cortex: delete orphaned memory fts: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM memories WHERE id = ?`, id,
 		); err != nil {
 			return fmt.Errorf("cortex: delete orphaned memory: %w", err)

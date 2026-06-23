@@ -36,6 +36,10 @@ Recall before:
 - Making a recommendation that might have history (e.g. "should we use library Y?" — check if there's a prior decision).
 - Starting a conversation about an entity the user has mentioned before, even in passing.
 
+After you recall, honor the result:
+
+- When `recall` returns `"abstain": true`, any matches are too weak or low-confidence to rely on. Say you don't have reliable information — do not invent an answer or fall back to assumptions.
+
 The cost of an extra recall is low; the cost of contradicting a prior decision because you didn't check is high.
 
 ## When to remember

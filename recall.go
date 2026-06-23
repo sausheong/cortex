@@ -3,9 +3,26 @@ package cortex
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
+
+// RecallWithStrength runs Recall and adds an aggregate strength score plus
+// an abstention hint. Use this when the caller (e.g. an agent) needs to
+// decide whether the knowledge graph actually knows the answer.
+func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...RecallOption) (RecallResult, error) {
+	results, err := c.Recall(ctx, query, opts...)
+	if err != nil {
+		return RecallResult{}, err
+	}
+	out := RecallResult{Results: results}
+	if len(results) > 0 {
+		out.Strength = results[0].Score
+	}
+	out.Abstain = out.Strength < AbstainThreshold
+	return out, nil
+}
 
 // Recall searches the knowledge graph using multiple retrieval strategies,
 // merges the results via reciprocal rank fusion, and returns a unified
@@ -52,14 +69,29 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Merge via reciprocal rank fusion.
 	merged := rrfMerge(lists, 60)
 
-	// Build final results from merged ranked items.
+	// Build final results from merged ranked items, weighting the fusion
+	// score by each result's confidence so equally-ranked items are broken
+	// by how certain we are about them. Confidence is in [0,1]; coerced at
+	// ingest so unset == 1.0 (no penalty). A genuine 0.0 is the least-
+	// trustworthy state and is preserved (not rescued), so it ranks last.
 	final := make([]Result, 0, len(merged))
 	for _, item := range merged {
 		if r, ok := resultMap[item.id]; ok {
-			r.Score = item.score
+			conf := r.Confidence
+			if conf < 0 {
+				conf = 0 // defensive: confidence is coerced to [0,1] at ingest; a
+				// negative here would only come from direct struct misuse.
+				// A genuine 0.0 is the least-trustworthy state and must rank last.
+			}
+			r.Score = item.score * conf
 			final = append(final, r)
 		}
 	}
+
+	// Re-sort by the confidence-weighted score (rrfMerge sorted by raw score).
+	sort.SliceStable(final, func(i, j int) bool {
+		return final[i].Score > final[j].Score
+	})
 
 	// Apply min-confidence filter (post-RRF, pre-limit).
 	if cfg.minConfidence > 0 {
@@ -95,6 +127,8 @@ func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQ
 	return []StructuredQuery{
 		{Type: "keyword_search", Params: map[string]any{"query": query}},
 		{Type: "memory_lookup", Params: map[string]any{"query": query}},
+		{Type: "memory_vector", Params: map[string]any{"query": query}},
+		{Type: "vector_search", Params: map[string]any{"query": query}},
 	}
 }
 
@@ -109,6 +143,8 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 	switch sq.Type {
 	case "memory_lookup":
 		return c.recallMemories(ctx, query, limit)
+	case "memory_vector":
+		return c.recallMemoryVector(ctx, query, limit)
 	case "keyword_search":
 		return c.recallKeyword(ctx, query, limit)
 	case "vector_search":
@@ -131,13 +167,46 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int) ([
 	for i, m := range mems {
 		key := "mem:" + m.ID
 		items[i] = rankedItem{id: key, rank: i}
-		results[key] = Result{
+		res := Result{
 			Type:       "memory",
 			Content:    m.Content,
 			Confidence: m.Confidence,
 			EntityIDs:  m.EntityIDs,
 			Source:     m.Source,
 		}
+		if excerpt := c.firstChunkBySource(ctx, m.Source); excerpt != "" {
+			res.Metadata = map[string]any{"source_excerpt": excerpt}
+		}
+		results[key] = res
+	}
+	return items, results
+}
+
+func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
+	if c.cfg.embedder == nil {
+		return nil, nil
+	}
+	mems, err := c.SearchMemoryVector(ctx, query, limit)
+	if err != nil || len(mems) == 0 {
+		return nil, nil
+	}
+
+	items := make([]rankedItem, len(mems))
+	results := make(map[string]Result, len(mems))
+	for i, m := range mems {
+		key := "mem:" + m.ID
+		items[i] = rankedItem{id: key, rank: i}
+		res := Result{
+			Type:       "memory",
+			Content:    m.Content,
+			Confidence: m.Confidence,
+			EntityIDs:  m.EntityIDs,
+			Source:     m.Source,
+		}
+		if excerpt := c.firstChunkBySource(ctx, m.Source); excerpt != "" {
+			res.Metadata = map[string]any{"source_excerpt": excerpt}
+		}
+		results[key] = res
 	}
 	return items, results
 }

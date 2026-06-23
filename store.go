@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS memories (
 	updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+	content,
+	content_rowid='rowid'
+);
+
 CREATE TABLE IF NOT EXISTS memory_entities (
 	memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
 	entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
@@ -150,6 +155,16 @@ func Open(path string, opts ...Option) (*Cortex, error) {
 			db.Close()
 			return nil, fmt.Errorf("cortex: migrate %s.confidence: %w", t, err)
 		}
+	}
+
+	// Backfill memories_fts for databases created before the FTS table existed.
+	if _, err := db.Exec(
+		`INSERT INTO memories_fts (rowid, content)
+		 SELECT m.rowid, m.content FROM memories m
+		 WHERE m.rowid NOT IN (SELECT rowid FROM memories_fts)`,
+	); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cortex: backfill memories_fts: %w", err)
 	}
 
 	c := &Cortex{db: db}

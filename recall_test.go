@@ -365,3 +365,206 @@ func TestRecall_WithMinConfidence_FiltersBelow(t *testing.T) {
 		}
 	}
 }
+
+func TestRecall_UsesMemoryVector(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Quarterly board meeting is in Zurich"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatalf("putEmbedding: %v", err)
+	}
+
+	// Decompose into memory_vector only, to isolate the new path.
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_vector", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Quarterly board meeting is in Zurich", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) == 0 || results[0].Content != m.Content {
+		t.Fatalf("expected memory via vector path, got %+v", results)
+	}
+}
+
+func TestRecall_ConfidenceWeightsRanking(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two memories matching the same query at similar FTS rank, different
+	// confidence. The higher-confidence one should rank first after weighting.
+	low := &Memory{Content: "Project Phoenix ships in March", Confidence: 0.3}
+	high := &Memory{Content: "Project Phoenix ships in April", Confidence: 0.95}
+	if err := c.PutMemory(ctx, low); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, high); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Project Phoenix ships", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Content != high.Content {
+		t.Fatalf("expected high-confidence memory first, got %q", results[0].Content)
+	}
+}
+
+func TestRecall_ZeroConfidenceRanksLast(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two memories matching the same query. One has a genuine 0.0 confidence
+	// (the least-trustworthy state — a negative input clamps to 0.0 at ingest),
+	// the other 0.5. The 0.0 one must NOT be rescued to the top; the 0.5 one
+	// must rank above it.
+	zero := &Memory{Content: "Project Hydra ships in May", Confidence: -0.1}
+	mid := &Memory{Content: "Project Hydra ships in June", Confidence: 0.5}
+	if err := c.PutMemory(ctx, zero); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, mid); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Project Hydra ships", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].Content != mid.Content {
+		t.Fatalf("expected 0.5-confidence memory first (0.0 must not be rescued to top), got %q", results[0].Content)
+	}
+}
+
+func TestRecall_ReinjectsSourceChunk(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	const src = "meeting-notes-2026-06"
+	// A memory and a chunk that share a source.
+	if err := c.PutMemory(ctx, &Memory{
+		Content: "Decision: adopt Postgres for analytics",
+		Source:  src,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ch := &Chunk{
+		Content:  "After debating SQLite vs Postgres, the team decided to adopt Postgres for analytics because of concurrent writers.",
+		Metadata: map[string]any{"source": src},
+	}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	results, err := c.Recall(ctx, "Postgres analytics decision", WithLimit(10))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	var mem *Result
+	for i := range results {
+		if results[i].Type == "memory" {
+			mem = &results[i]
+			break
+		}
+	}
+	if mem == nil {
+		t.Fatal("expected a memory result")
+	}
+	excerpt, ok := mem.Metadata["source_excerpt"].(string)
+	if !ok || excerpt != ch.Content {
+		t.Fatalf("expected source_excerpt to be the chunk content, got %v", mem.Metadata["source_excerpt"])
+	}
+}
+
+func TestRecallWithStrength_AbstainsWhenEmpty(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	// Nothing stored → no results → abstain.
+	out, err := c.RecallWithStrength(ctx, "anything at all")
+	if err != nil {
+		t.Fatalf("RecallWithStrength: %v", err)
+	}
+	if !out.Abstain {
+		t.Fatalf("expected Abstain=true on empty recall, got %+v", out)
+	}
+	if out.Strength != 0 {
+		t.Fatalf("expected Strength 0 on empty recall, got %v", out.Strength)
+	}
+}
+
+func TestRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	if err := c.PutMemory(ctx, &Memory{Content: "User's name is Sau Sheong", Confidence: 1.0}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	out, err := c.RecallWithStrength(ctx, "What is the user's name")
+	if err != nil {
+		t.Fatalf("RecallWithStrength: %v", err)
+	}
+	if out.Abstain {
+		t.Fatalf("expected Abstain=false with a confident hit, got %+v", out)
+	}
+	if out.Strength <= 0 {
+		t.Fatalf("expected positive strength, got %v", out.Strength)
+	}
+}

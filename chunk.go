@@ -61,6 +61,25 @@ func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 	return nil
 }
 
+// firstChunkBySource returns the content of one chunk whose metadata.source
+// equals src, or "" if none. Used to re-inject supporting detail next to a
+// ranked memory that shares the same source. Best-effort: errors return "".
+func (c *Cortex) firstChunkBySource(ctx context.Context, src string) string {
+	if src == "" {
+		return ""
+	}
+	var content string
+	err := c.db.QueryRowContext(ctx,
+		`SELECT content FROM chunks
+		 WHERE json_extract(metadata, '$.source') = ?
+		 ORDER BY created_at ASC LIMIT 1`, src,
+	).Scan(&content)
+	if err != nil {
+		return ""
+	}
+	return content
+}
+
 // SearchKeyword performs a full-text search on chunk content using FTS5.
 // Results are ordered by relevance (rank). Returns up to limit results.
 func (c *Cortex) SearchKeyword(ctx context.Context, query string, limit int) ([]Chunk, error) {
@@ -71,7 +90,7 @@ func (c *Cortex) SearchKeyword(ctx context.Context, query string, limit int) ([]
 		 WHERE chunks_fts MATCH ?
 		 ORDER BY f.rank
 		 LIMIT ?`,
-		query, limit,
+		ftsQuery(query), limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: keyword search: %w", err)
