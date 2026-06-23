@@ -175,6 +175,65 @@ func (l *LLM) Summarize(ctx context.Context, texts []string) (string, error) {
 	return resp.Choices[0].Message.Content, nil
 }
 
+// detectConflictsPrompt instructs the LLM to flag contradicting memories.
+const detectConflictsPrompt = `You are given a list of memories about the same subject, each with an ID.
+Identify pairs where one memory CONTRADICTS or SUPERSEDES another (e.g. a value
+changed, a status updated, a fact corrected). Do NOT flag memories that merely
+add detail without contradicting.
+
+Return ONLY valid JSON, no markdown:
+{"conflicts":[{"stale_id":"<id of the outdated memory>","superseded_by_id":"<id of the newer memory that replaces it>","reason":"<short reason>"}]}
+
+If there are no contradictions, return {"conflicts":[]}.`
+
+// DetectConflicts implements cortex.Reconciler.
+func (l *LLM) DetectConflicts(ctx context.Context, memories []cortex.Memory) ([]cortex.ConflictPair, error) {
+	if len(memories) < 2 {
+		return nil, nil
+	}
+	var sb strings.Builder
+	for _, m := range memories {
+		fmt.Fprintf(&sb, "ID %s: %s\n", m.ID, m.Content)
+	}
+
+	resp, err := l.client.CreateChatCompletion(ctx, oai.ChatCompletionRequest{
+		Model: l.model,
+		Messages: []oai.ChatCompletionMessage{
+			{Role: oai.ChatMessageRoleSystem, Content: detectConflictsPrompt},
+			{Role: oai.ChatMessageRoleUser, Content: sb.String()},
+		},
+		ResponseFormat: &oai.ChatCompletionResponseFormat{
+			Type: oai.ChatCompletionResponseFormatTypeJSONObject,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai: detect conflicts: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("openai: no choices in detect conflicts response")
+	}
+	return parseConflictsJSON(resp.Choices[0].Message.Content)
+}
+
+func parseConflictsJSON(raw string) ([]cortex.ConflictPair, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) > 2 {
+			raw = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+	var parsed struct {
+		Conflicts []cortex.ConflictPair `json:"conflicts"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, fmt.Errorf("openai: parse conflicts: %w", err)
+	}
+	return parsed.Conflicts, nil
+}
+
+var _ cortex.Reconciler = (*LLM)(nil)
+
 // extractionJSON is the intermediate JSON structure returned by the LLM.
 type extractionJSON struct {
 	Entities []struct {

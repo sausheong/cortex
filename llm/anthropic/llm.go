@@ -165,6 +165,57 @@ func (l *LLM) Summarize(ctx context.Context, texts []string) (string, error) {
 	return extractText(msg), nil
 }
 
+const detectConflictsPrompt = `You are given a list of memories about the same subject, each with an ID.
+Identify pairs where one memory CONTRADICTS or SUPERSEDES another (e.g. a value
+changed, a status updated, a fact corrected). Do NOT flag memories that merely
+add detail without contradicting.
+
+Return ONLY valid JSON, no markdown:
+{"conflicts":[{"stale_id":"<id of the outdated memory>","superseded_by_id":"<id of the newer memory that replaces it>","reason":"<short reason>"}]}
+
+If there are no contradictions, return {"conflicts":[]}.`
+
+// DetectConflicts implements cortex.Reconciler.
+func (l *LLM) DetectConflicts(ctx context.Context, memories []cortex.Memory) ([]cortex.ConflictPair, error) {
+	if len(memories) < 2 {
+		return nil, nil
+	}
+	var sb strings.Builder
+	for _, m := range memories {
+		fmt.Fprintf(&sb, "ID %s: %s\n", m.ID, m.Content)
+	}
+
+	msg, err := l.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     l.model,
+		MaxTokens: l.maxTokens,
+		System:    []anthropic.TextBlockParam{{Text: detectConflictsPrompt}},
+		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(sb.String()))},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: detect conflicts: %w", err)
+	}
+	return parseConflictsJSON(extractText(msg))
+}
+
+func parseConflictsJSON(raw string) ([]cortex.ConflictPair, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) > 2 {
+			raw = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+	var parsed struct {
+		Conflicts []cortex.ConflictPair `json:"conflicts"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, fmt.Errorf("anthropic: parse conflicts: %w", err)
+	}
+	return parsed.Conflicts, nil
+}
+
+var _ cortex.Reconciler = (*LLM)(nil)
+
 // extractText pulls the text content from a Claude message response.
 func extractText(msg *anthropic.Message) string {
 	var parts []string

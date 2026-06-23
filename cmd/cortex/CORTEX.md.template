@@ -86,6 +86,8 @@ Cortex tracks when each fact was true, not just what it is now. A `recall` retur
 
 Both the vault export (`cortex export --vault`) and default `recall` reflect only currently-valid facts; retired facts are available only via `include_invalid` or `as_of`.
 
+Cortex can also detect when a newer memory supersedes an older, contradicting one. Run `cortex reconcile` for a dry-run report of supersessions, then `cortex reconcile --apply` to commit them. A superseded memory is soft-invalidated — hidden from default recall but still available via `as_of` / `include_invalid`, so nothing is lost.
+
 ## The vault
 
 If `cortex export --vault ./vault` has been run for this project, a browsable markdown projection of the graph lives at `./vault/`. It's Obsidian-compatible: each entity is its own page with frontmatter, wikilinks to related entities, backlinks, and source attribution.
@@ -126,6 +128,18 @@ cortex lint --low-confidence      # also surface memories the extractor was unsu
 ```
 
 The report's near-duplicate pairs are direct inputs to `cortex merge`. Other findings (orphans, unlinked memories) usually mean `cortex forget` or just leaving them alone.
+
+### Reconciling contradictions
+
+`cortex reconcile` looks for memories that contradict each other and where the newer one supersedes the older. It's dry-run by default — it prints a markdown report of proposed supersessions. Apply them with `--apply`:
+
+```
+cortex reconcile                  # dry-run report
+cortex reconcile --apply          # soft-invalidate superseded memories
+cortex reconcile --out recon.md   # write the report to a file
+```
+
+Applying soft-invalidates each superseded memory: it drops out of default recall but stays reachable via `as_of` / `include_invalid`. Detection needs an LLM provider that implements conflict detection (anthropic and openai do); without one, reconcile reports nothing and skips. Scope is per-entity — only memories that share a linked entity are compared against each other.
 
 ## Customization
 

@@ -1,9 +1,29 @@
 package cortex
 
 import (
+	"context"
 	"math"
 	"testing"
 )
+
+// compile-time check: a type implementing DetectConflicts satisfies Reconciler.
+type stubReconciler struct{}
+
+func (stubReconciler) DetectConflicts(_ context.Context, _ []Memory) ([]ConflictPair, error) {
+	return nil, nil
+}
+
+func TestReconcilerInterfaceSatisfied(t *testing.T) {
+	var r Reconciler = stubReconciler{}
+	if r == nil {
+		t.Fatal("expected non-nil Reconciler")
+	}
+	// ConflictPair / Supersession / ReconcileReport must exist with expected fields.
+	_ = ConflictPair{StaleID: "a", SupersededByID: "b", Reason: "x"}
+	_ = Supersession{StaleID: "a", SupersededByID: "b"}
+	_ = ReconcileReport{EntitiesScanned: 0}
+	_ = RejectedPair{StaleID: "a"}
+}
 
 func TestCoerceConfidence(t *testing.T) {
 	cases := []struct {
