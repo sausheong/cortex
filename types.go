@@ -113,6 +113,28 @@ type LLM interface {
 	Summarize(ctx context.Context, texts []string) (string, error)
 }
 
+// Reconciler is an optional capability a provider may implement to detect
+// contradictions among a set of memories. It is intentionally separate from
+// LLM so the core interface stays stable and providers opt in. Reconciliation
+// (reconcile.go) type-asserts the configured LLM for this interface and
+// no-ops gracefully when it is absent.
+//
+// DetectConflicts receives a set of memories (typically all currently-valid
+// memories linked to one entity) and returns pairs where one memory
+// supersedes/contradicts another. The implementation only FLAGS candidates;
+// the deterministic gate in reconcile.go decides what is actually applied.
+type Reconciler interface {
+	DetectConflicts(ctx context.Context, memories []Memory) ([]ConflictPair, error)
+}
+
+// ConflictPair is a detected contradiction: the memory identified by
+// SupersededByID contradicts/replaces the one identified by StaleID.
+type ConflictPair struct {
+	StaleID        string `json:"stale_id"`
+	SupersededByID string `json:"superseded_by_id"`
+	Reason         string `json:"reason"`
+}
+
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 	Dimensions() int
@@ -265,6 +287,36 @@ type MergeStats struct {
 	Embeddings    int // dropped (stale embedding for drop entity)
 	DupesDropped  int // duplicate relationships + memory_entity rows removed during dedup
 	AttrConflicts int // count of attributes where keep already had a value (keep won)
+}
+
+// Supersession is a gate-passed proposed invalidation produced by a reconcile
+// dry-run: StaleID will be soft-invalidated with InvalidAt, because the newer
+// SupersededByID memory contradicts it.
+type Supersession struct {
+	StaleID             string
+	StaleContent        string
+	SupersededByID      string
+	SupersededByContent string
+	Reason              string
+	InvalidAt           time.Time
+}
+
+// RejectedPair is an LLM-flagged contradiction that the deterministic gate
+// rejected (e.g. wrong supersession direction, already invalidated).
+type RejectedPair struct {
+	StaleID        string
+	SupersededByID string
+	Reason         string // why the gate rejected it
+}
+
+// ReconcileReport summarizes a reconcile dry-run.
+type ReconcileReport struct {
+	EntitiesScanned int
+	MemoriesScanned int
+	Proposed        []Supersession
+	Rejected        []RejectedPair
+	Skipped         bool // true when no Reconciler-capable LLM is configured
+	SkipReason      string
 }
 
 // mergeRecord is one entry in an entity's `merged_from` attribute array.
