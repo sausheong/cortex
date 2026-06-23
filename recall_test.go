@@ -652,3 +652,41 @@ func TestRecall_WithAsOf(t *testing.T) {
 		t.Fatalf("as-of after cutoff should hide the memory, got %d", len(got))
 	}
 }
+
+func TestRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate created_at so the as-of window is meaningful.
+	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Invalidate as of 2026-03-01 (fact stopped being true then).
+	cut := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err := c.InvalidateMemory(ctx, m.ID, &cut); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_lookup", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	// As of after the cutoff would normally hide the invalidated memory
+	// (see TestRecall_WithAsOf). But WithIncludeInvalid takes precedence:
+	// no filtering is applied, so the memory is returned.
+	after := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	got, err := c.Recall(ctx, "budget", WithLimit(10), WithAsOf(after), WithIncludeInvalid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("WithIncludeInvalid should override the as-of filter, got %d", len(got))
+	}
+}
