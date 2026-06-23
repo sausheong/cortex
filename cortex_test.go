@@ -169,6 +169,55 @@ func TestForgetByEntityID(t *testing.T) {
 	}
 }
 
+func TestForgetRemovesMemoryFTS(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Seed an entity and a memory linked to it. Forgetting the entity orphans
+	// the memory, which must remove its memories_fts row too — not just the
+	// memories row. (Backfill on Open only INSERTs missing FTS rows; it never
+	// removes stale ones, so a reorder of the delete logic would silently
+	// orphan FTS rows. This test guards the delete ordering.)
+	e := &Entity{Type: "person", Name: "Ftsalice", Source: "test"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatalf("PutEntity: %v", err)
+	}
+	mem := &Memory{
+		Content:   "Ftsalice migrated billing to Stripe",
+		EntityIDs: []string{e.ID},
+		Source:    "test",
+	}
+	if err := c.PutMemory(ctx, mem); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	// Query the FTS table directly (not joined to memories), so a leaked FTS
+	// row is detected even after the memories row itself is deleted.
+	matchesFTS := func() bool {
+		var n int
+		if err := c.db.QueryRowContext(ctx,
+			`SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?`, "Stripe",
+		).Scan(&n); err != nil {
+			t.Fatalf("count memories_fts: %v", err)
+		}
+		return n > 0
+	}
+
+	// Before: the memory must be findable via the FTS index.
+	if !matchesFTS() {
+		t.Fatal("expected memory to match via memories_fts before Forget")
+	}
+
+	if err := c.Forget(ctx, Filter{EntityID: e.ID}); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+
+	// After: the FTS row must be gone (no MATCH-joinable rows remain).
+	if matchesFTS() {
+		t.Fatal("expected memories_fts row to be removed after Forget; FTS still matches")
+	}
+}
+
 func TestForgetBySource(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
