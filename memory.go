@@ -203,3 +203,40 @@ func ftsQuery(q string) string {
 	}
 	return strings.Join(quoted, " OR ")
 }
+
+// InvalidateMemory soft-retires a memory: it sets expired_at to now (the
+// system has retired this memory) and, when invalidAt is non-nil, sets
+// invalid_at to the event time the fact stopped being true. The row, its
+// FTS entry, and its embedding are left intact so the memory remains
+// available to point-in-time history queries; default recall hides it via
+// the currently-valid predicate. Returns an error if no memory has the
+// given id. This is the primitive Phase 2b's reconciliation calls on
+// supersession; it never deletes (use Forget for hard deletion).
+func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *time.Time) error {
+	now := time.Now().UTC()
+
+	var res sql.Result
+	var err error
+	if invalidAt != nil {
+		res, err = c.db.ExecContext(ctx,
+			`UPDATE memories SET expired_at = ?, invalid_at = ?, updated_at = ? WHERE id = ?`,
+			now, invalidAt.UTC(), now, id,
+		)
+	} else {
+		res, err = c.db.ExecContext(ctx,
+			`UPDATE memories SET expired_at = ?, updated_at = ? WHERE id = ?`,
+			now, now, id,
+		)
+	}
+	if err != nil {
+		return fmt.Errorf("cortex: invalidate memory: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: invalidate memory rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cortex: memory %q not found", id)
+	}
+	return nil
+}

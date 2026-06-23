@@ -2,8 +2,10 @@ package cortex
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPutAndSearchMemory(t *testing.T) {
@@ -275,5 +277,43 @@ func TestMemory_TemporalColumnsRoundTrip(t *testing.T) {
 	if got[0].ValidAt != nil || got[0].InvalidAt != nil || got[0].ExpiredAt != nil {
 		t.Fatalf("expected nil temporal fields on fresh memory, got valid=%v invalid=%v expired=%v",
 			got[0].ValidAt, got[0].InvalidAt, got[0].ExpiredAt)
+	}
+}
+
+func TestInvalidateMemory(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	eventTime := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err := c.InvalidateMemory(ctx, m.ID, &eventTime); err != nil {
+		t.Fatalf("InvalidateMemory: %v", err)
+	}
+
+	// Row still exists; expired_at set, invalid_at = eventTime.
+	var expired, invalid sql.NullTime
+	err := c.db.QueryRowContext(ctx,
+		`SELECT expired_at, invalid_at FROM memories WHERE id = ?`, m.ID,
+	).Scan(&expired, &invalid)
+	if err != nil {
+		t.Fatalf("memory row should still exist: %v", err)
+	}
+	if !expired.Valid {
+		t.Fatal("expected expired_at to be set")
+	}
+	if !invalid.Valid || !invalid.Time.Equal(eventTime) {
+		t.Fatalf("expected invalid_at = %v, got valid=%v time=%v", eventTime, invalid.Valid, invalid.Time)
+	}
+}
+
+func TestInvalidateMemory_NotFound(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	if err := c.InvalidateMemory(ctx, "nonexistent-id", nil); err == nil {
+		t.Fatal("expected error for nonexistent memory, got nil")
 	}
 }
