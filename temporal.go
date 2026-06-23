@@ -72,23 +72,39 @@ func validInRangeClause(alias string, from, to *time.Time) (string, []any) {
 	return "(" + strings.Join(parts, " AND ") + ")", args
 }
 
-// temporalMode selects which validity predicate a memory read applies.
+// temporalMode selects which validity predicate a memory read applies, and
+// optionally an event-time window to narrow by.
 type temporalMode struct {
 	includeInvalid bool
 	asOf           *time.Time
+	rangeFrom      *time.Time // optional event-time window start (3.2)
+	rangeTo        *time.Time // optional event-time window end (3.2)
 }
 
 // clause returns the SQL fragment (no leading AND) and its args for this
-// mode. includeInvalid → always-true ("1=1", no args). asOf set →
-// validAsOfClause. Otherwise → currentlyValidClause.
+// mode. Base predicate by precedence: includeInvalid → "1=1"; asOf →
+// validAsOfClause; else currentlyValidClause. When an event-time window
+// (rangeFrom/rangeTo) is set, the window overlap clause is AND-ed onto the
+// base predicate so a time-scoped question narrows by event-time while still
+// honoring retirement (unless includeInvalid/asOf already governs).
 func (m temporalMode) clause(alias string) (string, []any) {
-	if m.includeInvalid {
-		return "1=1", nil
+	var base string
+	var args []any
+	switch {
+	case m.includeInvalid:
+		base = "1=1"
+	case m.asOf != nil:
+		base, args = validAsOfClause(alias, *m.asOf)
+	default:
+		base = currentlyValidClause(alias)
 	}
-	if m.asOf != nil {
-		return validAsOfClause(alias, *m.asOf)
+
+	if m.rangeFrom == nil && m.rangeTo == nil {
+		return base, args
 	}
-	return currentlyValidClause(alias), nil
+	rClause, rArgs := validInRangeClause(alias, m.rangeFrom, m.rangeTo)
+	args = append(args, rArgs...)
+	return "(" + base + " AND " + rClause + ")", args
 }
 
 // eventTimeLayouts are the date formats ParseEventTime accepts, tried in
