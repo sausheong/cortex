@@ -162,6 +162,57 @@ func TestApplyReconcile_InvalidatesStale(t *testing.T) {
 	}
 }
 
+func TestReconcile_DedupsSharedMemoryAcrossEntities(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e1 := &Entity{Type: "person", Name: "Dave"}
+	if err := c.PutEntity(ctx, e1); err != nil {
+		t.Fatal(err)
+	}
+	e2 := &Entity{Type: "org", Name: "Acme"}
+	if err := c.PutEntity(ctx, e2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both memories are linked to BOTH entities, so each is evaluated once per
+	// entity pass. Without dedup the same supersession is appended twice.
+	older := &Memory{Content: "Dave's role at Acme is Engineer", EntityIDs: []string{e1.ID, e2.ID}}
+	if err := c.PutMemory(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	newer := &Memory{Content: "Dave's role at Acme is Director", EntityIDs: []string{e1.ID, e2.ID}}
+	if err := c.PutMemory(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID); err != nil {
+		t.Fatal(err)
+	}
+	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		detectConflictsFn: func(_ context.Context, mems []Memory) ([]ConflictPair, error) {
+			// Flag the same pair on every entity pass that sees both memories.
+			if len(mems) >= 2 {
+				return []ConflictPair{{StaleID: older.ID, SupersededByID: newer.ID, Reason: "promoted"}}, nil
+			}
+			return nil, nil
+		},
+	})
+
+	rep, err := c.Reconcile(ctx)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(rep.Proposed) != 1 {
+		t.Fatalf("expected 1 deduped proposal across entity passes, got %d", len(rep.Proposed))
+	}
+}
+
 func TestReconcile_SkipsWithoutReconciler(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

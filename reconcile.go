@@ -30,6 +30,11 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 
 	var report ReconcileReport
 
+	// seen dedups proposals across entity passes within a single run: a memory
+	// linked to multiple entities is evaluated once per entity, so the same
+	// supersession can surface in more than one pass. Keyed StaleID\x00SupersededByID.
+	seen := map[string]bool{}
+
 	entityIDs, err := c.allEntityIDs(ctx)
 	if err != nil {
 		return ReconcileReport{}, err
@@ -74,6 +79,11 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 				})
 				continue
 			}
+			key := stale.ID + "\x00" + newer.ID
+			if seen[key] {
+				continue // already proposed in an earlier entity pass
+			}
+			seen[key] = true
 			report.Proposed = append(report.Proposed, Supersession{
 				StaleID:             stale.ID,
 				StaleContent:        stale.Content,
