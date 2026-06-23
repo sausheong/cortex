@@ -69,6 +69,8 @@ func main() {
 		cmdInitSchema()
 	case "lint":
 		cmdLint()
+	case "reconcile":
+		cmdReconcile()
 	case "mcp":
 		cmdMCP()
 	default:
@@ -106,6 +108,8 @@ Commands:
                                  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
                                  Scan the graph for cleanup candidates (orphans, near-duplicates, etc.)
+  reconcile [--apply] [--out <file>]
+                                 Reconcile the graph against memory (dry-run by default; --apply commits)
   mcp [--transport stdio|http] [--addr host:port]
                                  Run the MCP server (Claude Desktop, Claude Code, other MCP clients)`)
 }
