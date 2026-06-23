@@ -127,6 +127,13 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 // memories ordered by cosine similarity. These embeddings are written at
 // ingest by Remember but were previously never searched.
 func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int) ([]Memory, error) {
+	return c.searchMemoryVectorMode(ctx, query, limit, temporalMode{})
+}
+
+// searchMemoryVectorMode is the temporal-mode-aware backing for
+// SearchMemoryVector. The per-row resolve query's validity predicate is
+// derived from mode (default = currently-valid).
+func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit int, mode temporalMode) ([]Memory, error) {
 	if c.cfg.embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
@@ -144,19 +151,28 @@ func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int
 		return nil, err
 	}
 
+	clause, targs := mode.clause("")
+
 	memories := make([]Memory, 0, len(results))
 	for _, r := range results {
 		var m Memory
+		var vat, iat, eat sql.NullTime
+		// Arg order: ref id first, then temporal args.
+		args := []any{r.refID}
+		args = append(args, targs...)
 		err := c.db.QueryRowContext(ctx,
-			`SELECT id, content, source, confidence, created_at, updated_at
-			 FROM memories WHERE id = ?`, r.refID,
-		).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt)
+			`SELECT id, content, source, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
+			 FROM memories WHERE id = ? AND `+clause, args...,
+		).Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but memory was deleted
 		}
 		if err != nil {
 			return nil, fmt.Errorf("cortex: get memory %s: %w", r.refID, err)
 		}
+		m.ValidAt = nullTimePtr(vat)
+		m.InvalidAt = nullTimePtr(iat)
+		m.ExpiredAt = nullTimePtr(eat)
 		entityIDs, err := c.loadMemoryEntityIDs(ctx, m.ID)
 		if err != nil {
 			return nil, err

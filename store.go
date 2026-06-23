@@ -157,6 +157,13 @@ func Open(path string, opts ...Option) (*Cortex, error) {
 		}
 	}
 
+	for _, col := range []string{"valid_at", "invalid_at", "expired_at"} {
+		if err := ensureColumn(db, "memories", col, "DATETIME"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("cortex: migrate memories.%s: %w", col, err)
+		}
+	}
+
 	// Backfill memories_fts for databases created before the FTS table existed.
 	if _, err := db.Exec(
 		`INSERT INTO memories_fts (rowid, content)

@@ -2,10 +2,20 @@ package cortex
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 )
+
+// nullTimePtr converts a sql.NullTime to a *time.Time (nil when not valid).
+func nullTimePtr(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	t := nt.Time
+	return &t
+}
 
 // PutMemory inserts a memory and its entity links into the database.
 // The operation is wrapped in a transaction. The memory's ID, CreatedAt,
@@ -65,18 +75,30 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 // FTS5 MATCH expression. Entity links are loaded from memory_entities for
 // each result.
 func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([]Memory, error) {
+	return c.searchMemoriesMode(ctx, query, limit, temporalMode{})
+}
+
+// searchMemoriesMode is the temporal-mode-aware backing for SearchMemories.
+// The validity predicate is derived from mode (default = currently-valid).
+func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int, mode temporalMode) ([]Memory, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
 
+	clause, targs := mode.clause("m")
+	// Arg order: MATCH placeholder first, then temporal args, then limit.
+	args := []any{ftsQuery(query)}
+	args = append(args, targs...)
+	args = append(args, limit)
+
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at
+		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memories_fts f ON m.rowid = f.rowid
-		 WHERE memories_fts MATCH ?
+		 WHERE memories_fts MATCH ? AND `+clause+`
 		 ORDER BY f.rank
 		 LIMIT ?`,
-		ftsQuery(query), limit,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: search memories: %w", err)
@@ -86,9 +108,13 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var vat, iat, eat sql.NullTime
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
+		m.ValidAt = nullTimePtr(vat)
+		m.InvalidAt = nullTimePtr(iat)
+		m.ExpiredAt = nullTimePtr(eat)
 		memories = append(memories, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -109,12 +135,24 @@ func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([
 // GetMemoriesByEntity returns all memories linked to the given entity.
 // Entity links are loaded from memory_entities for each result.
 func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Memory, error) {
+	return c.getMemoriesByEntityMode(ctx, entityID, temporalMode{})
+}
+
+// getMemoriesByEntityMode is the temporal-mode-aware backing for
+// GetMemoriesByEntity. The validity predicate is derived from mode
+// (default = currently-valid).
+func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, mode temporalMode) ([]Memory, error) {
+	clause, targs := mode.clause("m")
+	// Arg order: entity_id first, then temporal args.
+	args := []any{entityID}
+	args = append(args, targs...)
+
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at
+		`SELECT m.id, m.content, m.source, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id
-		 WHERE me.entity_id = ?`,
-		entityID,
+		 WHERE me.entity_id = ? AND `+clause,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get memories by entity: %w", err)
@@ -124,9 +162,13 @@ func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Me
 	var memories []Memory
 	for rows.Next() {
 		var m Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var vat, iat, eat sql.NullTime
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
+		m.ValidAt = nullTimePtr(vat)
+		m.InvalidAt = nullTimePtr(iat)
+		m.ExpiredAt = nullTimePtr(eat)
 		memories = append(memories, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -184,4 +226,41 @@ func ftsQuery(q string) string {
 		quoted[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
 	}
 	return strings.Join(quoted, " OR ")
+}
+
+// InvalidateMemory soft-retires a memory: it sets expired_at to now (the
+// system has retired this memory) and, when invalidAt is non-nil, sets
+// invalid_at to the event time the fact stopped being true. The row, its
+// FTS entry, and its embedding are left intact so the memory remains
+// available to point-in-time history queries; default recall hides it via
+// the currently-valid predicate. Returns an error if no memory has the
+// given id. This is the primitive Phase 2b's reconciliation calls on
+// supersession; it never deletes (use Forget for hard deletion).
+func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *time.Time) error {
+	now := time.Now().UTC()
+
+	var res sql.Result
+	var err error
+	if invalidAt != nil {
+		res, err = c.db.ExecContext(ctx,
+			`UPDATE memories SET expired_at = ?, invalid_at = ?, updated_at = ? WHERE id = ?`,
+			now, invalidAt.UTC(), now, id,
+		)
+	} else {
+		res, err = c.db.ExecContext(ctx,
+			`UPDATE memories SET expired_at = ?, updated_at = ? WHERE id = ?`,
+			now, now, id,
+		)
+	}
+	if err != nil {
+		return fmt.Errorf("cortex: invalidate memory: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cortex: invalidate memory rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cortex: memory %q not found", id)
+	}
+	return nil
 }

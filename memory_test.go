@@ -2,8 +2,10 @@ package cortex
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPutAndSearchMemory(t *testing.T) {
@@ -252,5 +254,102 @@ func TestOpen_BackfillsMemoriesFTS(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("expected 1 backfilled result, got %d", len(got))
+	}
+}
+
+func TestMemory_TemporalColumnsRoundTrip(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	// Freshly ingested memory: temporal fields are nil (NULL in DB).
+	got, err := c.SearchMemories(ctx, "budget", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 memory, got %d", len(got))
+	}
+	if got[0].ValidAt != nil || got[0].InvalidAt != nil || got[0].ExpiredAt != nil {
+		t.Fatalf("expected nil temporal fields on fresh memory, got valid=%v invalid=%v expired=%v",
+			got[0].ValidAt, got[0].InvalidAt, got[0].ExpiredAt)
+	}
+}
+
+func TestInvalidateMemory(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+
+	eventTime := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err := c.InvalidateMemory(ctx, m.ID, &eventTime); err != nil {
+		t.Fatalf("InvalidateMemory: %v", err)
+	}
+
+	// Row still exists; expired_at set, invalid_at = eventTime.
+	var expired, invalid sql.NullTime
+	err := c.db.QueryRowContext(ctx,
+		`SELECT expired_at, invalid_at FROM memories WHERE id = ?`, m.ID,
+	).Scan(&expired, &invalid)
+	if err != nil {
+		t.Fatalf("memory row should still exist: %v", err)
+	}
+	if !expired.Valid {
+		t.Fatal("expected expired_at to be set")
+	}
+	if !invalid.Valid || !invalid.Time.Equal(eventTime) {
+		t.Fatalf("expected invalid_at = %v, got valid=%v time=%v", eventTime, invalid.Valid, invalid.Time)
+	}
+}
+
+func TestInvalidateMemory_NotFound(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	if err := c.InvalidateMemory(ctx, "nonexistent-id", nil); err == nil {
+		t.Fatal("expected error for nonexistent memory, got nil")
+	}
+}
+
+func TestSearchMemories_HidesInvalidated(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	stale := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	current := &Memory{Content: "Alice's budget is 10000"}
+	if err := c.PutMemory(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before invalidation: both match.
+	got, err := c.SearchMemories(ctx, "budget", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 before invalidation, got %d", len(got))
+	}
+
+	// Invalidate the stale one.
+	if err := c.InvalidateMemory(ctx, stale.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = c.SearchMemories(ctx, "budget", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != current.ID {
+		t.Fatalf("expected only the current memory after invalidation, got %d results", len(got))
 	}
 }

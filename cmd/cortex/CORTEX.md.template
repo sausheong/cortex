@@ -80,6 +80,12 @@ cortex recall "..." --min-confidence 0.7
 
 But the default (no filter) is right for most cases — uncertain knowledge is still knowledge.
 
+## Fact history
+
+Cortex tracks when each fact was true, not just what it is now. A `recall` returns only the facts that are currently valid; superseded or retired memories are hidden by default. To ask what the graph knew at a past moment, pass an `as_of` RFC3339 timestamp; to include retired memories alongside current ones, pass `include_invalid`.
+
+Both the vault export (`cortex export --vault`) and default `recall` reflect only currently-valid facts; retired facts are available only via `include_invalid` or `as_of`.
+
 ## The vault
 
 If `cortex export --vault ./vault` has been run for this project, a browsable markdown projection of the graph lives at `./vault/`. It's Obsidian-compatible: each entity is its own page with frontmatter, wikilinks to related entities, backlinks, and source attribution.

@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestRecallFindsMemories(t *testing.T) {
@@ -566,5 +567,126 @@ func TestRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
 	}
 	if out.Strength <= 0 {
 		t.Fatalf("expected positive strength, got %v", out.Strength)
+	}
+}
+
+func TestRecall_WithIncludeInvalid(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	stale := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.InvalidateMemory(ctx, stale.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_lookup", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	// Default recall: invalidated memory hidden.
+	def, err := c.Recall(ctx, "budget", WithLimit(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def) != 0 {
+		t.Fatalf("default recall should hide invalidated memory, got %d", len(def))
+	}
+
+	// WithIncludeInvalid: it reappears.
+	all, err := c.Recall(ctx, "budget", WithLimit(10), WithIncludeInvalid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("WithIncludeInvalid should return the invalidated memory, got %d", len(all))
+	}
+}
+
+func TestRecall_WithAsOf(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate created_at so the as-of window is meaningful.
+	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Invalidate as of 2026-03-01 (fact stopped being true then).
+	cut := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err := c.InvalidateMemory(ctx, m.ID, &cut); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_lookup", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	// As of before the cutoff: the fact was still valid → returned.
+	before := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	got, err := c.Recall(ctx, "budget", WithLimit(10), WithAsOf(before))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("as-of before cutoff should return the memory, got %d", len(got))
+	}
+
+	// As of after the cutoff: invalidated → hidden.
+	after := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	got, err = c.Recall(ctx, "budget", WithLimit(10), WithAsOf(after))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("as-of after cutoff should hide the memory, got %d", len(got))
+	}
+}
+
+func TestRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate created_at so the as-of window is meaningful.
+	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Invalidate as of 2026-03-01 (fact stopped being true then).
+	cut := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	if err := c.InvalidateMemory(ctx, m.ID, &cut); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_lookup", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	// As of after the cutoff would normally hide the invalidated memory
+	// (see TestRecall_WithAsOf). But WithIncludeInvalid takes precedence:
+	// no filtering is applied, so the memory is returned.
+	after := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	got, err := c.Recall(ctx, "budget", WithLimit(10), WithAsOf(after), WithIncludeInvalid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("WithIncludeInvalid should override the as-of filter, got %d", len(got))
 	}
 }

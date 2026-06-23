@@ -148,3 +148,38 @@ func TestSearchMemoryVector(t *testing.T) {
 		t.Fatalf("expected to find memory %s, got %+v", m.ID, got)
 	}
 }
+
+func TestSearchMemoryVector_HidesInvalidated(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Alice's budget is 5000"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	// Visible before invalidation.
+	got, err := c.SearchMemoryVector(ctx, "Alice's budget is 5000", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 before invalidation, got %d", len(got))
+	}
+
+	if err := c.InvalidateMemory(ctx, m.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = c.SearchMemoryVector(ctx, "Alice's budget is 5000", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected 0 after invalidation, got %d", len(got))
+	}
+}

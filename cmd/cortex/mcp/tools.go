@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -44,6 +45,8 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("query", mcp.Required(), mcp.Description("The query to search for")),
 			mcp.WithNumber("limit", mcp.Description("Maximum number of results (default 20)")),
 			mcp.WithNumber("min_confidence", mcp.Description("Filter results below this confidence threshold (0.0-1.0). Default 0 = no filter.")),
+			mcp.WithString("as_of", mcp.Description("Optional RFC3339 timestamp; recall the graph as it was valid at this time (point-in-time history).")),
+			mcp.WithBoolean("include_invalid", mcp.Description("Include retired/superseded memories that are no longer current. Default false.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			query, err := req.RequireString("query")
@@ -59,6 +62,16 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 					return mcp.NewToolResultError("min_confidence must be between 0 and 1"), nil
 				}
 				opts = append(opts, cortex.WithMinConfidence(mc))
+			}
+			if asOfStr := req.GetString("as_of", ""); asOfStr != "" {
+				ts, err := time.Parse(time.RFC3339, asOfStr)
+				if err != nil {
+					return mcp.NewToolResultError("as_of must be an RFC3339 timestamp"), nil
+				}
+				opts = append(opts, cortex.WithAsOf(ts))
+			}
+			if req.GetBool("include_invalid", false) {
+				opts = append(opts, cortex.WithIncludeInvalid())
 			}
 			out, err := cx.RecallWithStrength(ctx, query, opts...)
 			if err != nil {

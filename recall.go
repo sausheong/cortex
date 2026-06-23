@@ -33,6 +33,9 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		o(cfg)
 	}
 
+	// Resolve the temporal mode once; it governs the memory read paths.
+	mode := temporalMode{includeInvalid: cfg.includeInvalid, asOf: cfg.asOf}
+
 	// Decompose the query into sub-queries.
 	subQueries := c.decomposeQuery(ctx, query)
 
@@ -49,7 +52,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			items, results := c.executeSubQuery(ctx, sq, cfg.limit)
+			items, results := c.executeSubQuery(ctx, sq, cfg.limit, mode)
 			mu.Lock()
 			defer mu.Unlock()
 			if len(items) > 0 {
@@ -134,7 +137,7 @@ func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQ
 
 // executeSubQuery runs a single sub-query and returns ranked items plus
 // a map of prefixed-ID to Result for later lookup.
-func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit int) ([]rankedItem, map[string]Result) {
+func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
 	query, _ := sq.Params["query"].(string)
 	if query == "" {
 		return nil, nil
@@ -142,9 +145,9 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 
 	switch sq.Type {
 	case "memory_lookup":
-		return c.recallMemories(ctx, query, limit)
+		return c.recallMemories(ctx, query, limit, mode)
 	case "memory_vector":
-		return c.recallMemoryVector(ctx, query, limit)
+		return c.recallMemoryVector(ctx, query, limit, mode)
 	case "keyword_search":
 		return c.recallKeyword(ctx, query, limit)
 	case "vector_search":
@@ -156,8 +159,8 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 	}
 }
 
-func (c *Cortex) recallMemories(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
-	mems, err := c.SearchMemories(ctx, query, limit)
+func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
+	mems, err := c.searchMemoriesMode(ctx, query, limit, mode)
 	if err != nil || len(mems) == 0 {
 		return nil, nil
 	}
@@ -182,11 +185,11 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int) ([
 	return items, results
 }
 
-func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
 	if c.cfg.embedder == nil {
 		return nil, nil
 	}
-	mems, err := c.SearchMemoryVector(ctx, query, limit)
+	mems, err := c.searchMemoryVectorMode(ctx, query, limit, mode)
 	if err != nil || len(mems) == 0 {
 		return nil, nil
 	}
