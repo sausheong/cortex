@@ -85,7 +85,27 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 		}
 	}
 
-	// Apply path is Task 5; dry-run returns here.
+	// Dry-run returns here; see ApplyReconcile for the apply path.
+	return report, nil
+}
+
+// ApplyReconcile runs the reconcile scan and then soft-invalidates each
+// proposed stale memory (setting invalid_at to the superseding memory's
+// created_at). Returns the report describing what was applied. On the first
+// invalidation error it returns that error; supersessions applied before the
+// failure remain applied (soft-invalidation is reversible). Returns the
+// Skipped report unchanged when no Reconciler is configured.
+func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (ReconcileReport, error) {
+	report, err := c.Reconcile(ctx, opts...)
+	if err != nil || report.Skipped {
+		return report, err
+	}
+	for _, p := range report.Proposed {
+		invalidAt := p.InvalidAt
+		if err := c.InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
+			return report, fmt.Errorf("cortex: apply supersession (stale %s): %w", p.StaleID, err)
+		}
+	}
 	return report, nil
 }
 

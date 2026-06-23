@@ -108,6 +108,60 @@ func TestReconcile_GateRejectsWrongDirection(t *testing.T) {
 	}
 }
 
+func TestApplyReconcile_InvalidatesStale(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Carol"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	older := &Memory{Content: "Carol's title is Engineer", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	newer := &Memory{Content: "Carol's title is Director", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+
+	c.SetLLM(&mockLLM{
+		detectConflictsFn: func(_ context.Context, _ []Memory) ([]ConflictPair, error) {
+			return []ConflictPair{{StaleID: older.ID, SupersededByID: newer.ID, Reason: "promoted"}}, nil
+		},
+	})
+
+	rep, err := c.ApplyReconcile(ctx)
+	if err != nil {
+		t.Fatalf("ApplyReconcile: %v", err)
+	}
+	if len(rep.Proposed) != 1 {
+		t.Fatalf("expected 1 applied supersession, got %d", len(rep.Proposed))
+	}
+
+	// After apply: only the newer memory is currently-valid.
+	got, err := c.SearchMemories(ctx, "Carol title", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != newer.ID {
+		t.Fatalf("expected only newer memory valid after apply, got %d", len(got))
+	}
+
+	// The stale one is still retrievable with history.
+	all, err := c.Recall(ctx, "Carol title", WithLimit(10), WithIncludeInvalid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected both memories via WithIncludeInvalid, got %d", len(all))
+	}
+}
+
 func TestReconcile_SkipsWithoutReconciler(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
