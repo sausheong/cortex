@@ -38,6 +38,39 @@ func TestValidAsOfClause(t *testing.T) {
 	}
 }
 
+func TestValidInRangeClause(t *testing.T) {
+	feb := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+
+	// Both nil → no narrowing.
+	clause, args := validInRangeClause("m", nil, nil)
+	if clause != "1=1" || len(args) != 0 {
+		t.Fatalf("both-nil: got %q args=%v", clause, args)
+	}
+
+	// from only → invalid_at > from (event must not have ended before window).
+	clause, args = validInRangeClause("m", &feb, nil)
+	if !strings.Contains(clause, "invalid_at") || len(args) != 1 {
+		t.Fatalf("from-only: got %q args=%v", clause, args)
+	}
+
+	// to only → valid_at < to (event must have begun before window end).
+	clause, args = validInRangeClause("m", nil, &apr)
+	if !strings.Contains(clause, "valid_at") || len(args) != 1 {
+		t.Fatalf("to-only: got %q args=%v", clause, args)
+	}
+
+	// both → overlap predicate, 2 args in order [to, from].
+	clause, args = validInRangeClause("m", &feb, &apr)
+	if len(args) != 2 {
+		t.Fatalf("both: expected 2 args, got %v", args)
+	}
+	// arg order must match the placeholder order in the clause.
+	if !(args[0].(time.Time).Equal(apr) && args[1].(time.Time).Equal(feb)) {
+		t.Fatalf("both: arg order wrong, got %v (want [apr, feb])", args)
+	}
+}
+
 func TestParseEventTime(t *testing.T) {
 	mustUTC := func(y int, mo time.Month, d int) *time.Time {
 		v := time.Date(y, mo, d, 0, 0, 0, 0, time.UTC)
