@@ -54,6 +54,31 @@ type Memory struct {
 	ExpiredAt *time.Time `json:"expired_at,omitempty"`
 }
 
+// MemoryEdge is a typed directed edge between two memories (facts-on-facts).
+// It reads "SourceID <Type> TargetID" — e.g. a supersedes edge has SourceID =
+// the newer memory and TargetID = the stale one it replaces. Edges are
+// additive metadata: they record relationships discovered during
+// reconciliation/maintenance and never change the memories themselves.
+type MemoryEdge struct {
+	ID        string    `json:"id"`
+	SourceID  string    `json:"source_id"`
+	TargetID  string    `json:"target_id"`
+	Type      string    `json:"type"`
+	Source    string    `json:"source,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Memory edge types. SourceID <type> TargetID:
+//   - EdgeSupersedes: the newer memory replaces/contradicts the older (target).
+//   - EdgeDerives:    the source memory is derived/inferred from the target.
+//   - EdgeExtends:    the source memory adds detail to the target without
+//     contradicting it.
+const (
+	EdgeSupersedes = "supersedes"
+	EdgeDerives    = "derives"
+	EdgeExtends    = "extends"
+)
+
 type Result struct {
 	Type       string         `json:"type"`
 	Content    string         `json:"content"`

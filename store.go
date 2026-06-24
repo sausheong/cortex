@@ -82,6 +82,19 @@ CREATE TABLE IF NOT EXISTS memory_entities (
 	PRIMARY KEY (memory_id, entity_id)
 );
 
+CREATE TABLE IF NOT EXISTS memory_edges (
+	id         TEXT PRIMARY KEY,
+	source_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+	target_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+	type       TEXT NOT NULL,
+	source     TEXT,
+	created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+	UNIQUE (source_id, target_id, type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
+
 CREATE TABLE IF NOT EXISTS embeddings (
 	id         TEXT PRIMARY KEY,
 	ref_id     TEXT NOT NULL,
