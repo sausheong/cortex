@@ -310,11 +310,12 @@ func cmdRemember() {
 func cmdRecall() {
 	args := os.Args[2:]
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: cortex recall <query> [--min-confidence <0-1>]")
+		fmt.Fprintln(os.Stderr, "usage: cortex recall <query> [--min-confidence <0-1>] [--no-rerank]")
 		os.Exit(1)
 	}
 
 	var minConf float64
+	var noRerank bool
 	var queryParts []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -330,12 +331,14 @@ func cmdRecall() {
 			}
 			minConf = v
 			i++
+		case "--no-rerank":
+			noRerank = true
 		default:
 			queryParts = append(queryParts, args[i])
 		}
 	}
 	if len(queryParts) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: cortex recall <query> [--min-confidence <0-1>]")
+		fmt.Fprintln(os.Stderr, "usage: cortex recall <query> [--min-confidence <0-1>] [--no-rerank]")
 		os.Exit(1)
 	}
 	query := strings.Join(queryParts, " ")
@@ -347,6 +350,9 @@ func cmdRecall() {
 	var opts []cortex.RecallOption
 	if minConf > 0 {
 		opts = append(opts, cortex.WithMinConfidence(minConf))
+	}
+	if noRerank {
+		opts = append(opts, cortex.WithRerank(false))
 	}
 	results, err := cx.Recall(ctx, query, opts...)
 	if err != nil {

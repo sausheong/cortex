@@ -16,7 +16,7 @@ Treat cortex as your long-term memory. Read from it before answering questions. 
 
 ## The three operations
 
-- **`recall <query>`** — search the graph. Returns ranked results from memories, keyword matches, vector similarity, and graph traversal, merged via reciprocal rank fusion. Use before answering any non-trivial question.
+- **`recall <query>`** — search the graph. Returns ranked results from memories, keyword matches, vector similarity, and graph traversal, merged via reciprocal rank fusion. Results are then diversity-reranked by default so near-duplicate hits don't crowd out distinct ones; pass `--no-rerank` (CLI) or `rerank: false` (MCP) for pure relevance order. Use before answering any non-trivial question.
 - **`remember <text>`** — extract entities, relationships, and memories from the text and add them to the graph. Use after the user shares a new fact.
 - **`forget --source <s>` / `--entity <id>`** — remove knowledge. Use when the user corrects a prior belief or asks you to delete something.
 
@@ -87,6 +87,8 @@ But the default (no filter) is right for most cases — uncertain knowledge is s
 Cortex tracks when each fact was true, not just what it is now. A `recall` returns only the facts that are currently valid; superseded or retired memories are hidden by default. To ask what the graph knew at a past moment, pass an `as_of` RFC3339 timestamp; to include retired memories alongside current ones, pass `include_invalid`.
 
 Both the vault export (`cortex export --vault`) and default `recall` reflect only currently-valid facts; retired facts are available only via `include_invalid` or `as_of`.
+
+Recall is also time-aware within a query: mentioning a period ("in Q1", "before the launch", "last year") narrows results to facts that were true during that window, without needing a flag. This is distinct from `as_of` — `as_of` is a single point in time you pass explicitly, while a period in the query text is resolved automatically and filters by when each fact held.
 
 Cortex can also detect when a newer memory supersedes an older, contradicting one. Run `cortex reconcile` for a dry-run report of supersessions, then `cortex reconcile --apply` to commit them. A superseded memory is soft-invalidated — hidden from default recall but still available via `as_of` / `include_invalid`, so nothing is lost.
 
