@@ -120,6 +120,10 @@ func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (R
 		if err := c.InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
 			return report, fmt.Errorf("cortex: apply supersession (stale %s): %w", p.StaleID, err)
 		}
+		edge := &MemoryEdge{SourceID: p.SupersededByID, TargetID: p.StaleID, Type: EdgeSupersedes}
+		if err := c.PutMemoryEdge(ctx, edge); err != nil {
+			return report, fmt.Errorf("cortex: record supersedes edge (stale %s): %w", p.StaleID, err)
+		}
 	}
 	return report, nil
 }
@@ -186,6 +190,10 @@ func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileRepor
 		invalidAt := p.InvalidAt
 		if err := c.InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
 			return out, fmt.Errorf("cortex: apply reviewed supersession (stale %s): %w", p.StaleID, err)
+		}
+		edge := &MemoryEdge{SourceID: p.SupersededByID, TargetID: p.StaleID, Type: EdgeSupersedes}
+		if err := c.PutMemoryEdge(ctx, edge); err != nil {
+			return out, fmt.Errorf("cortex: record reviewed supersedes edge (stale %s): %w", p.StaleID, err)
 		}
 		out.Proposed = append(out.Proposed, p)
 	}

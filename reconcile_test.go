@@ -368,3 +368,56 @@ func TestApplyReconcileReport_SkippedInputUnchanged(t *testing.T) {
 		t.Fatalf("skipped input should pass through unchanged, got %+v", out)
 	}
 }
+
+func TestApplyReconcile_RecordsSupersedesEdge(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two contradicting memories on the same entity, newer supersedes older.
+	e := &Entity{Name: "Project X", Type: "project"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	older := &Memory{Content: "Project X budget is 5000", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, older); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure the newer memory has a strictly-later created_at.
+	newer := &Memory{Content: "Project X budget is 10000", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate the older one so newer.CreatedAt is strictly after.
+	if _, err := c.db.ExecContext(ctx,
+		`UPDATE memories SET created_at = ? WHERE id = ?`,
+		older.CreatedAt.Add(-1*time.Hour), older.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	c.SetLLM(&mockLLM{
+		detectConflictsFn: func(_ context.Context, mems []Memory) ([]ConflictPair, error) {
+			return []ConflictPair{{StaleID: older.ID, SupersededByID: newer.ID, Reason: "budget changed"}}, nil
+		},
+	})
+
+	report, err := c.ApplyReconcile(ctx)
+	if err != nil {
+		t.Fatalf("ApplyReconcile: %v", err)
+	}
+	if len(report.Proposed) != 1 {
+		t.Fatalf("expected 1 applied supersession, got %d", len(report.Proposed))
+	}
+
+	// A supersedes edge must exist: newer -> older.
+	edges, err := c.GetMemoryEdgesByType(ctx, newer.ID, EdgeSupersedes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 supersedes edge, got %d", len(edges))
+	}
+	if edges[0].SourceID != newer.ID || edges[0].TargetID != older.ID {
+		t.Fatalf("edge direction wrong: source=%s target=%s (want source=newer %s, target=older %s)",
+			edges[0].SourceID, edges[0].TargetID, newer.ID, older.ID)
+	}
+}
