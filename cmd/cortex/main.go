@@ -71,6 +71,8 @@ func main() {
 		cmdLint()
 	case "reconcile":
 		cmdReconcile()
+	case "relate":
+		cmdRelate()
 	case "mcp":
 		cmdMCP()
 	default:
@@ -110,6 +112,8 @@ Commands:
                                  Scan the graph for cleanup candidates (orphans, near-duplicates, etc.)
   reconcile [--apply] [--out <file>]
                                  Soft-invalidate memories superseded by newer facts (dry-run by default; --apply commits)
+  relate [--out <file>]
+                                 Detect and record derives/extends edges between related memories (additive, idempotent)
   mcp [--transport stdio|http] [--addr host:port]
                                  Run the MCP server (Claude Desktop, Claude Code, other MCP clients)`)
 }
