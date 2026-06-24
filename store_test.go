@@ -255,3 +255,35 @@ func TestOpen_AddsConfidenceColumnsToLegacyDB(t *testing.T) {
 		t.Errorf("legacy row confidence = %v, want 1.0", e.Confidence)
 	}
 }
+
+func TestSchema_MemoryEdgesTableExists(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// The table must exist and accept a row referencing two memories.
+	m1 := &Memory{Content: "newer fact"}
+	m2 := &Memory{Content: "older fact"}
+	if err := c.PutMemory(ctx, m1); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, m2); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := c.db.ExecContext(ctx,
+		`INSERT INTO memory_edges (id, source_id, target_id, type, created_at)
+		 VALUES ('e1', ?, ?, 'supersedes', datetime('now'))`,
+		m1.ID, m2.ID,
+	)
+	if err != nil {
+		t.Fatalf("insert memory edge: %v", err)
+	}
+
+	var n int
+	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_edges`).Scan(&n); err != nil {
+		t.Fatalf("count edges: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 edge, got %d", n)
+	}
+}
