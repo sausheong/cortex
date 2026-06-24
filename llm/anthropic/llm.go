@@ -221,6 +221,57 @@ func parseConflictsJSON(raw string) ([]cortex.ConflictPair, error) {
 
 var _ cortex.Reconciler = (*LLM)(nil)
 
+const detectRelationsPrompt = `You are given a list of memories about the same subject, each with an ID.
+Identify pairs where one memory EXTENDS another (adds detail without contradicting)
+or DERIVES from another (is inferred/follows from it). Do NOT flag contradictions
+or simple restatements — only genuine elaboration or derivation.
+
+Return ONLY valid JSON, no markdown:
+{"relations":[{"source_id":"<id of the memory that extends/derives>","target_id":"<id of the base memory>","type":"extends|derives","reason":"<short reason>"}]}
+
+For "extends", source adds detail to target. For "derives", source is inferred from target.
+If there are none, return {"relations":[]}.`
+
+// DetectRelations implements cortex.RelationDetector.
+func (l *LLM) DetectRelations(ctx context.Context, memories []cortex.Memory) ([]cortex.MemoryRelation, error) {
+	if len(memories) < 2 {
+		return nil, nil
+	}
+	var sb strings.Builder
+	for _, m := range memories {
+		fmt.Fprintf(&sb, "ID %s: %s\n", m.ID, m.Content)
+	}
+	msg, err := l.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     l.model,
+		MaxTokens: l.maxTokens,
+		System:    []anthropic.TextBlockParam{{Text: detectRelationsPrompt}},
+		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(sb.String()))},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: detect relations: %w", err)
+	}
+	return parseRelationsJSON(extractText(msg))
+}
+
+func parseRelationsJSON(raw string) ([]cortex.MemoryRelation, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		if len(lines) > 2 {
+			raw = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+	var parsed struct {
+		Relations []cortex.MemoryRelation `json:"relations"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, fmt.Errorf("anthropic: parse relations: %w", err)
+	}
+	return parsed.Relations, nil
+}
+
+var _ cortex.RelationDetector = (*LLM)(nil)
+
 // extractText pulls the text content from a Claude message response.
 func extractText(msg *anthropic.Message) string {
 	var parts []string
