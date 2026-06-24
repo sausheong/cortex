@@ -27,11 +27,14 @@ Return ONLY valid JSON, no markdown formatting or code fences.`
 
 const decomposePrompt = `Decompose the following query into one or more structured sub-queries for a knowledge graph.
 Return a JSON object with a "queries" array, where each query has:
-- "type": one of "keyword_search", "memory_lookup", "vector_search", "graph_traverse"
+- "type": one of "keyword_search", "memory_lookup", "vector_search", "graph_traverse", "temporal_filter"
 - "params": object with at least a "query" string field
 
 Example output:
 {"queries": [{"type": "keyword_search", "params": {"query": "some text"}}, {"type": "memory_lookup", "params": {"query": "some text"}}]}
+
+Use "temporal_filter" when the query refers to a time or period (e.g. "in Q1", "last year", "before the reorg", "in March 2026"). Its params take "query" plus optional "from" and "to" date strings (e.g. "2026-01-01", "2026-03"). Resolve relative references to absolute dates when you can; omit a bound you cannot determine.
+Example: {"queries":[{"type":"temporal_filter","params":{"query":"budget","from":"2026-01-01","to":"2026-04-01"}}]}
 
 Return ONLY valid JSON, no markdown formatting or code fences.`
 

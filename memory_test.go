@@ -409,3 +409,31 @@ func TestPutMemory_PersistsSpeaker(t *testing.T) {
 		t.Fatalf("expected speaker via search, got %+v", found)
 	}
 }
+
+func TestSearchMemoriesMode_EventTimeWindow(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	// Two memories with different event-time starts.
+	q1 := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	q3 := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	if err := c.PutMemory(ctx, &Memory{Content: "budget set to 5000 in January", ValidAt: &q1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, &Memory{Content: "budget set to 9000 in March", ValidAt: &q3}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Window covering only Q1 (Jan–Feb).
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	mode := temporalMode{rangeFrom: &from, rangeTo: &to}
+
+	got, err := c.searchMemoriesMode(ctx, "budget", 10, mode)
+	if err != nil {
+		t.Fatalf("searchMemoriesMode: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "budget set to 5000 in January" {
+		t.Fatalf("expected only the January memory in the Q1 window, got %+v", got)
+	}
+}

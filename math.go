@@ -83,3 +83,75 @@ func rrfMerge(lists [][]rankedItem, k int) []rankedItem {
 
 	return merged
 }
+
+// mmrCandidate is one item to be reranked: an id, its relevance score
+// (already confidence-weighted), and its embedding vector (may be nil).
+type mmrCandidate struct {
+	id    string
+	score float64
+	vec   []float32
+}
+
+// mmrRerank reorders candidates by Maximal Marginal Relevance: it greedily
+// selects, at each step, the unpicked candidate maximizing
+//
+//	lambda*relevance - (1-lambda)*maxSimilarityToAlreadyPicked
+//
+// balancing relevance (lambda=1 → pure relevance) against diversity
+// (lambda=0 → pure novelty). Returns the selected ids in pick order, up to
+// limit. Deterministic: candidates are pre-sorted by score (then id) so ties
+// resolve stably, and a candidate with a nil/empty vector contributes zero
+// similarity (ranked on relevance alone — graceful when embeddings are
+// absent).
+func mmrRerank(items []mmrCandidate, lambda float64, limit int) []string {
+	n := len(items)
+	if n == 0 {
+		return nil
+	}
+	// Stable base order: relevance desc, then id asc.
+	order := make([]mmrCandidate, n)
+	copy(order, items)
+	sort.SliceStable(order, func(i, j int) bool {
+		if order[i].score != order[j].score {
+			return order[i].score > order[j].score
+		}
+		return order[i].id < order[j].id
+	})
+
+	if limit > n {
+		limit = n
+	}
+	picked := make([]mmrCandidate, 0, limit)
+	used := make([]bool, n)
+	result := make([]string, 0, limit)
+
+	for len(result) < limit {
+		bestIdx := -1
+		var bestScore float64
+		for i := range order {
+			if used[i] {
+				continue
+			}
+			// Max similarity to already-picked.
+			var maxSim float64
+			for _, p := range picked {
+				s := float64(cosineSimilarity(order[i].vec, p.vec))
+				if s > maxSim {
+					maxSim = s
+				}
+			}
+			mmr := lambda*order[i].score - (1-lambda)*maxSim
+			if bestIdx == -1 || mmr > bestScore {
+				bestIdx = i
+				bestScore = mmr
+			}
+		}
+		if bestIdx == -1 {
+			break
+		}
+		used[bestIdx] = true
+		picked = append(picked, order[bestIdx])
+		result = append(result, order[bestIdx].id)
+	}
+	return result
+}

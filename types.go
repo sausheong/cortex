@@ -204,7 +204,12 @@ type recallConfig struct {
 	minConfidence  float64
 	asOf           *time.Time // non-nil → recall as the graph was valid at this time
 	includeInvalid bool       // true → no validity filter (include retired memories)
+	rerank         bool       // true → post-fusion MMR diversity rerank (default on)
 }
+
+// RerankLambda is the MMR tradeoff: relevance weight vs. diversity weight.
+// 0.7 keeps relevance primary while still demoting near-duplicates.
+const RerankLambda = 0.7
 
 func WithLimit(n int) RecallOption {
 	return func(c *recallConfig) { c.limit = n }
@@ -232,6 +237,12 @@ func WithAsOf(t time.Time) RecallOption {
 // (no validity filtering). Takes precedence over WithAsOf.
 func WithIncludeInvalid() RecallOption {
 	return func(c *recallConfig) { c.includeInvalid = true }
+}
+
+// WithRerank toggles the post-fusion MMR diversity rerank (default on).
+// Disable to get the pure confidence-weighted fusion order.
+func WithRerank(on bool) RecallOption {
+	return func(c *recallConfig) { c.rerank = on }
 }
 
 type RelFilter func(*relFilterConfig)
