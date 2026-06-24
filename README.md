@@ -1040,6 +1040,57 @@ cortex recall "who works at Stripe"
 
 ---
 
+## Scheduling maintenance
+
+`cortex maintain` runs the reconsolidation pass — reconcile contradictions, build derives/extends edges, then decay confidence and soft-retire stale memories. It is a one-shot, idempotent-in-effect command: run it periodically and the OS scheduler owns the cadence.
+
+Preview first:
+
+```bash
+cortex maintain --dry-run
+```
+
+### cron (Linux)
+
+Run nightly at 03:17 (off the hour to avoid the thundering herd):
+
+```cron
+17 3 * * *  CORTEX_DB=/path/to/brain.db /usr/local/bin/cortex maintain --out /path/to/last-maintain.md
+```
+
+### launchd (macOS)
+
+Create `~/Library/LaunchAgents/ai.cortex.maintain.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.cortex.maintain</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/cortex</string>
+    <string>maintain</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>CORTEX_DB</key><string>/path/to/brain.db</string></dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>17</integer></dict>
+</dict>
+</plist>
+```
+
+Then load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/ai.cortex.maintain.plist
+```
+
+Reconcile and relate need an LLM provider configured (see `cortex config`); decay runs without one. A maintain run with no provider still decays and prunes, and reports the reconcile/relate passes as skipped.
+
+---
+
 ## Make Targets
 
 ```
