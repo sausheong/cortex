@@ -154,6 +154,12 @@ cortex reconcile --apply --from report.json  # apply the reviewed report
 
 The `--from` path re-validates each proposal against the current graph and never re-detects — proposals that no longer hold (e.g. a memory already invalidated or deleted since the dry-run) are skipped. Plain `--apply` (no `--from`) still does one-shot detect-and-apply.
 
+### Reconsolidation (maintain)
+
+`cortex maintain` is the periodic upkeep pass: it reconciles contradictions (superseding stale memories), builds derives/extends links between related memories, and decays the confidence of old, unreinforced memories — soft-retiring those that fall below a floor. Nothing is hard-deleted; retired memories remain reachable via `as_of` / `include_invalid`.
+
+The user typically schedules this (cron/launchd). You can run `cortex maintain --dry-run` to preview what a pass would change, or suggest the user enable scheduled maintenance if the graph is accumulating contradictions or stale facts. Recommend it when you notice the graph drifting; don't run the mutating pass unprompted.
+
 ## Customization
 
 This file is yours to edit. Add project-specific guidance: which entity types matter most here, which sources are authoritative, when to escalate to the user before remembering, custom relationship types you want extracted. The static template ships generic on purpose — make it specific.
