@@ -162,6 +162,65 @@ type ConflictPair struct {
 	Reason         string `json:"reason"`
 }
 
+// RelationDetector is an optional capability a provider may implement to
+// detect NON-contradicting relations among memories — one memory extending
+// or deriving from another. It is separate from LLM (and from Reconciler) so
+// the core interface stays stable and providers opt in. BuildMemoryEdges
+// (relate.go) type-asserts the configured LLM for this interface and no-ops
+// gracefully when it is absent.
+//
+// DetectRelations receives memories (typically all currently-valid memories
+// linked to one entity) and returns proposed derives/extends relations. The
+// implementation only PROPOSES; the deterministic gate in relate.go decides
+// what is recorded.
+type RelationDetector interface {
+	DetectRelations(ctx context.Context, memories []Memory) ([]MemoryRelation, error)
+}
+
+// MemoryRelation is an LLM-proposed non-contradicting relation: SourceID
+// <Type> TargetID, where Type is EdgeDerives or EdgeExtends. Reads
+// subject-verb-object: for extends, source adds detail to target; for
+// derives, source is inferred from target.
+type MemoryRelation struct {
+	SourceID string `json:"source_id"`
+	TargetID string `json:"target_id"`
+	Type     string `json:"type"`
+	Reason   string `json:"reason"`
+}
+
+// RelationProposal is a gate-passed relation ready to record as an edge.
+type RelationProposal struct {
+	SourceID      string `json:"source_id"`
+	SourceContent string `json:"source_content"`
+	TargetID      string `json:"target_id"`
+	TargetContent string `json:"target_content"`
+	Type          string `json:"type"`
+	Reason        string `json:"reason"`
+}
+
+// RejectedRelation is an LLM-proposed relation the deterministic gate rejected.
+type RejectedRelation struct {
+	SourceID string `json:"source_id"`
+	TargetID string `json:"target_id"`
+	Type     string `json:"type"`
+	Reason   string `json:"reason"`
+}
+
+// RelationReport summarizes a BuildMemoryEdges run.
+type RelationReport struct {
+	EntitiesScanned int                `json:"entities_scanned"`
+	MemoriesScanned int                `json:"memories_scanned"`
+	Proposed        []RelationProposal `json:"proposed"`
+	Rejected        []RejectedRelation `json:"rejected"`
+	Skipped         bool               `json:"skipped"`
+	SkipReason      string             `json:"skip_reason,omitempty"`
+}
+
+// RelateOption configures a BuildMemoryEdges run.
+type RelateOption func(*relateConfig)
+
+type relateConfig struct{}
+
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 	Dimensions() int

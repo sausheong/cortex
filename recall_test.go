@@ -318,6 +318,7 @@ type mockLLM struct {
 	decomposeFn       func(ctx context.Context, query string) ([]StructuredQuery, error)
 	summarizeFn       func(ctx context.Context, texts []string) (string, error)
 	detectConflictsFn func(ctx context.Context, memories []Memory) ([]ConflictPair, error)
+	detectRelationsFn func(ctx context.Context, memories []Memory) ([]MemoryRelation, error)
 }
 
 func (m *mockLLM) Extract(ctx context.Context, text, prompt string) (ExtractionResult, error) {
@@ -348,6 +349,13 @@ func (m *mockLLM) DetectConflicts(ctx context.Context, memories []Memory) ([]Con
 	return nil, nil
 }
 
+func (m *mockLLM) DetectRelations(ctx context.Context, memories []Memory) ([]MemoryRelation, error) {
+	if m.detectRelationsFn != nil {
+		return m.detectRelationsFn(ctx, memories)
+	}
+	return nil, nil
+}
+
 func TestMockLLM_SatisfiesReconciler(t *testing.T) {
 	var r Reconciler = &mockLLM{
 		detectConflictsFn: func(_ context.Context, mems []Memory) ([]ConflictPair, error) {
@@ -360,6 +368,21 @@ func TestMockLLM_SatisfiesReconciler(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].SupersededByID != "y" {
 		t.Fatalf("unexpected detection result: %+v", got)
+	}
+}
+
+func TestMockLLM_SatisfiesRelationDetector(t *testing.T) {
+	var d RelationDetector = &mockLLM{
+		detectRelationsFn: func(_ context.Context, mems []Memory) ([]MemoryRelation, error) {
+			return []MemoryRelation{{SourceID: "a", TargetID: "b", Type: EdgeExtends, Reason: "test"}}, nil
+		},
+	}
+	got, err := d.DetectRelations(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Type != EdgeExtends {
+		t.Fatalf("unexpected: %+v", got)
 	}
 }
 
