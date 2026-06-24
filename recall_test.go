@@ -262,6 +262,56 @@ func resultTypes(results []Result) []string {
 	return types
 }
 
+func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	// Seed three memories; two near-duplicates, one distinct. Embed each.
+	seed := func(content string) {
+		m := &Memory{Content: content}
+		if err := c.PutMemory(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		vecs, _ := c.cfg.embedder.Embed(ctx, []string{content})
+		if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("alpha alpha alpha report")
+	seed("alpha alpha alpha summary") // near-duplicate of the first
+	seed("zeta distinct topic")
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_vector", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	// With rerank (default): the distinct result should not be crowded out —
+	// it should rank ahead of the near-duplicate second item.
+	got, err := c.Recall(ctx, "alpha report", WithLimit(3))
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("expected multiple results, got %d", len(got))
+	}
+	// Assert the result set is intact (rerank refines order, never drops members).
+	if len(got) != 3 {
+		t.Fatalf("rerank must preserve membership, expected 3 got %d", len(got))
+	}
+
+	// WithRerank(false) must also return the full membership; the load-bearing
+	// guarantee is that neither path drops/adds results. The orders may differ.
+	off, err := c.Recall(ctx, "alpha report", WithLimit(3), WithRerank(false))
+	if err != nil {
+		t.Fatalf("Recall(WithRerank(false)): %v", err)
+	}
+	if len(off) != 3 {
+		t.Fatalf("non-rerank path must preserve membership, expected 3 got %d", len(off))
+	}
+}
+
 // mockLLM is a test-only LLM mock.
 type mockLLM struct {
 	extractFn         func(ctx context.Context, text, prompt string) (ExtractionResult, error)

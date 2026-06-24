@@ -50,7 +50,7 @@ func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...R
 // merges the results via reciprocal rank fusion, and returns a unified
 // ranked list of Result items.
 func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption) ([]Result, error) {
-	cfg := &recallConfig{limit: 20}
+	cfg := &recallConfig{limit: 20, rerank: true}
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -110,29 +110,63 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Merge via reciprocal rank fusion.
 	merged := rrfMerge(lists, 60)
 
-	// Build final results from merged ranked items, weighting the fusion
-	// score by each result's confidence so equally-ranked items are broken
-	// by how certain we are about them. Confidence is in [0,1]; coerced at
-	// ingest so unset == 1.0 (no penalty). A genuine 0.0 is the least-
-	// trustworthy state and is preserved (not rescued), so it ranks last.
-	final := make([]Result, 0, len(merged))
-	for _, item := range merged {
-		if r, ok := resultMap[item.id]; ok {
-			conf := r.Confidence
-			if conf < 0 {
-				conf = 0 // defensive: confidence is coerced to [0,1] at ingest; a
-				// negative here would only come from direct struct misuse.
-				// A genuine 0.0 is the least-trustworthy state and must rank last.
-			}
-			r.Score = item.score * conf
-			final = append(final, r)
+	// Confidence-weight the fusion score: a result's rank score is its RRF
+	// score scaled by how certain we are about it. Confidence is in [0,1];
+	// coerced at ingest so unset == 1.0 (no penalty). A genuine 0.0 is the
+	// least-trustworthy state and is preserved (not rescued), so it ranks
+	// last. A defensive negative (only reachable via direct struct misuse) is
+	// floored to 0.
+	weightedScore := func(rawScore, conf float64) float64 {
+		if conf < 0 {
+			conf = 0
 		}
+		return rawScore * conf
 	}
 
-	// Re-sort by the confidence-weighted score (rrfMerge sorted by raw score).
-	sort.SliceStable(final, func(i, j int) bool {
-		return final[i].Score > final[j].Score
-	})
+	final := make([]Result, 0, len(merged))
+
+	// MMR diversity rerank (3.4): when enabled (default) and an embedder is
+	// configured, reorder the candidate set so near-duplicate results don't
+	// crowd out diverse ones. This is a refinement over the prefixed merged
+	// keys (which carry per-result vectors) — it reorders membership, never
+	// adds or drops members; the limit cap below is the only reducer. Without
+	// an embedder there are no vectors to compare, so we fall back to the
+	// pure confidence-weighted order.
+	if cfg.rerank && c.cfg.embedder != nil && len(merged) > 1 {
+		cands := make([]mmrCandidate, 0, len(merged))
+		for _, item := range merged {
+			r, ok := resultMap[item.id]
+			if !ok {
+				continue
+			}
+			cands = append(cands, mmrCandidate{
+				id:    item.id, // prefixed key (mem:/chunk:/entity:)
+				score: weightedScore(item.score, r.Confidence),
+				vec:   c.vectorForKey(ctx, item.id),
+			})
+		}
+		// limit == len(cands) → MMR reorders every candidate, drops none.
+		order := mmrRerank(cands, RerankLambda, len(cands))
+		for _, key := range order {
+			r := resultMap[key]
+			r.Score = weightedScore(rrfScore(merged, key), r.Confidence)
+			final = append(final, r)
+		}
+		// MMR defines the order; skip the plain confidence-weighted sort.
+	} else {
+		// Build final results from merged ranked items in fusion order, then
+		// re-sort by the confidence-weighted score (rrfMerge sorted by raw
+		// score).
+		for _, item := range merged {
+			if r, ok := resultMap[item.id]; ok {
+				r.Score = weightedScore(item.score, r.Confidence)
+				final = append(final, r)
+			}
+		}
+		sort.SliceStable(final, func(i, j int) bool {
+			return final[i].Score > final[j].Score
+		})
+	}
 
 	// Apply min-confidence filter (post-RRF, pre-limit).
 	if cfg.minConfidence > 0 {
@@ -151,6 +185,36 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	}
 
 	return final, nil
+}
+
+// vectorForKey loads the stored embedding for a prefixed merged key so the
+// MMR reranker can compare results by similarity. Memory and chunk results
+// have vectors written at ingest (looked up by ref type); entities have no
+// embedding, so they contribute a nil vector and rank on relevance alone.
+func (c *Cortex) vectorForKey(ctx context.Context, key string) []float32 {
+	prefix, id, ok := strings.Cut(key, ":")
+	if !ok {
+		return nil
+	}
+	switch prefix {
+	case "mem":
+		return c.embeddingByRef(ctx, id, "memory")
+	case "chunk":
+		return c.embeddingByRef(ctx, id, "chunk")
+	default: // "entity" (no embedding) or unknown
+		return nil
+	}
+}
+
+// rrfScore returns the raw fusion score for a prefixed key from the merged
+// list, or 0 if absent. Used to recover the score after MMR reorders by key.
+func rrfScore(merged []rankedItem, key string) float64 {
+	for _, item := range merged {
+		if item.id == key {
+			return item.score
+		}
+	}
+	return 0
 }
 
 // decomposeQuery uses the LLM to break a query into sub-queries.
