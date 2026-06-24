@@ -183,3 +183,27 @@ func TestSearchMemoryVector_HidesInvalidated(t *testing.T) {
 		t.Fatalf("expected 0 after invalidation, got %d", len(got))
 	}
 }
+
+func TestEmbeddingByRef(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "vectorized memory"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	got := c.embeddingByRef(ctx, m.ID, "memory")
+	if len(got) != c.cfg.embedder.Dimensions() {
+		t.Fatalf("expected %d-dim vector, got %d", c.cfg.embedder.Dimensions(), len(got))
+	}
+
+	// Missing ref → nil.
+	if v := c.embeddingByRef(ctx, "nonexistent", "memory"); v != nil {
+		t.Fatalf("expected nil for missing ref, got %v", v)
+	}
+}

@@ -14,6 +14,21 @@ type vectorResult struct {
 	similarity float32
 }
 
+// embeddingByRef loads the stored embedding vector for a ref (chunk/memory),
+// or nil if none exists. Lets the reranker reuse vectors written at ingest
+// instead of re-embedding ranked results.
+func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []float32 {
+	var blob []byte
+	err := c.db.QueryRowContext(ctx,
+		`SELECT vector FROM embeddings WHERE ref_id = ? AND ref_type = ? LIMIT 1`,
+		refID, refType,
+	).Scan(&blob)
+	if err != nil {
+		return nil
+	}
+	return decodeFloat32s(blob)
+}
+
 // putEmbedding stores an embedding vector for a given reference (e.g. a chunk)
 // in the embeddings table as a BLOB.
 func (c *Cortex) putEmbedding(ctx context.Context, refID, refType string, embedding []float32) error {
