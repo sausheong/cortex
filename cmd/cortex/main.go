@@ -73,6 +73,8 @@ func main() {
 		cmdReconcile()
 	case "relate":
 		cmdRelate()
+	case "decay":
+		cmdDecay()
 	case "mcp":
 		cmdMCP()
 	default:
@@ -114,6 +116,8 @@ Commands:
                                  Soft-invalidate memories superseded by newer facts (dry-run by default; --apply commits)
   relate [--out <file>]
                                  Detect and record derives/extends edges between related memories (additive, idempotent)
+  decay [--half-life <dur>] [--floor <0-1>] [--dry-run] [--out <file>]
+                                 Apply age-based confidence decay and soft-retire memories below the floor (MODIFIES the graph; use --dry-run to preview)
   mcp [--transport stdio|http] [--addr host:port]
                                  Run the MCP server (Claude Desktop, Claude Code, other MCP clients)`)
 }
