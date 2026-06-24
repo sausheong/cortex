@@ -538,3 +538,42 @@ func WithFloor(f float64) DecayOption { return func(c *decayConfig) { c.floor = 
 
 // WithDecayDryRun computes the decay report without writing anything.
 func WithDecayDryRun() DecayOption { return func(c *decayConfig) { c.dryRun = true } }
+
+// MaintainReport summarizes a Maintain reconsolidation pass — the collected
+// sub-reports from reconcile, relate, and decay. A nil sub-report means that
+// pass was skipped via its WithoutX toggle.
+type MaintainReport struct {
+	DryRun    bool             `json:"dry_run"`
+	Reconcile *ReconcileReport `json:"reconcile,omitempty"`
+	Relate    *RelationReport  `json:"relate,omitempty"`
+	Decay     *DecayReport     `json:"decay,omitempty"`
+}
+
+type MaintainOption func(*maintainConfig)
+
+type maintainConfig struct {
+	dryRun        bool
+	skipReconcile bool
+	skipRelate    bool
+	skipDecay     bool
+	decayOpts     []DecayOption
+}
+
+// WithMaintainDryRun runs Maintain without writing anything: reconcile uses its
+// dry-run path, relate is skipped (it has no dry-run mode), and decay uses
+// WithDecayDryRun.
+func WithMaintainDryRun() MaintainOption { return func(c *maintainConfig) { c.dryRun = true } }
+
+// WithoutReconcile skips the reconcile pass.
+func WithoutReconcile() MaintainOption { return func(c *maintainConfig) { c.skipReconcile = true } }
+
+// WithoutRelate skips the relate pass.
+func WithoutRelate() MaintainOption { return func(c *maintainConfig) { c.skipRelate = true } }
+
+// WithoutDecay skips the decay pass.
+func WithoutDecay() MaintainOption { return func(c *maintainConfig) { c.skipDecay = true } }
+
+// WithMaintainDecayOptions forwards decay options to the decay pass.
+func WithMaintainDecayOptions(o ...DecayOption) MaintainOption {
+	return func(c *maintainConfig) { c.decayOpts = o }
+}
