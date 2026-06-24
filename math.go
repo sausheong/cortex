@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"sort"
+	"time"
 )
 
 // rankedItem represents an item with its rank and computed score for
@@ -154,4 +155,26 @@ func mmrRerank(items []mmrCandidate, lambda float64, limit int) []string {
 		result = append(result, order[bestIdx].id)
 	}
 	return result
+}
+
+// decayedConfidence applies exponential half-life decay to a confidence
+// value: it returns current · 0.5^(elapsed/halfLife), clamped to [0, 1].
+// Decay only ever decreases confidence. A non-positive halfLife or elapsed
+// returns current unchanged (no decay). Exponential decay composes —
+// decaying by t1 then t2 equals decaying by t1+t2 once — which is what lets
+// the decay pass run on any cadence and converge to the same value for a
+// given age.
+func decayedConfidence(current float64, elapsed, halfLife time.Duration) float64 {
+	if halfLife <= 0 || elapsed <= 0 {
+		return current
+	}
+	factor := math.Pow(0.5, float64(elapsed)/float64(halfLife))
+	out := current * factor
+	if out < 0 {
+		return 0
+	}
+	if out > current {
+		return current // decay never raises
+	}
+	return out
 }

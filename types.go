@@ -504,3 +504,37 @@ func WithLowConfidenceThreshold(t float64) LintOption {
 		c.lowConfidenceThreshold = t
 	}
 }
+
+type DecayChange struct {
+	ID            string  `json:"id"`
+	Content       string  `json:"content"`
+	OldConfidence float64 `json:"old_confidence"`
+	NewConfidence float64 `json:"new_confidence"`
+	Pruned        bool    `json:"pruned"` // true = auto-soft-invalidated (below floor)
+}
+
+type DecayReport struct {
+	Scanned int           `json:"scanned"`
+	Decayed int           `json:"decayed"` // confidence changed
+	Pruned  int           `json:"pruned"`  // soft-invalidated below floor
+	DryRun  bool          `json:"dry_run"`
+	Changes []DecayChange `json:"changes"`
+}
+
+type DecayOption func(*decayConfig)
+
+type decayConfig struct {
+	halfLife time.Duration
+	floor    float64
+	dryRun   bool
+}
+
+// WithHalfLife sets the decay half-life (default 90 days).
+func WithHalfLife(d time.Duration) DecayOption { return func(c *decayConfig) { c.halfLife = d } }
+
+// WithFloor sets the confidence floor below which a memory is auto-pruned
+// (default 0.05).
+func WithFloor(f float64) DecayOption { return func(c *decayConfig) { c.floor = f } }
+
+// WithDecayDryRun computes the decay report without writing anything.
+func WithDecayDryRun() DecayOption { return func(c *decayConfig) { c.dryRun = true } }

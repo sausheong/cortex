@@ -3,6 +3,7 @@ package cortex
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func TestCosineSimilarity(t *testing.T) {
@@ -187,4 +188,47 @@ func TestMMRRerank_NoVectorsFallsBackToRelevance(t *testing.T) {
 			t.Fatalf("relevance fallback: got %v want %v", got, want)
 		}
 	}
+}
+
+func TestDecayedConfidence(t *testing.T) {
+	const H = 30 * 24 * time.Hour // 30-day half-life
+
+	// One half-life halves confidence.
+	if got := decayedConfidence(1.0, H, H); !approxEq(got, 0.5, 1e-9) {
+		t.Fatalf("one half-life: got %v want 0.5", got)
+	}
+	// Two half-lives → quarter.
+	if got := decayedConfidence(1.0, 2*H, H); !approxEq(got, 0.25, 1e-9) {
+		t.Fatalf("two half-lives: got %v want 0.25", got)
+	}
+	// Composition: decaying t1 then t2 == decaying (t1+t2) once.
+	t1, t2 := 10*24*time.Hour, 20*24*time.Hour
+	once := decayedConfidence(1.0, t1+t2, H)
+	twice := decayedConfidence(decayedConfidence(1.0, t1, H), t2, H)
+	if !approxEq(once, twice, 1e-9) {
+		t.Fatalf("composition broken: once=%v twice=%v", once, twice)
+	}
+	// elapsed <= 0 → unchanged.
+	if got := decayedConfidence(0.8, 0, H); got != 0.8 {
+		t.Fatalf("zero elapsed: got %v want 0.8", got)
+	}
+	if got := decayedConfidence(0.8, -time.Hour, H); got != 0.8 {
+		t.Fatalf("negative elapsed: got %v want 0.8", got)
+	}
+	// halfLife <= 0 → unchanged (no decay configured).
+	if got := decayedConfidence(0.8, H, 0); got != 0.8 {
+		t.Fatalf("zero half-life: got %v want 0.8", got)
+	}
+	// Result never exceeds current, never below 0.
+	if got := decayedConfidence(0.3, 100*H, H); got < 0 || got > 0.3 {
+		t.Fatalf("clamp: got %v out of (0, 0.3]", got)
+	}
+}
+
+func approxEq(a, b, eps float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d <= eps
 }

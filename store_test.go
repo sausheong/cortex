@@ -287,3 +287,25 @@ func TestSchema_MemoryEdgesTableExists(t *testing.T) {
 		t.Fatalf("expected 1 edge, got %d", n)
 	}
 }
+
+func TestSchema_MemoriesHaveLastDecayAt(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "decayable fact"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	// The column must exist and default to NULL for a fresh memory.
+	var lastDecay sql.NullTime
+	err := c.db.QueryRowContext(ctx,
+		`SELECT last_decay_at FROM memories WHERE id = ?`, m.ID,
+	).Scan(&lastDecay)
+	if err != nil {
+		t.Fatalf("select last_decay_at: %v", err)
+	}
+	if lastDecay.Valid {
+		t.Fatalf("expected NULL last_decay_at for a fresh memory, got %v", lastDecay.Time)
+	}
+}
