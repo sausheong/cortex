@@ -542,3 +542,38 @@ func TestRemember_EmbedsFactAugmentedMemory(t *testing.T) {
 		t.Fatalf("expected fact-augmented memory embedding, embedded=%v", rec.embedded)
 	}
 }
+
+func TestForget_DeletesMemoryEdges(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Name: "Acme", Type: "org"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	m1 := &Memory{Content: "Acme revenue 1M", EntityIDs: []string{e.ID}}
+	m2 := &Memory{Content: "Acme revenue 2M", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, m1); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemory(ctx, m2); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutMemoryEdge(ctx, &MemoryEdge{SourceID: m2.ID, TargetID: m1.ID, Type: EdgeSupersedes}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Forget by entity deletes the entity, its memory links, and (when they
+	// become orphaned) the memories — and must leave no dangling edges.
+	if err := c.Forget(ctx, Filter{EntityID: e.ID}); err != nil {
+		t.Fatalf("Forget: %v", err)
+	}
+
+	var n int
+	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_edges`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 edges after forget, got %d (dangling edges)", n)
+	}
+}
