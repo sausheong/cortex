@@ -51,7 +51,7 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithNumber("min_confidence", mcp.Description("Filter results below this confidence threshold (0.0-1.0). Default 0 = no filter.")),
 			mcp.WithString("as_of", mcp.Description("Optional RFC3339 timestamp; recall the graph as it was valid at this time (point-in-time history).")),
 			mcp.WithBoolean("include_invalid", mcp.Description("Include retired/superseded memories that are no longer current. Default false.")),
-			mcp.WithBoolean("rerank", mcp.Description("Diversity-rerank results (default true). Set false for pure relevance order.")),
+			mcp.WithBoolean("rerank", mcp.Description("Diversity-rerank results (default false). Set true to spread out near-duplicate hits for browse/explore; leave off for best fact-recall accuracy.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			query, err := req.RequireString("query")
@@ -78,8 +78,8 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			if req.GetBool("include_invalid", false) {
 				opts = append(opts, cortex.WithIncludeInvalid())
 			}
-			if !req.GetBool("rerank", true) {
-				opts = append(opts, cortex.WithRerank(false))
+			if req.GetBool("rerank", false) {
+				opts = append(opts, cortex.WithRerank(true))
 			}
 			out, err := cx.RecallWithStrength(ctx, query, opts...)
 			if err != nil {

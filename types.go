@@ -289,7 +289,7 @@ type recallConfig struct {
 	minConfidence  float64
 	asOf           *time.Time // non-nil → recall as the graph was valid at this time
 	includeInvalid bool       // true → no validity filter (include retired memories)
-	rerank         bool       // true → post-fusion MMR diversity rerank (default on)
+	rerank         bool       // true → post-fusion MMR diversity rerank (default off; see WithRerank)
 }
 
 // RerankLambda is the MMR tradeoff: relevance weight vs. diversity weight.
@@ -324,8 +324,13 @@ func WithIncludeInvalid() RecallOption {
 	return func(c *recallConfig) { c.includeInvalid = true }
 }
 
-// WithRerank toggles the post-fusion MMR diversity rerank (default on).
-// Disable to get the pure confidence-weighted fusion order.
+// WithRerank toggles the post-fusion MMR diversity rerank. It is OFF by
+// default: benchmarking showed it costs ~20pts of mid-rank recall on
+// fact-recall queries, where corroborating memories are legitimately similar
+// and MMR wrongly demotes them as redundant. Enable it for browse/explore
+// queries where spreading out near-duplicate hits is more useful than ranking
+// the single best fact first. The pure relevance (confidence-weighted fusion)
+// order is the default.
 func WithRerank(on bool) RecallOption {
 	return func(c *recallConfig) { c.rerank = on }
 }

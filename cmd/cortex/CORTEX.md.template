@@ -16,7 +16,7 @@ Treat cortex as your long-term memory. Read from it before answering questions. 
 
 ## The three operations
 
-- **`recall <query>`** — search the graph. Returns ranked results from memories, keyword matches, vector similarity, and graph traversal, merged via reciprocal rank fusion. Results are then diversity-reranked by default so near-duplicate hits don't crowd out distinct ones; pass `--no-rerank` (CLI) or `rerank: false` (MCP) for pure relevance order. Use before answering any non-trivial question.
+- **`recall <query>`** — search the graph. Returns ranked results from memories, keyword matches, vector similarity, and graph traversal, merged via reciprocal rank fusion, ordered by relevance. For browse/explore queries where you'd rather spread out near-duplicate hits than rank the single best fact first, pass `--rerank` (CLI) or `rerank: true` (MCP) to enable MMR diversity reranking; the default (off) gives the best fact-recall accuracy. Use before answering any non-trivial question.
 - **`remember <text>`** — extract entities, relationships, and memories from the text and add them to the graph. Use after the user shares a new fact.
 - **`forget --source <s>` / `--entity <id>`** — remove knowledge. Use when the user corrects a prior belief or asks you to delete something.
 

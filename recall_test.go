@@ -293,16 +293,16 @@ func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
 		},
 	})
 
-	// With rerank (default): the distinct result should not be crowded out —
-	// it should rank ahead of the near-duplicate second item.
-	got, err := c.Recall(ctx, "alpha report", WithLimit(3))
+	// With rerank explicitly enabled (it is OFF by default): the distinct
+	// result should not be crowded out. Rerank refines order, never drops
+	// members.
+	got, err := c.Recall(ctx, "alpha report", WithLimit(3), WithRerank(true))
 	if err != nil {
 		t.Fatalf("Recall: %v", err)
 	}
 	if len(got) < 2 {
 		t.Fatalf("expected multiple results, got %d", len(got))
 	}
-	// Assert the result set is intact (rerank refines order, never drops members).
 	if len(got) != 3 {
 		t.Fatalf("rerank must preserve membership, expected 3 got %d", len(got))
 	}
@@ -349,7 +349,9 @@ func TestRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
 		},
 	})
 
-	on, err := c.Recall(ctx, "alpha report", WithLimit(10))
+	// Even with rerank explicitly requested, a single retrieval list means the
+	// gate skips MMR — so the order must match the rerank-off order.
+	on, err := c.Recall(ctx, "alpha report", WithLimit(10), WithRerank(true))
 	if err != nil {
 		t.Fatalf("Recall(rerank on): %v", err)
 	}

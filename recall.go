@@ -50,7 +50,13 @@ func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...R
 // merges the results via reciprocal rank fusion, and returns a unified
 // ranked list of Result items.
 func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption) ([]Result, error) {
-	cfg := &recallConfig{limit: 20, rerank: true}
+	// Rerank defaults OFF: benchmarking on a real graph showed MMR diversity
+	// reranking costs ~20pts of mid-rank recall (R@3/R@5) on fact-recall
+	// queries, because corroborating memories about the same entity are
+	// *similar* and MMR's diversity penalty wrongly demotes them as redundant.
+	// Diversity is the wrong objective for "find the specific fact". Opt in via
+	// WithRerank(true) for browse/explore use cases that want spread.
+	cfg := &recallConfig{limit: 20, rerank: false}
 	for _, o := range opts {
 		o(cfg)
 	}
