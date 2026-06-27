@@ -26,3 +26,23 @@ func TestRenderMaintainMarkdown(t *testing.T) {
 		t.Fatalf("expected decay section, got:\n%s", out2)
 	}
 }
+
+func TestRenderMaintainMarkdown_IncludesProfile(t *testing.T) {
+	r := MaintainReport{
+		Profile: &ProfileReport{Scanned: 2, Rebuilt: 2},
+	}
+	md := RenderMaintainMarkdown(r)
+	if !strings.Contains(md, "## Profile") {
+		t.Errorf("expected Profile section in:\n%s", md)
+	}
+	if !strings.Contains(md, "Rebuilt: 2") {
+		t.Errorf("expected profile detail in:\n%s", md)
+	}
+}
+
+func TestRenderMaintainMarkdown_ProfileSkipped(t *testing.T) {
+	md := RenderMaintainMarkdown(MaintainReport{})
+	if !strings.Contains(md, "## Profile") || !strings.Contains(md, "_skipped_") {
+		t.Errorf("expected skipped Profile section in:\n%s", md)
+	}
+}
