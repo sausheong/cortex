@@ -20,7 +20,8 @@ import (
 func cmdGenerate(ctx context.Context) {
 	fs := newFlags("generate")
 	n := fs.Int("n", 100, "number of memories to sample")
-	nAbstain := fs.Int("abstain", 10, "number of abstention negatives to add")
+	nAbstain := fs.Int("abstain", 10, "number of easy abstention negatives to add (out-of-domain)")
+	abstainHard := fs.Int("abstain-hard", 10, "number of hard counterfactual abstention negatives to add")
 	out := fs.String("out", "evalset.json", "output JSON path")
 	fs.Parse(os.Args[2:])
 
@@ -55,21 +56,44 @@ func cmdGenerate(ctx context.Context) {
 			TargetID:      m.id,
 			TargetContent: m.content,
 			Source:        m.source,
+			Class:         eval.ClassPositive,
 		})
 		if (i+1)%25 == 0 {
 			fmt.Fprintf(os.Stderr, "  generated %d/%d\n", i+1, len(mems))
 		}
 	}
 
-	// Abstention negatives: questions about made-up facts the graph shouldn't
-	// know. Generated once as a batch from the LLM, themed to look plausible
-	// but ungrounded.
+	// Easy abstention negatives: out-of-domain questions about made-up facts a
+	// personal graph cannot hold. Generated once as a batch from the LLM, themed
+	// to look plausible but ungrounded.
 	if *nAbstain > 0 {
 		negs := genAbstainQuestions(ctx, llm, *nAbstain)
 		for _, q := range negs {
-			set = append(set, eval.QA{Question: q, Abstain: true})
+			set = append(set, eval.QA{Question: q, Abstain: true, Class: eval.ClassAbstainEasy})
 		}
-		fmt.Fprintf(os.Stderr, "added %d abstention negatives\n", len(negs))
+		fmt.Fprintf(os.Stderr, "added %d easy abstention negatives\n", len(negs))
+	}
+
+	// Hard counterfactual negatives: on-topic, vocabulary-close questions about
+	// a DIFFERENT specific fact in the same domain that the graph almost
+	// certainly does NOT hold. Sampled from a separate random batch of memories.
+	var nHard int
+	if *abstainHard > 0 {
+		hardMems := sampleMemories(ctx, db, *abstainHard)
+		for i, m := range hardMems {
+			q, err := genCounterfactualQuestion(ctx, llm, m.content)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  [hard %d/%d] skip (gen error: %v)\n", i+1, len(hardMems), err)
+				continue
+			}
+			q = strings.TrimSpace(q)
+			if q == "" {
+				continue
+			}
+			set = append(set, eval.QA{Question: q, Abstain: true, Class: eval.ClassAbstainHard})
+			nHard++
+		}
+		fmt.Fprintf(os.Stderr, "added %d hard counterfactual negatives\n", nHard)
 	}
 
 	data, err := json.MarshalIndent(set, "", "  ")
@@ -81,7 +105,7 @@ func cmdGenerate(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "write: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Wrote %d eval items (%d answerable + abstain) to %s\n", len(set), len(mems), *out)
+	fmt.Printf("Wrote %d eval items (answerable + easy + hard abstain negatives) to %s\n", len(set), *out)
 }
 
 type sampledMem struct {
@@ -138,6 +162,22 @@ func genQuestion(ctx context.Context, llm cortex.LLM, fact string) (string, erro
 	// Summarize takes []string and returns a string; we use it as a generic
 	// completion by prepending the instruction.
 	return llm.Summarize(ctx, []string{genQuestionPrompt, "\nFACT: " + fact})
+}
+
+const genCounterfactualPrompt = `You are writing a HARD negative benchmark question for a personal knowledge graph.
+Given a single FACT, write ONE natural, on-topic question about a DIFFERENT
+specific detail in the SAME domain/entities that is NOT stated by the fact and is
+most likely ABSENT from the graph — e.g. change a number, date, name, place, or
+attribute. The question must look relevant to the fact's topic but must NOT be
+answerable from it. Do NOT restate the given fact, do NOT include any answer.
+Keep it under 20 words. Return ONLY the question text, nothing else.`
+
+// genCounterfactualQuestion asks the LLM for a hard, counterfactual negative:
+// a question that is vocabulary-close to the given fact (same entities/domain)
+// but probes a detail the graph almost certainly does not hold. Uses Summarize
+// as a generic completion, like genQuestion.
+func genCounterfactualQuestion(ctx context.Context, llm cortex.LLM, fact string) (string, error) {
+	return llm.Summarize(ctx, []string{genCounterfactualPrompt, "\nFACT: " + fact})
 }
 
 func genAbstainQuestions(ctx context.Context, llm cortex.LLM, n int) []string {

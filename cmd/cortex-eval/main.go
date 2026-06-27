@@ -1,10 +1,11 @@
 // Command cortex-eval is a retrieval-quality benchmark for cortex. It has two
 // subcommands:
 //
-//	cortex-eval generate --n 100 --out evalset.json
+//	cortex-eval generate --n 100 --out evalset.json [--abstain 10] [--abstain-hard 10]
 //	    Sample N memories from the graph and use the LLM to write a natural
-//	    question for each (synthetic ground truth), plus a few abstention
-//	    negatives. Writes an eval set as JSON.
+//	    question for each (synthetic ground truth), plus easy (out-of-domain)
+//	    and hard (counterfactual, on-topic) abstention negatives. Writes an
+//	    eval set as JSON.
 //
 //	cortex-eval run --set evalset.json [--limit 10] [--out results.json]
 //	    Score the eval set under each ablation config and print a comparison
@@ -42,7 +43,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  cortex-eval generate --n <count> --out <evalset.json> [--abstain <count>]
+  cortex-eval generate --n <count> --out <evalset.json> [--abstain <count>] [--abstain-hard <count>]
   cortex-eval run --set <evalset.json> [--limit <k>] [--out <results.json>]
 
 env: CORTEX_DB (required), OPENAI_API_KEY / EMBEDDING_MODEL / EMBEDDING_DIMS,

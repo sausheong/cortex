@@ -55,6 +55,7 @@ func cmdRun(ctx context.Context) {
 	}
 
 	printTable(results)
+	printSweep(set, results)
 
 	if *out != "" {
 		b, _ := json.MarshalIndent(results, "", "  ")
@@ -73,12 +74,41 @@ func printTable(results []eval.Result) {
 	fmt.Printf("\nBenchmark: %d answerable + %d abstain items, top-k retrieval\n\n",
 		results[0].N, results[0].NAbstain)
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "config\tR@1\tR@3\tR@5\tR@10\tMRR\tabstain-acc\tfalse-abstain")
-	fmt.Fprintln(w, "------\t---\t---\t---\t----\t---\t-----------\t-------------")
+	fmt.Fprintln(w, "config\tR@1\tR@3\tR@5\tR@10\tMRR\tabstain-acc\teasy\thard\tfalse-abstain")
+	fmt.Fprintln(w, "------\t---\t---\t---\t----\t---\t-----------\t----\t----\t-------------")
 	for _, r := range results {
-		fmt.Fprintf(w, "%s\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
+		fmt.Fprintf(w, "%s\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\n",
 			r.Config, r.RecallAt1, r.RecallAt3, r.RecallAt5, r.RecallAt10,
-			r.MRR, r.AbstentionAcc, r.FalseAbstention)
+			r.MRR, r.AbstentionAcc, r.AbstainAccEasy, r.AbstainAccHard, r.FalseAbstention)
+	}
+	w.Flush()
+}
+
+// printSweep recomputes abstention quality at each candidate cosine threshold
+// directly from the hybrid config's per-item Strengths — independent of the
+// compiled-in threshold. This is the calibration view: the knee of the curve
+// (high abstain-acc, low false-abstain) picks the shipping threshold.
+func printSweep(set []eval.QA, results []eval.Result) {
+	var hybrid *eval.Result
+	for i := range results {
+		if results[i].Config == "hybrid" {
+			hybrid = &results[i]
+			break
+		}
+	}
+	if hybrid == nil || len(hybrid.Strengths) == 0 {
+		fmt.Println("\n(sweep skipped: no 'hybrid' config result with recorded strengths)")
+		return
+	}
+	rows := eval.ThresholdSweep(set, hybrid.Strengths, eval.DefaultThresholds())
+	fmt.Println("\nThreshold sweep (hybrid strengths) — higher abstain-acc + lower false-abstain is better;")
+	fmt.Print("pick the knee where abstain-acc is high while false-abstain stays low:\n\n")
+	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "threshold\teasy\thard\tall\tfalse-abstain")
+	fmt.Fprintln(w, "---------\t----\t----\t---\t-------------")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%.2f\t%.3f\t%.3f\t%.3f\t%.3f\n",
+			r.Threshold, r.AbstainAccEasy, r.AbstainAccHard, r.AbstainAccAll, r.FalseAbstain)
 	}
 	w.Flush()
 }

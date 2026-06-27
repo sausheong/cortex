@@ -39,11 +39,61 @@ func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...R
 		return RecallResult{}, err
 	}
 	out := RecallResult{Results: results}
-	if len(results) > 0 {
-		out.Strength = results[0].Score
+	if len(results) == 0 {
+		out.Abstain = true // Strength stays 0
+		return out, nil
 	}
+	// Preferred path: an embedder gives an absolute cosine relevance signal,
+	// which actually discriminates relevant from irrelevant top hits (the RRF
+	// top score is ~constant and cannot). On any embed failure we log and fall
+	// through to the RRF fallback so a dead embedder degrades, never errors.
+	if c.cfg.embedder != nil {
+		if s, ok := c.cosineStrength(ctx, query, results); ok {
+			out.Strength = s
+			out.Abstain = s < AbstainRelevanceThreshold
+			return out, nil
+		}
+	}
+	// Fallback (no embedder, or embed failed): confidence-weighted RRF top score.
+	out.Strength = results[0].Score
 	out.Abstain = out.Strength < AbstainThreshold
 	return out, nil
+}
+
+// cosineStrength computes the abstention strength as the max cosine similarity
+// between the query and the top results' content. It embeds the query plus the
+// top AbstainTopK contents in a single batched call. Max (not mean): one strong
+// hit should defeat abstention even when other returned results are weak.
+// Returns (maxCos, true) on success, or (0, false) after logging on any embed
+// error or short vector slice — the caller then falls back to the RRF signal.
+func (c *Cortex) cosineStrength(ctx context.Context, query string, results []Result) (float64, bool) {
+	n := len(results)
+	if n > AbstainTopK {
+		n = AbstainTopK
+	}
+	contents := make([]string, n)
+	for i := 0; i < n; i++ {
+		contents[i] = results[i].Content
+	}
+
+	vecs, err := c.cfg.embedder.Embed(ctx, append([]string{query}, contents...))
+	if err != nil {
+		c.logf("cortex: abstention cosine embed failed: %v", err)
+		return 0, false
+	}
+	if len(vecs) < 1+n {
+		c.logf("cortex: abstention cosine embed returned %d vectors, want %d", len(vecs), 1+n)
+		return 0, false
+	}
+
+	queryVec := vecs[0]
+	var maxCos float64
+	for i := 0; i < n; i++ {
+		if cos := float64(cosineSimilarity(queryVec, vecs[i+1])); cos > maxCos {
+			maxCos = cos
+		}
+	}
+	return maxCos, true
 }
 
 // Recall searches the knowledge graph using multiple retrieval strategies,

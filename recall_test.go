@@ -725,6 +725,158 @@ func TestRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
 	}
 }
 
+// TestRecallWithStrength_CosineStrengthFromEmbedder verifies that with an
+// embedder configured, Strength is the max query-result cosine similarity (the
+// real relevance signal) rather than the ~constant RRF top score (~0.0164).
+func TestRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Quarterly board meeting is in Zurich", Confidence: 1.0}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatalf("putEmbedding: %v", err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+				{Type: "memory_vector", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	query := "Where is the board meeting"
+	out, err := c.RecallWithStrength(ctx, query, WithLimit(10))
+	if err != nil {
+		t.Fatalf("RecallWithStrength: %v", err)
+	}
+	if len(out.Results) == 0 {
+		t.Fatalf("expected non-empty results")
+	}
+
+	// Recompute the expected max cosine between the query vector and each
+	// returned content's vector.
+	queryVec := testDeterministicVector(query)
+	var want float64
+	n := len(out.Results)
+	if n > AbstainTopK {
+		n = AbstainTopK
+	}
+	for i := 0; i < n; i++ {
+		cv := testDeterministicVector(out.Results[i].Content)
+		if cos := float64(cosineSimilarity(queryVec, cv)); cos > want {
+			want = cos
+		}
+	}
+
+	if diff := out.Strength - want; diff > 1e-6 || diff < -1e-6 {
+		t.Fatalf("Strength = %v, want max-cosine %v (diff %v)", out.Strength, want, diff)
+	}
+	// Sanity: this is the cosine signal, not the RRF top score floor.
+	if out.Strength == out.Results[0].Score {
+		t.Fatalf("Strength unexpectedly equals RRF top score %v; cosine path not taken", out.Results[0].Score)
+	}
+}
+
+// TestRecallWithStrength_AbstainMatchesCosineThreshold verifies the decision
+// boundary wiring: with an embedder and results, Abstain is exactly
+// Strength < AbstainRelevanceThreshold.
+func TestRecallWithStrength_AbstainMatchesCosineThreshold(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	m := &Memory{Content: "Quarterly board meeting is in Zurich", Confidence: 1.0}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+		t.Fatalf("putEmbedding: %v", err)
+	}
+
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+				{Type: "memory_vector", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	out, err := c.RecallWithStrength(ctx, "Where is the board meeting", WithLimit(10))
+	if err != nil {
+		t.Fatalf("RecallWithStrength: %v", err)
+	}
+	if len(out.Results) == 0 {
+		t.Fatalf("expected non-empty results")
+	}
+	if out.Abstain != (out.Strength < AbstainRelevanceThreshold) {
+		t.Fatalf("Abstain=%v but Strength=%v vs threshold %v (boundary mismatch)",
+			out.Abstain, out.Strength, AbstainRelevanceThreshold)
+	}
+}
+
+// TestRecallWithStrength_EmbedErrorFallsBack verifies that a failing embedder
+// does not error the method: it logs and falls back to the RRF-top-score
+// strength signal so abstention still produces a usable (if degraded) answer.
+func TestRecallWithStrength_EmbedErrorFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	var logged []string
+	c, err := Open(dir+"/t.db",
+		WithEmbedder(&failingEmbedder{}),
+		WithLogger(func(format string, args ...any) {
+			logged = append(logged, format)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+
+	if err := c.PutMemory(ctx, &Memory{Content: "User's name is Sau Sheong", Confidence: 1.0}); err != nil {
+		t.Fatal(err)
+	}
+
+	// memory_lookup only (FTS, no embedder needed) so results come back even
+	// with a dead embedder; that exercises the fallback strength path.
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+			}, nil
+		},
+	})
+
+	out, err := c.RecallWithStrength(ctx, "What is the user's name", WithLimit(10))
+	if err != nil {
+		t.Fatalf("RecallWithStrength should not error on embed failure: %v", err)
+	}
+	if len(out.Results) == 0 {
+		t.Fatalf("expected non-empty results via FTS")
+	}
+	// Fallback fired: Strength is the RRF top score, not a cosine value.
+	if out.Strength != out.Results[0].Score {
+		t.Fatalf("expected fallback Strength == top RRF score %v, got %v",
+			out.Results[0].Score, out.Strength)
+	}
+
+	var found bool
+	for _, m := range logged {
+		if containsSub(m, "embed") || containsSub(m, "cosine") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an embed-failure log line, got %v", logged)
+	}
+}
+
 func TestRecall_WithIncludeInvalid(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
