@@ -281,22 +281,28 @@ func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
 	seed("alpha alpha alpha summary") // near-duplicate of the first
 	seed("zeta distinct topic")
 
+	// Two retrieval modes so MMR actually engages: the rerank only fires when
+	// results span more than one retrieval list (len(lists) > 1). With a single
+	// list there is no independent signal to justify the diversity penalty.
 	c.SetLLM(&mockLLM{
 		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
-			return []StructuredQuery{{Type: "memory_vector", Params: map[string]any{"query": q}}}, nil
+			return []StructuredQuery{
+				{Type: "memory_lookup", Params: map[string]any{"query": q}},
+				{Type: "memory_vector", Params: map[string]any{"query": q}},
+			}, nil
 		},
 	})
 
-	// With rerank (default): the distinct result should not be crowded out —
-	// it should rank ahead of the near-duplicate second item.
-	got, err := c.Recall(ctx, "alpha report", WithLimit(3))
+	// With rerank explicitly enabled (it is OFF by default): the distinct
+	// result should not be crowded out. Rerank refines order, never drops
+	// members.
+	got, err := c.Recall(ctx, "alpha report", WithLimit(3), WithRerank(true))
 	if err != nil {
 		t.Fatalf("Recall: %v", err)
 	}
 	if len(got) < 2 {
 		t.Fatalf("expected multiple results, got %d", len(got))
 	}
-	// Assert the result set is intact (rerank refines order, never drops members).
 	if len(got) != 3 {
 		t.Fatalf("rerank must preserve membership, expected 3 got %d", len(got))
 	}
@@ -309,6 +315,59 @@ func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
 	}
 	if len(off) != 3 {
 		t.Fatalf("non-rerank path must preserve membership, expected 3 got %d", len(off))
+	}
+}
+
+// TestRecall_MMRSkippedForSingleRetrievalMode verifies the diversity-gate fix:
+// when only one retrieval list returns results, MMR is NOT applied (it would
+// otherwise demote relevant-but-similar memories with no independent signal to
+// justify it, hurting mid-rank recall). Membership is preserved either way; the
+// observable guarantee is that the single-mode order is the plain fusion order,
+// identical with rerank on or off.
+func TestRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
+	c := openTestDBWithEmbedder(t)
+	ctx := context.Background()
+
+	seed := func(content string) {
+		m := &Memory{Content: content}
+		if err := c.PutMemory(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		vecs, _ := c.cfg.embedder.Embed(ctx, []string{content})
+		if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("alpha alpha alpha report")
+	seed("alpha alpha alpha summary")
+	seed("zeta distinct topic")
+
+	// Single retrieval mode → one list → MMR gate (len(lists) > 1) is false.
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_vector", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	// Even with rerank explicitly requested, a single retrieval list means the
+	// gate skips MMR — so the order must match the rerank-off order.
+	on, err := c.Recall(ctx, "alpha report", WithLimit(10), WithRerank(true))
+	if err != nil {
+		t.Fatalf("Recall(rerank on): %v", err)
+	}
+	off, err := c.Recall(ctx, "alpha report", WithLimit(10), WithRerank(false))
+	if err != nil {
+		t.Fatalf("Recall(rerank off): %v", err)
+	}
+	if len(on) != len(off) {
+		t.Fatalf("single-mode: membership differs on=%d off=%d", len(on), len(off))
+	}
+	// With one list, rerank-on must equal rerank-off order (MMR skipped).
+	for i := range on {
+		if on[i].Content != off[i].Content {
+			t.Fatalf("single-mode rerank should be a no-op; order differs at %d: %q vs %q",
+				i, on[i].Content, off[i].Content)
+		}
 	}
 }
 
@@ -868,4 +927,70 @@ func TestRecall_TemporalFilterNarrowsByEventTime(t *testing.T) {
 	if len(got) != 1 || got[0].Content != "budget was 5000" {
 		t.Fatalf("expected only the Q1 memory, got %+v", got)
 	}
+}
+
+// failingEmbedder always errors — simulates a dead/over-quota embedding endpoint.
+type failingEmbedder struct{}
+
+func (e *failingEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, errTestEmbedFail
+}
+func (e *failingEmbedder) Dimensions() int { return 8 }
+
+var errTestEmbedFail = errTestEmbed("embed endpoint unavailable")
+
+type errTestEmbed string
+
+func (e errTestEmbed) Error() string { return string(e) }
+
+// TestRecall_LogsEmbedderError verifies Fix B: a failing embedder during the
+// vector recall path is surfaced via the configured logger instead of being
+// silently swallowed (which made an over-quota key look like "no results").
+func TestRecall_LogsEmbedderError(t *testing.T) {
+	dir := t.TempDir()
+	var logged []string
+	c, err := Open(dir+"/t.db",
+		WithEmbedder(&failingEmbedder{}),
+		WithLogger(func(format string, args ...any) {
+			logged = append(logged, format)
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+
+	// A memory so there's something to (fail to) vector-search.
+	if err := c.PutMemory(ctx, &Memory{Content: "anything"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force the memory_vector path so the failing embedder is exercised.
+	c.SetLLM(&mockLLM{
+		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
+			return []StructuredQuery{{Type: "memory_vector", Params: map[string]any{"query": q}}}, nil
+		},
+	})
+
+	_, _ = c.Recall(ctx, "anything", WithLimit(5))
+
+	var found bool
+	for _, m := range logged {
+		if len(m) > 0 && (containsSub(m, "embed") || containsSub(m, "memory_vector")) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an embedder-failure log line, got %v", logged)
+	}
+}
+
+func containsSub(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

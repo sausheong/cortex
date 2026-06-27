@@ -132,6 +132,7 @@ type config struct {
 	llm       LLM
 	embedder  Embedder
 	extractor Extractor
+	logf      func(format string, args ...any) // optional diagnostic sink; nil = silent
 }
 
 type LLM interface {
@@ -288,7 +289,7 @@ type recallConfig struct {
 	minConfidence  float64
 	asOf           *time.Time // non-nil → recall as the graph was valid at this time
 	includeInvalid bool       // true → no validity filter (include retired memories)
-	rerank         bool       // true → post-fusion MMR diversity rerank (default on)
+	rerank         bool       // true → post-fusion MMR diversity rerank (default off; see WithRerank)
 }
 
 // RerankLambda is the MMR tradeoff: relevance weight vs. diversity weight.
@@ -323,8 +324,13 @@ func WithIncludeInvalid() RecallOption {
 	return func(c *recallConfig) { c.includeInvalid = true }
 }
 
-// WithRerank toggles the post-fusion MMR diversity rerank (default on).
-// Disable to get the pure confidence-weighted fusion order.
+// WithRerank toggles the post-fusion MMR diversity rerank. It is OFF by
+// default: benchmarking showed it costs ~20pts of mid-rank recall on
+// fact-recall queries, where corroborating memories are legitimately similar
+// and MMR wrongly demotes them as redundant. Enable it for browse/explore
+// queries where spreading out near-duplicate hits is more useful than ranking
+// the single best fact first. The pure relevance (confidence-weighted fusion)
+// order is the default.
 func WithRerank(on bool) RecallOption {
 	return func(c *recallConfig) { c.rerank = on }
 }
@@ -362,6 +368,16 @@ func WithEmbedder(e Embedder) Option {
 
 func WithExtractor(e Extractor) Option {
 	return func(c *config) { c.extractor = e }
+}
+
+// WithLogger installs an optional diagnostic sink. Cortex uses it to surface
+// best-effort failures it would otherwise swallow — most importantly embedder
+// errors during recall, which would otherwise make a dead embedding endpoint
+// (e.g. an over-quota API key) look indistinguishable from "no vector
+// results". The default is nil (silent), preserving prior behavior. Pass e.g.
+// WithLogger(log.Printf) or a custom func.
+func WithLogger(logf func(format string, args ...any)) Option {
+	return func(c *config) { c.logf = logf }
 }
 
 // coerceConfidence enforces the [0, 1] invariant for confidence values.
