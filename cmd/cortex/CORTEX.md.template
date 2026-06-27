@@ -28,6 +28,17 @@ These are available via:
 
 Use whichever surface is configured in this project.
 
+## Getting baseline context
+
+Call `profile` first for who the user is — their identity, durable
+preferences, and current focus — in one cached call. Omit the entity id for
+the owner's profile. Use `recall` for specific facts the profile does not
+cover. Do not `recall` for baseline "about me" context that `profile`
+already provides.
+
+- **CLI** — `cortex profile` (owner) or `cortex profile <entity-id>`
+- **MCP** — the `profile` tool (optional `entity_id`)
+
 ## When to recall
 
 Recall before:
