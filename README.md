@@ -42,6 +42,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
 - **Confidence scores** — every extracted entity, relationship, and memory carries a 0–1 confidence value the LLM assigns at ingest. Filter results with `--min-confidence`; lower-confidence claims show inline in vault pages and recall output
 - **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
+- **Calibrated abstention** — `RecallWithStrength` returns a relevance `Strength` and an `Abstain` hint so an agent can say "I don't know that" instead of fabricating from a weak match. The signal is the query↔result cosine, with a threshold calibrated on a real graph
 - **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
 - **Obsidian-compatible vault export** — `cortex export` projects the graph as a browsable markdown vault with frontmatter, wikilinks, and backlinks. Incremental change detection via a hidden manifest
 - **Agent contract** — `cortex init-schema` drops a `CORTEX.md` into a project that tells any LLM-based agent how to use cortex as the knowledge layer (when to recall, when to remember, what not to store)
@@ -388,7 +389,7 @@ Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Fla
 | Tool | Description | Required Params | Optional Params |
 |------|-------------|-----------------|-----------------|
 | `remember` | Store content in the knowledge graph | `content` | `source` |
-| `recall` | Natural language query with multi-strategy search | `query` | `limit` |
+| `recall` | Natural language query with multi-strategy search; returns results plus a relevance `strength` and an `abstain` hint | `query` | `limit` |
 | `forget` | Remove knowledge from the graph | `entity_id` or `source` | |
 | `get_entity` | Retrieve an entity by ID | `id` | |
 | `find_entities` | Search for entities | | `type`, `name`, `source` |
@@ -590,6 +591,7 @@ cortex/
 |--------|-------------|
 | `Remember(ctx, content, ...RememberOption)` | Ingest text, extract entities/relationships/memories, generate embeddings |
 | `Recall(ctx, query, ...RecallOption)` | Natural language query with decomposition + parallel search + RRF merge |
+| `RecallWithStrength(ctx, query, ...RecallOption)` | `Recall` plus an aggregate relevance `Strength` and an `Abstain` hint for "I don't know that" decisions |
 | `Forget(ctx, Filter)` | Remove knowledge by entity ID or source, with cascading deletes |
 
 ### Structured Graph Operations
@@ -674,6 +676,12 @@ type Result struct {
     EntityIDs []string           // Related entities for follow-up traversal
     Source    string             // Provenance
     Metadata  map[string]any
+}
+
+type RecallResult struct {
+    Results  []Result           // Ranked recall, same as Recall returns
+    Strength float64            // Relevance of the best hit (query↔result cosine, 0–1)
+    Abstain  bool               // True when nothing is relevant enough — a cue to say "I don't know"
 }
 ```
 
@@ -799,6 +807,37 @@ Results from all strategies are merged using RRF — a ranking algorithm that co
 Formula: `score(item) = sum(1 / (k + rank_in_list))` across all lists where the item appears.
 
 Items appearing in multiple search results get boosted. For example, if "Alice works at Stripe" appears as both a memory match and a keyword match, it ranks higher than items from only one source.
+
+### Step 4: Strength & Abstention (optional)
+
+`Recall` always returns its best-ranked results, even when the graph holds
+nothing relevant — RRF ranks whatever it finds. For agents that must decide
+*whether to answer at all*, `RecallWithStrength` adds a relevance signal:
+
+```go
+rr, _ := cx.RecallWithStrength(ctx, "What is Sarah's favorite cheese?")
+if rr.Abstain {
+    // Nothing relevant enough — say "I don't know" instead of guessing.
+} else {
+    use(rr.Results) // rr.Strength is the confidence (0–1)
+}
+```
+
+`Strength` is the **maximum cosine similarity** between the query and the top
+few returned results (not the RRF rank-score, which is roughly constant for any
+non-empty recall and so carries no relevance information). When an embedder is
+configured, `Abstain` is set when `Strength` falls below
+`AbstainRelevanceThreshold`; without an embedder it falls back to the RRF top
+score and `AbstainThreshold`.
+
+The threshold (0.40) was calibrated with the `cortex-eval` benchmark over a real
+~1200-memory graph: out-of-domain questions a personal graph cannot answer are
+abstained on ~100% of the time, with no false abstentions on genuinely
+answerable questions. Note the limit of a retrieval-similarity signal:
+*counterfactual* questions — vocabulary-close but asking a fact that is absent
+("the exact publication date of the column") — retrieve the same nearby memory a
+true question would, so cosine alone cannot flag them. Catching those needs an
+answer-grounded check beyond retrieval.
 
 ---
 
