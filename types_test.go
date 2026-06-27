@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 )
 
 // compile-time check: a type implementing DetectConflicts satisfies Reconciler.
@@ -45,5 +46,44 @@ func TestCoerceConfidence(t *testing.T) {
 				t.Errorf("coerceConfidence(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestProfileConfigDefaults(t *testing.T) {
+	cfg := defaultProfileConfig()
+	if cfg.ttl != ProfileDefaultTTL {
+		t.Errorf("ttl = %v, want %v", cfg.ttl, ProfileDefaultTTL)
+	}
+	if cfg.recentK != ProfileDefaultRecentK {
+		t.Errorf("recentK = %d, want %d", cfg.recentK, ProfileDefaultRecentK)
+	}
+	if cfg.window != ProfileDefaultWindow {
+		t.Errorf("window = %v, want %v", cfg.window, ProfileDefaultWindow)
+	}
+	if cfg.staticCap != ProfileDefaultStaticCap {
+		t.Errorf("staticCap = %d, want %d", cfg.staticCap, ProfileDefaultStaticCap)
+	}
+}
+
+func TestProfileOptionsOverride(t *testing.T) {
+	cfg := defaultProfileConfig()
+	for _, o := range []ProfileOption{
+		WithProfileTTL(time.Hour),
+		WithProfileRecentK(3),
+		WithProfileWindow(48 * time.Hour),
+		WithProfileStaticCap(5),
+	} {
+		o(&cfg)
+	}
+	if cfg.ttl != time.Hour || cfg.recentK != 3 || cfg.window != 48*time.Hour || cfg.staticCap != 5 {
+		t.Errorf("options did not apply: %+v", cfg)
+	}
+}
+
+func TestWithoutProfileSkips(t *testing.T) {
+	var mc maintainConfig
+	WithoutProfile()(&mc)
+	if !mc.skipProfile {
+		t.Error("WithoutProfile did not set skipProfile")
 	}
 }
