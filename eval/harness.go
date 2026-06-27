@@ -10,10 +10,10 @@ import (
 // Config names a single retrieval configuration to score. The benchmark runs
 // the same eval set under each config and compares the metrics.
 type Config struct {
-	Name        string
-	Decompose   []cortex.StructuredQuery // forced sub-queries (nil = engine default mix)
-	Rerank      bool                     // MMR diversity rerank on/off
-	Limit       int                      // top-k retrieved per query
+	Name      string
+	Decompose []cortex.StructuredQuery // forced sub-queries (nil = engine default mix)
+	Rerank    bool                     // MMR diversity rerank on/off
+	Limit     int                      // top-k retrieved per query
 }
 
 // fixedLLM forces a deterministic decomposition so a config can isolate a
@@ -48,16 +48,19 @@ func (l *fixedLLM) Summarize(context.Context, []string) (string, error) { return
 
 // Result holds the scored outcome for one config over one eval set.
 type Result struct {
-	Config           string  `json:"config"`
-	N                int     `json:"n"`         // positive (answerable) items scored
-	NAbstain         int     `json:"n_abstain"` // negative (abstain) items scored
-	RecallAt1        float64 `json:"recall_at_1"`
-	RecallAt3        float64 `json:"recall_at_3"`
-	RecallAt5        float64 `json:"recall_at_5"`
-	RecallAt10       float64 `json:"recall_at_10"`
-	MRR              float64 `json:"mrr"`
-	AbstentionAcc    float64 `json:"abstention_accuracy"`
-	FalseAbstention  float64 `json:"false_abstention_rate"`
+	Config          string    `json:"config"`
+	N               int       `json:"n"`         // positive (answerable) items scored
+	NAbstain        int       `json:"n_abstain"` // negative (abstain) items scored
+	RecallAt1       float64   `json:"recall_at_1"`
+	RecallAt3       float64   `json:"recall_at_3"`
+	RecallAt5       float64   `json:"recall_at_5"`
+	RecallAt10      float64   `json:"recall_at_10"`
+	MRR             float64   `json:"mrr"`
+	AbstentionAcc   float64   `json:"abstention_accuracy"`
+	FalseAbstention float64   `json:"false_abstention_rate"`
+	Strengths       []float64 `json:"strengths,omitempty"` // per-item cosine relevance, index-aligned to the eval set
+	AbstainAccEasy  float64   `json:"abstain_acc_easy"`
+	AbstainAccHard  float64   `json:"abstain_acc_hard"`
 }
 
 // Run scores one config over the eval set against the given Cortex instance.
@@ -76,6 +79,7 @@ func Run(ctx context.Context, cx *cortex.Cortex, set []QA, cfg Config) (Result, 
 
 	ranks := make([]int, len(set))
 	abstained := make([]bool, len(set))
+	strengths := make([]float64, len(set))
 
 	for i, qa := range set {
 		opts := []cortex.RecallOption{
@@ -87,6 +91,7 @@ func Run(ctx context.Context, cx *cortex.Cortex, set []QA, cfg Config) (Result, 
 			return Result{}, fmt.Errorf("eval: recall %q: %w", qa.Question, err)
 		}
 		abstained[i] = rr.Abstain
+		strengths[i] = rr.Strength
 		if !qa.Abstain {
 			contents := make([]string, len(rr.Results))
 			for j, r := range rr.Results {
@@ -116,6 +121,9 @@ func Run(ctx context.Context, cx *cortex.Cortex, set []QA, cfg Config) (Result, 
 		MRR:             MRR(set, ranks),
 		AbstentionAcc:   AbstentionAccuracy(set, abstained),
 		FalseAbstention: FalseAbstentionRate(set, abstained),
+		Strengths:       strengths,
+		AbstainAccEasy:  AbstentionAccuracyByClass(set, abstained, ClassAbstainEasy),
+		AbstainAccHard:  AbstentionAccuracyByClass(set, abstained, ClassAbstainHard),
 	}, nil
 }
 

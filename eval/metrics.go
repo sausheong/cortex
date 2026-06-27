@@ -11,16 +11,29 @@ package eval
 
 import "strings"
 
+// QA classes. Positive items are answerable; abstain items are negatives the
+// engine SHOULD signal it cannot answer. "easy" negatives are out-of-domain
+// (a personal graph cannot hold them); "hard" negatives are counterfactual —
+// vocabulary-close to a real memory but asking an absent/false fact.
+const (
+	ClassPositive    = "positive"
+	ClassAbstainEasy = "abstain_easy"
+	ClassAbstainHard = "abstain_hard"
+)
+
 // QA is one ground-truth item: a question and the target memory it was
 // derived from. TargetContent is the exact memory content used for hit
 // matching. Abstain marks a negative example — a question the graph should
-// NOT be able to answer (used to score abstention).
+// NOT be able to answer (used to score abstention). Class labels the item as
+// positive / easy negative / hard negative; when empty, by-class metrics fall
+// back to the Abstain bool (so older eval files still load and score).
 type QA struct {
 	Question      string `json:"question"`
 	TargetID      string `json:"target_id,omitempty"`
 	TargetContent string `json:"target_content,omitempty"`
 	Source        string `json:"source,omitempty"`
 	Abstain       bool   `json:"abstain,omitempty"`
+	Class         string `json:"class,omitempty"`
 }
 
 // hitRank returns the 1-based rank of the target within results, or 0 if the
@@ -130,4 +143,103 @@ func FalseAbstentionRate(items []QA, abstained []bool) float64 {
 		return 0
 	}
 	return float64(wrong) / float64(total)
+}
+
+// AbstentionAccuracyByClass scores the abstain decision over only the abstain
+// items whose Class matches `class`: the fraction the engine correctly flagged
+// abstain=true. Returns 0 when there are no items of that class.
+func AbstentionAccuracyByClass(items []QA, abstained []bool, class string) float64 {
+	var correct, total int
+	for i, it := range items {
+		if !it.Abstain || it.Class != class {
+			continue
+		}
+		total++
+		if abstained[i] {
+			correct++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(correct) / float64(total)
+}
+
+// SweepRow is abstention quality at one candidate threshold, computed from raw
+// per-item Strengths (an item abstains at threshold t iff strength < t).
+type SweepRow struct {
+	Threshold      float64 `json:"threshold"`
+	AbstainAccEasy float64 `json:"abstain_acc_easy"` // over easy negatives
+	AbstainAccHard float64 `json:"abstain_acc_hard"` // over hard negatives
+	AbstainAccAll  float64 `json:"abstain_acc_all"`  // over all negatives
+	FalseAbstain   float64 `json:"false_abstain"`    // positives wrongly abstained (lower better)
+}
+
+// ThresholdSweep computes a SweepRow per candidate threshold. strengths[i] is
+// the cosine relevance recorded for item i (index-aligned to items). Items whose
+// strength is unavailable should be passed as a negative/sentinel by the caller
+// only if intentionally excluded; normally pass the recorded Strength for every
+// item. The decision rule mirrors Task 1: an item abstains at threshold t iff
+// strength < t.
+func ThresholdSweep(items []QA, strengths []float64, thresholds []float64) []SweepRow {
+	rows := make([]SweepRow, 0, len(thresholds))
+	for _, t := range thresholds {
+		var easyN, easyAbs int
+		var hardN, hardAbs int
+		var allN, allAbs int
+		var posN, posAbs int
+		for i, it := range items {
+			abstains := strengths[i] < t
+			if it.Abstain {
+				allN++
+				if abstains {
+					allAbs++
+				}
+				switch it.Class {
+				case ClassAbstainEasy:
+					easyN++
+					if abstains {
+						easyAbs++
+					}
+				case ClassAbstainHard:
+					hardN++
+					if abstains {
+						hardAbs++
+					}
+				}
+			} else {
+				posN++
+				if abstains {
+					posAbs++
+				}
+			}
+		}
+		rows = append(rows, SweepRow{
+			Threshold:      t,
+			AbstainAccEasy: ratio(easyAbs, easyN),
+			AbstainAccHard: ratio(hardAbs, hardN),
+			AbstainAccAll:  ratio(allAbs, allN),
+			FalseAbstain:   ratio(posAbs, posN),
+		})
+	}
+	return rows
+}
+
+// ratio guards an empty denominator → 0.
+func ratio(num, den int) float64 {
+	if den == 0 {
+		return 0
+	}
+	return float64(num) / float64(den)
+}
+
+// DefaultThresholds returns 0.00, 0.05, ... 0.90 — the candidate grid for the
+// sweep.
+func DefaultThresholds() []float64 {
+	const step = 0.05
+	out := make([]float64, 0, 19)
+	for i := 0; i < 19; i++ {
+		out = append(out, float64(i)*step)
+	}
+	return out
 }
