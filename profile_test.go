@@ -136,3 +136,74 @@ func TestPartitionMemories_Empty(t *testing.T) {
 		t.Errorf("expected empty partitions, got static=%d dynamic=%d", len(s), len(d))
 	}
 }
+
+func TestDistillBucket_RawFallbackNoLLM(t *testing.T) {
+	c := openTestDB(t) // openTestDB wires no LLM by default in root package
+	// Ensure no LLM.
+	c.SetLLM(nil)
+	ctx := context.Background()
+
+	mems := []Memory{{Content: "Alice is a staff engineer"}, {Content: "Alice likes Go"}}
+	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, mems)
+	if distilled {
+		t.Error("expected distilled=false with no LLM")
+	}
+	if len(lines) != 2 || lines[0] != "Alice is a staff engineer" {
+		t.Errorf("expected raw contents, got %v", lines)
+	}
+}
+
+func TestDistillBucket_LLMBullets(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetLLM(&mockLLM{
+		summarizeFn: func(_ context.Context, texts []string) (string, error) {
+			return "- bullet one\n- bullet two", nil
+		},
+	})
+
+	mems := []Memory{{Content: "x"}, {Content: "y"}}
+	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, mems)
+	if !distilled {
+		t.Error("expected distilled=true")
+	}
+	if len(lines) != 2 || lines[0] != "bullet one" || lines[1] != "bullet two" {
+		t.Errorf("expected cleaned bullets, got %v", lines)
+	}
+}
+
+func TestDistillBucket_LLMErrorFallsBack(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetLLM(&mockLLM{
+		summarizeFn: func(_ context.Context, _ []string) (string, error) {
+			return "", context.DeadlineExceeded
+		},
+	})
+
+	mems := []Memory{{Content: "raw fact"}}
+	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, mems)
+	if distilled {
+		t.Error("expected distilled=false after LLM error")
+	}
+	if len(lines) != 1 || lines[0] != "raw fact" {
+		t.Errorf("expected raw fallback, got %v", lines)
+	}
+}
+
+func TestDistillBucket_EmptyNoCall(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	called := false
+	c.SetLLM(&mockLLM{summarizeFn: func(_ context.Context, _ []string) (string, error) {
+		called = true
+		return "x", nil
+	}})
+	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, nil)
+	if called {
+		t.Error("LLM should not be called for empty bucket")
+	}
+	if len(lines) != 0 || !distilled {
+		t.Errorf("expected empty distilled result, got lines=%v distilled=%v", lines, distilled)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -110,4 +111,66 @@ func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static,
 	}
 	static = rest
 	return static, dynamic
+}
+
+const profileStaticPrompt = "Below are stable, long-term facts about %s. " +
+	"Distill them into a concise deduplicated bullet list of who they are — " +
+	"role, traits, durable preferences. One fact per line, no preamble. " +
+	"Drop anything episodic or time-bound."
+
+const profileDynamicPrompt = "Below are recent notes about %s. " +
+	"Distill them into a short bullet list of their current context and recent " +
+	"activity. One item per line, no preamble."
+
+// distillBucket turns a set of memories into digest lines. With an LLM
+// configured it asks Summarize for a bullet list (instruction prepended,
+// name interpolated) and cleans the output into lines; on a nil LLM or any
+// Summarize error it falls back to the raw memory contents and reports
+// distilled=false (logging the error via logf when present). An empty bucket
+// returns (nil, true) without calling the LLM.
+func (c *Cortex) distillBucket(ctx context.Context, name, instruction string, mems []Memory) (lines []string, distilled bool) {
+	if len(mems) == 0 {
+		return nil, true
+	}
+	raw := make([]string, len(mems))
+	for i, m := range mems {
+		raw[i] = m.Content
+	}
+
+	if c.cfg.llm == nil {
+		return raw, false
+	}
+
+	texts := append([]string{fmt.Sprintf(instruction, name)}, raw...)
+	out, err := c.cfg.llm.Summarize(ctx, texts)
+	if err != nil {
+		if c.cfg.logf != nil {
+			c.cfg.logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
+		}
+		return raw, false
+	}
+	lines = cleanBullets(out)
+	if len(lines) == 0 {
+		// LLM returned nothing usable; fall back rather than emit an empty
+		// distilled section.
+		return raw, false
+	}
+	return lines, true
+}
+
+// cleanBullets splits Summarize output into trimmed, non-empty lines with any
+// leading "- ", "* ", or "• " bullet marker removed.
+func cleanBullets(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(line)
+		t = strings.TrimPrefix(t, "- ")
+		t = strings.TrimPrefix(t, "* ")
+		t = strings.TrimPrefix(t, "• ")
+		t = strings.TrimSpace(t)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
