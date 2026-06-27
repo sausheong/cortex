@@ -302,3 +302,38 @@ func TestProfile_EntityNotFound(t *testing.T) {
 		t.Error("expected error for missing entity")
 	}
 }
+
+func TestRefreshProfiles_BuildsEligible(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetLLM(nil)
+
+	owner := &Entity{Type: "person", Name: "Me", Source: "owner"}
+	if err := c.PutEntity(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	tracked := &Entity{Type: "person", Name: "Alice"}
+	if err := c.PutEntity(ctx, tracked); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TrackProfile(ctx, tracked.ID); err != nil {
+		t.Fatal(err)
+	}
+	untracked := &Entity{Type: "person", Name: "Carol"}
+	if err := c.PutEntity(ctx, untracked); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := c.RefreshProfiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Scanned != 2 || rep.Rebuilt != 2 {
+		t.Errorf("scanned=%d rebuilt=%d, want 2/2", rep.Scanned, rep.Rebuilt)
+	}
+	// Untracked entity should have no cached profile.
+	got, _ := c.GetEntity(ctx, untracked.ID)
+	if _, ok := got.Attributes[attrProfile]; ok {
+		t.Error("untracked entity should not be profiled")
+	}
+}

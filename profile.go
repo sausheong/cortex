@@ -287,3 +287,29 @@ func isFresh(cp cachedProfile, currentCount int, cfg profileConfig, now time.Tim
 	}
 	return true
 }
+
+// RefreshProfiles rebuilds the cached digest for every profile-eligible entity
+// (owner + tracked). It forces a rebuild regardless of TTL so a scheduled
+// Maintain run always refreshes. A single entity's build failure is recorded
+// in the report's Skipped list and does not abort the pass.
+func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (ProfileReport, error) {
+	ids, err := c.profileEligibleIDs(ctx)
+	if err != nil {
+		return ProfileReport{}, err
+	}
+	rep := ProfileReport{Scanned: len(ids)}
+	// Force a rebuild each run by collapsing the TTL; caller opts still apply
+	// after this (so an explicit WithProfileTTL would override, which is fine).
+	forced := append([]ProfileOption{WithProfileTTL(0)}, opts...)
+	for _, id := range ids {
+		if _, err := c.Profile(ctx, id, forced...); err != nil {
+			rep.Skipped = append(rep.Skipped, id)
+			if c.cfg.logf != nil {
+				c.cfg.logf("cortex: refresh profile %s: %v", id, err)
+			}
+			continue
+		}
+		rep.Rebuilt++
+	}
+	return rep, nil
+}

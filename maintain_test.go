@@ -131,3 +131,40 @@ func TestMaintain_SkipToggles(t *testing.T) {
 		t.Fatalf("expected all sub-reports nil when all skipped, got %+v", report)
 	}
 }
+
+func TestMaintain_RunsProfilePass(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	owner := &Entity{Type: "person", Name: "Me", Source: "owner"}
+	if err := c.PutEntity(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := c.Maintain(ctx, WithoutReconcile(), WithoutRelate(), WithoutDecay())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Profile == nil {
+		t.Fatal("expected profile sub-report")
+	}
+	if rep.Profile.Scanned != 1 {
+		t.Errorf("profile scanned = %d, want 1", rep.Profile.Scanned)
+	}
+}
+
+func TestMaintain_DryRunSkipsProfile(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	owner := &Entity{Type: "person", Name: "Me", Source: "owner"}
+	if err := c.PutEntity(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := c.Maintain(ctx, WithMaintainDryRun())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Profile != nil {
+		t.Error("dry-run should skip the profile pass")
+	}
+}
