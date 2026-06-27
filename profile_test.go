@@ -207,3 +207,98 @@ func TestDistillBucket_EmptyNoCall(t *testing.T) {
 		t.Errorf("expected empty distilled result, got lines=%v distilled=%v", lines, distilled)
 	}
 }
+
+func TestProfile_BuildsAndCaches(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetLLM(nil) // raw fallback, deterministic
+
+	e := &Entity{Type: "person", Name: "Alice"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	m := &Memory{Content: "Alice is a staff engineer", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := c.Profile(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Cached {
+		t.Error("first call should build, not serve cache")
+	}
+	if p.Name != "Alice" {
+		t.Errorf("name = %q", p.Name)
+	}
+	// One recent memory -> dynamic.
+	if len(p.Dynamic) != 1 || p.Dynamic[0] != "Alice is a staff engineer" {
+		t.Errorf("dynamic = %v", p.Dynamic)
+	}
+
+	// Second call: nothing changed -> served from cache.
+	p2, err := c.Profile(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p2.Cached {
+		t.Error("second call should serve cache")
+	}
+}
+
+func TestProfile_RebuildsWhenMemoryCountChanges(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetLLM(nil)
+
+	e := &Entity{Type: "person", Name: "Bob"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Profile(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a memory; count changes -> dirty.
+	m := &Memory{Content: "Bob joined", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Profile(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Cached {
+		t.Error("expected rebuild after memory count changed")
+	}
+}
+
+func TestProfile_RebuildsWhenTTLExpired(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	c.SetLLM(nil)
+
+	e := &Entity{Type: "person", Name: "Carol"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Profile(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	// TTL of 0 forces staleness on the next read.
+	p, err := c.Profile(ctx, e.ID, WithProfileTTL(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Cached {
+		t.Error("expected rebuild with TTL=0")
+	}
+}
+
+func TestProfile_EntityNotFound(t *testing.T) {
+	c := openTestDB(t)
+	if _, err := c.Profile(context.Background(), "nope"); err == nil {
+		t.Error("expected error for missing entity")
+	}
+}

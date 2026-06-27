@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -173,4 +174,116 @@ func cleanBullets(s string) []string {
 		}
 	}
 	return out
+}
+
+// cachedProfile is the digest stored under attrProfile in an entity's
+// attributes JSON.
+type cachedProfile struct {
+	Static      []string  `json:"static"`
+	Dynamic     []string  `json:"dynamic"`
+	BuiltAt     time.Time `json:"built_at"`
+	MemoryCount int       `json:"memory_count"`
+	Distilled   bool      `json:"distilled"`
+}
+
+// Profile returns the entity's context digest. It serves a cached digest when
+// fresh, otherwise rebuilds and caches it. Freshness fails (forcing a rebuild)
+// when there is no cache, the cache is older than the TTL, or the entity's
+// current valid-memory count differs from the cached count.
+func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOption) (Profile, error) {
+	cfg := defaultProfileConfig()
+	for _, o := range opts {
+		o(&cfg)
+	}
+	now := time.Now().UTC()
+
+	e, err := c.GetEntity(ctx, entityID)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	mems, err := c.GetMemoriesByEntity(ctx, entityID)
+	if err != nil {
+		return Profile{}, err
+	}
+
+	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) {
+		return Profile{
+			EntityID:  e.ID,
+			Name:      e.Name,
+			Static:    cp.Static,
+			Dynamic:   cp.Dynamic,
+			BuiltAt:   cp.BuiltAt,
+			Distilled: cp.Distilled,
+			Cached:    true,
+		}, nil
+	}
+	return c.buildProfileFromMemories(ctx, e, mems, cfg, now)
+}
+
+// buildProfileFromMemories partitions + distills the given memories, persists
+// the digest to the entity's attributes, and returns it with Cached=false.
+func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems []Memory, cfg profileConfig, now time.Time) (Profile, error) {
+	staticMems, dynamicMems := partitionMemories(mems, cfg, now)
+	staticLines, sDist := c.distillBucket(ctx, e.Name, profileStaticPrompt, staticMems)
+	dynamicLines, dDist := c.distillBucket(ctx, e.Name, profileDynamicPrompt, dynamicMems)
+	distilled := sDist && dDist
+
+	cp := cachedProfile{
+		Static:      staticLines,
+		Dynamic:     dynamicLines,
+		BuiltAt:     now,
+		MemoryCount: len(mems),
+		Distilled:   distilled,
+	}
+	if e.Attributes == nil {
+		e.Attributes = map[string]any{}
+	}
+	e.Attributes[attrProfile] = cp
+	if err := c.PutEntity(ctx, e); err != nil {
+		return Profile{}, fmt.Errorf("cortex: persist profile: %w", err)
+	}
+
+	return Profile{
+		EntityID:  e.ID,
+		Name:      e.Name,
+		Static:    staticLines,
+		Dynamic:   dynamicLines,
+		BuiltAt:   now,
+		Distilled: distilled,
+		Cached:    false,
+	}, nil
+}
+
+// readCachedProfile decodes the cached digest from an entity's attributes.
+// The value round-trips through JSON because attributes are stored as JSON
+// (a freshly-set value is a cachedProfile; a reloaded value is a map).
+func readCachedProfile(e *Entity) (cachedProfile, bool) {
+	raw, ok := e.Attributes[attrProfile]
+	if !ok {
+		return cachedProfile{}, false
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return cachedProfile{}, false
+	}
+	var cp cachedProfile
+	if err := json.Unmarshal(b, &cp); err != nil {
+		return cachedProfile{}, false
+	}
+	if cp.BuiltAt.IsZero() {
+		return cachedProfile{}, false
+	}
+	return cp, true
+}
+
+// isFresh reports whether a cached profile may be served without rebuilding.
+func isFresh(cp cachedProfile, currentCount int, cfg profileConfig, now time.Time) bool {
+	if cp.MemoryCount != currentCount {
+		return false
+	}
+	if now.Sub(cp.BuiltAt) > cfg.ttl {
+		return false
+	}
+	return true
 }
