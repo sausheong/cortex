@@ -49,7 +49,7 @@ func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
 	seen := map[string]bool{}
 	var ids []string
 
-	owners, err := c.FindEntities(ctx, EntityFilter{Source: "owner"})
+	owners, err := c.FindEntities(ctx, EntityFilter{Type: "person", Source: "owner"})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find owner entities: %w", err)
 	}
