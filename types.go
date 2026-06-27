@@ -119,10 +119,20 @@ const AbstainThreshold = 0.005
 const AbstainTopK = 5
 
 // AbstainRelevanceThreshold is the max query-result cosine below which
-// RecallWithStrength advises abstention when an embedder is configured. This is
-// a PROVISIONAL value, to be calibrated against a real graph in a follow-up
-// task (a benchmark threshold sweep). 0.30 for now.
-const AbstainRelevanceThreshold = 0.30
+// RecallWithStrength advises abstention when an embedder is configured.
+//
+// Calibrated via a threshold sweep (cortex-eval) over a real 1202-memory graph
+// with text-embedding-3-small, using 120 answerable questions, 20 out-of-domain
+// ("easy") negatives, and 20 counterfactual ("hard") negatives. The sweep showed
+// a clean plateau at t ∈ [0.35, 0.45] where easy-negative abstention is 100% and
+// the false-abstention rate on real questions is 0%; 0.40 is the center of that
+// plateau (false abstention first appears at 0.50). Out-of-domain questions are
+// reliably caught here. Counterfactual "hard" negatives (vocabulary-close but
+// asking an absent fact) are NOT reliably caught by query-content cosine — they
+// retrieve the same nearby memory a real question would, so their max cosine is
+// as high as a true hit's; catching them needs an answer-grounded check beyond
+// retrieval similarity, which this signal does not attempt.
+const AbstainRelevanceThreshold = 0.40
 
 type Filter struct {
 	EntityID string
