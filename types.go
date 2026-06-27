@@ -132,6 +132,7 @@ type config struct {
 	llm       LLM
 	embedder  Embedder
 	extractor Extractor
+	logf      func(format string, args ...any) // optional diagnostic sink; nil = silent
 }
 
 type LLM interface {
@@ -362,6 +363,16 @@ func WithEmbedder(e Embedder) Option {
 
 func WithExtractor(e Extractor) Option {
 	return func(c *config) { c.extractor = e }
+}
+
+// WithLogger installs an optional diagnostic sink. Cortex uses it to surface
+// best-effort failures it would otherwise swallow — most importantly embedder
+// errors during recall, which would otherwise make a dead embedding endpoint
+// (e.g. an over-quota API key) look indistinguishable from "no vector
+// results". The default is nil (silent), preserving prior behavior. Pass e.g.
+// WithLogger(log.Printf) or a custom func.
+func WithLogger(logf func(format string, args ...any)) Option {
+	return func(c *config) { c.logf = logf }
 }
 
 // coerceConfidence enforces the [0, 1] invariant for confidence values.

@@ -125,14 +125,22 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 
 	final := make([]Result, 0, len(merged))
 
-	// MMR diversity rerank (3.4): when enabled (default) and an embedder is
-	// configured, reorder the candidate set so near-duplicate results don't
-	// crowd out diverse ones. This is a refinement over the prefixed merged
-	// keys (which carry per-result vectors) — it reorders membership, never
-	// adds or drops members; the limit cap below is the only reducer. Without
-	// an embedder there are no vectors to compare, so we fall back to the
-	// pure confidence-weighted order.
-	if cfg.rerank && c.cfg.embedder != nil && len(merged) > 1 {
+	// MMR diversity rerank (3.4): when enabled (default), an embedder is
+	// configured, AND results came from more than one retrieval mode, reorder
+	// the candidate set so near-duplicate results don't crowd out diverse ones.
+	// This is a refinement over the prefixed merged keys (which carry
+	// per-result vectors) — it reorders membership, never adds or drops
+	// members; the limit cap below is the only reducer.
+	//
+	// The len(lists) > 1 gate matters: MMR's diversity penalty demotes
+	// relevant-but-similar results, which is only worth it when there is an
+	// independent retrieval signal (e.g. vector alongside keyword) to justify
+	// the trade. With a single retrieval list — the only signal — reranking for
+	// diversity measurably hurts mid-rank recall (benchmark: R@3/R@5 dropped
+	// ~15-20pts on FTS-only) and rescues nothing, so we keep the fusion order.
+	// This also makes a dead vector path (e.g. embedder over quota → empty
+	// list) degrade cleanly to keyword order rather than a worse reranked one.
+	if cfg.rerank && c.cfg.embedder != nil && len(lists) > 1 && len(merged) > 1 {
 		cands := make([]mmrCandidate, 0, len(merged))
 		for _, item := range merged {
 			r, ok := resultMap[item.id]
@@ -290,12 +298,26 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mo
 	return items, results
 }
 
+// logf emits a diagnostic via the configured logger, or no-ops when none is
+// set. Used to surface best-effort failures (e.g. embedder errors) that recall
+// otherwise swallows, so a dead embedding endpoint doesn't masquerade as
+// "no results".
+func (c *Cortex) logf(format string, args ...any) {
+	if c.cfg.logf != nil {
+		c.cfg.logf(format, args...)
+	}
+}
+
 func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
 	if c.cfg.embedder == nil {
 		return nil, nil
 	}
 	mems, err := c.searchMemoryVectorMode(ctx, query, limit, mode)
-	if err != nil || len(mems) == 0 {
+	if err != nil {
+		c.logf("cortex: recall memory_vector embed/search failed: %v", err)
+		return nil, nil
+	}
+	if len(mems) == 0 {
 		return nil, nil
 	}
 
@@ -353,7 +375,11 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 	}
 
 	chunks, err := c.SearchVector(ctx, query, limit)
-	if err != nil || len(chunks) == 0 {
+	if err != nil {
+		c.logf("cortex: recall vector_search embed/search failed: %v", err)
+		return nil, nil
+	}
+	if len(chunks) == 0 {
 		return nil, nil
 	}
 

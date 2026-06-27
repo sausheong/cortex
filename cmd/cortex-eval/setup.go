@@ -98,8 +98,15 @@ func newLLM() cortex.LLM {
 
 // openForRun opens the graph with just an embedder (run scores retrieval; it
 // swaps in its own fixed decomposition LLM per config, so no real LLM needed).
+// A logger is installed so embedder failures (e.g. an over-quota key) surface
+// loudly instead of silently zeroing the vector path.
 func openForRun() *cortex.Cortex {
-	cx, err := cortex.Open(dbPath(), cortex.WithEmbedder(newEmbedder()))
+	cx, err := cortex.Open(dbPath(),
+		cortex.WithEmbedder(newEmbedder()),
+		cortex.WithLogger(func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "[cortex] "+format+"\n", args...)
+		}),
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open db: %v\n", err)
 		os.Exit(1)
