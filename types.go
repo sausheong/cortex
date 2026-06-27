@@ -91,8 +91,10 @@ type Result struct {
 }
 
 // RecallResult wraps a ranked recall with an aggregate strength signal and
-// an abstention hint. Strength is the confidence-weighted score of the top
-// result (0 when empty). Abstain is true when the engine has nothing
+// an abstention hint. Strength is a cosine relevance score in [0,1] — the max
+// query-result cosine similarity over the top results — when an embedder is
+// configured; otherwise it falls back to the confidence-weighted RRF top
+// score. It is 0 when empty. Abstain is true when the engine has nothing
 // sufficiently relevant — a cue for agents to say "I don't know that"
 // rather than fabricate an answer.
 type RecallResult struct {
@@ -101,13 +103,26 @@ type RecallResult struct {
 	Abstain  bool     `json:"abstain"`
 }
 
-// AbstainThreshold is the confidence-weighted top-score below which
-// RecallWithStrength advises abstention. Tuned conservatively: the goal is
-// to catch empty/irrelevant recalls, not to suppress weak-but-real hits.
-// Calibration: a single RRF hit scores 1/(k+1) with k=60, i.e. ~0.0164, so
-// 0.005 sits just below that floor multiplied by a low confidence — raising
-// it much further risks abstaining on every single-hit recall.
+// AbstainThreshold is the confidence-weighted RRF top-score below which
+// RecallWithStrength advises abstention. This is now the FALLBACK signal,
+// used only when no embedder is configured (the cosine-relevance path is
+// preferred when one is). Tuned conservatively: the goal is to catch
+// empty/irrelevant recalls, not to suppress weak-but-real hits. Calibration:
+// a single RRF hit scores 1/(k+1) with k=60, i.e. ~0.0164, so 0.005 sits just
+// below that floor multiplied by a low confidence — raising it much further
+// risks abstaining on every single-hit recall.
 const AbstainThreshold = 0.005
+
+// AbstainTopK bounds how many top results contribute to the cosine relevance
+// strength used for abstention. Max cosine over these results is the signal:
+// one strongly-matching result should defeat abstention.
+const AbstainTopK = 5
+
+// AbstainRelevanceThreshold is the max query-result cosine below which
+// RecallWithStrength advises abstention when an embedder is configured. This is
+// a PROVISIONAL value, to be calibrated against a real graph in a follow-up
+// task (a benchmark threshold sweep). 0.30 for now.
+const AbstainRelevanceThreshold = 0.30
 
 type Filter struct {
 	EntityID string
