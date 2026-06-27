@@ -3,6 +3,8 @@ package cortex
 import (
 	"context"
 	"fmt"
+	"sort"
+	"time"
 )
 
 // Reserved entity attribute keys for profiles.
@@ -67,4 +69,45 @@ func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+// partitionMemories splits an entity's memories into a recent "dynamic" set
+// and a stable "static" set. Dynamic = memories created within the recency
+// window, newest first, capped at recentK. Static = everything else, ranked
+// by confidence then recency, capped at staticCap. A memory in the recent
+// window is only ever dynamic (dynamic wins); statics are drawn from the rest.
+func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static, dynamic []Memory) {
+	cutoff := now.Add(-cfg.window)
+
+	var recent, rest []Memory
+	for _, m := range mems {
+		if m.CreatedAt.After(cutoff) || m.CreatedAt.Equal(cutoff) {
+			recent = append(recent, m)
+		} else {
+			rest = append(rest, m)
+		}
+	}
+
+	// Dynamic: newest first, capped to recentK. Overflow falls back to static.
+	sort.SliceStable(recent, func(i, j int) bool {
+		return recent[i].CreatedAt.After(recent[j].CreatedAt)
+	})
+	if len(recent) > cfg.recentK {
+		rest = append(rest, recent[cfg.recentK:]...)
+		recent = recent[:cfg.recentK]
+	}
+	dynamic = recent
+
+	// Static: confidence desc, then recency desc; capped to staticCap.
+	sort.SliceStable(rest, func(i, j int) bool {
+		if rest[i].Confidence != rest[j].Confidence {
+			return rest[i].Confidence > rest[j].Confidence
+		}
+		return rest[i].CreatedAt.After(rest[j].CreatedAt)
+	})
+	if len(rest) > cfg.staticCap {
+		rest = rest[:cfg.staticCap]
+	}
+	static = rest
+	return static, dynamic
 }
