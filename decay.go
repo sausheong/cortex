@@ -33,7 +33,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT id, content, confidence, created_at, last_decay_at
 		 FROM memories
-		 WHERE `+currentlyValidClause(""),
+		 WHERE `+currentlyValidClause("")+` AND static = 0`,
 	)
 	if err != nil {
 		return DecayReport{}, fmt.Errorf("cortex: decay scan: %w", err)

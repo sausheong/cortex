@@ -116,3 +116,51 @@ func TestDecayConfidence_DryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry-run must not write; confidence changed to %v", got.Confidence)
 	}
 }
+
+func TestDecay_SkipsStaticMemories(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Alice"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	// A static memory and a non-static memory, both old and low-confidence.
+	stat := &Memory{Content: "Alice is from Seattle", EntityIDs: []string{e.ID}, Confidence: 0.2, Static: true}
+	if err := c.PutMemory(ctx, stat); err != nil {
+		t.Fatal(err)
+	}
+	dyn := &Memory{Content: "Alice has a meeting", EntityIDs: []string{e.ID}, Confidence: 0.2, Static: false}
+	if err := c.PutMemory(ctx, dyn); err != nil {
+		t.Fatal(err)
+	}
+	// Age both far back so decay would fire.
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{stat.ID, dyn.ID} {
+		if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ?, last_decay_at = NULL WHERE id = ?`, old, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rep, err := c.DecayConfidence(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only the dynamic memory should appear in the decay changes.
+	for _, ch := range rep.Changes {
+		if ch.ID == stat.ID {
+			t.Errorf("static memory %s should not be decayed", stat.ID)
+		}
+	}
+	// Sanity: the dynamic memory WAS decayed (proves the test setup triggers decay).
+	sawDyn := false
+	for _, ch := range rep.Changes {
+		if ch.ID == dyn.ID {
+			sawDyn = true
+		}
+	}
+	if !sawDyn {
+		t.Error("expected the non-static memory to be decayed")
+	}
+}
