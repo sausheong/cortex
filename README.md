@@ -42,6 +42,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
 - **Confidence scores** — every extracted entity, relationship, and memory carries a 0–1 confidence value the LLM assigns at ingest. Filter results with `--min-confidence`; lower-confidence claims show inline in vault pages and recall output
 - **Static memories** — the LLM extractor flags durable identity facts and stable preferences (role, hometown, "prefers dark mode") as `static` at ingest, distinct from episodic, time-bound facts ("exam tomorrow"). Static memories are exempt from confidence decay and always populate a profile's `static[]` section regardless of age
+- **Expiring memories** — time-bound facts (appointments, deadlines, "this week") can carry a `forget_after` expiry the LLM extractor resolves at ingest, resolving relative phrases like "tomorrow" against today's date. The `cortex expire` pass (also run by `cortex maintain`) soft-retires memories past their `forget_after` — hidden from default recall, still reachable via `include_invalid`/`as_of`. A `forget_after` wins over `static`: a memory marked both still expires
 - **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
 - **Calibrated abstention** — `RecallWithStrength` returns a relevance `Strength` and an `Abstain` hint so an agent can say "I don't know that" instead of fabricating from a weak match. The signal is the query↔result cosine, with a threshold calibrated on a real graph
 - **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
@@ -306,6 +307,16 @@ Either way, applying soft-invalidates each superseded memory — it drops out of
 Detection requires an LLM provider that implements conflict detection — the shipped Anthropic and OpenAI providers do. Without such a provider, reconcile reports nothing and exits cleanly. Resolution itself is deterministic: only a strictly-newer, currently-valid memory may supersede an older one.
 
 Scope is **per-entity**: cortex only compares memories that share a linked entity. Contradictions between memories with no common entity are not detected.
+
+### `cortex expire`
+
+Soft-retire memories whose `forget_after` expiry has passed. The same pass runs inside `cortex maintain`; use this to run it on its own.
+
+```bash
+cortex expire [--dry-run] [--out <file>]
+```
+
+Currently-valid memories with a `forget_after` in the past are soft-invalidated — they drop out of default `recall` but stay reachable via `include_invalid` / `as_of`, so nothing is destroyed. The `forget_after` value is set by the LLM extractor at ingest for time-bound facts, and overrides `static`: a memory marked both still expires. `--dry-run` reports what would be retired without writing; `--out <path>` writes the markdown report to a file instead of stdout.
 
 ### `cortex init-schema`
 
@@ -757,6 +768,8 @@ Memories are linked to related entities via a junction table and are searched fi
 
 Each memory also carries a `static` flag the LLM extractor sets at ingest. Static memories hold durable identity facts and stable preferences ("Alice is a staff engineer", "Carol prefers async communication"); non-static memories are episodic and time-bound ("The project deadline is March 15"). Static memories are exempt from confidence decay — they don't erode or get soft-retired as they age — and always feed a profile's `static[]` section, while recent non-static memories feed `dynamic[]`.
 
+A memory may also carry a `forget_after` expiry that the LLM extractor resolves at ingest. Time-bound facts (appointments, deadlines, "this week") get one — relative phrases like "tomorrow" are resolved against today's date, which is injected into the extraction prompt — while durable facts don't. Once `forget_after` has passed, the `cortex expire` pass (run standalone or by `cortex maintain`) soft-retires the memory: it drops out of default recall but stays reachable via `include_invalid` / `as_of`. A `forget_after` overrides `static` — a memory marked both still expires.
+
 ---
 
 ## Extraction Pipeline
@@ -1106,7 +1119,7 @@ cortex recall "who works at Stripe"
 
 ## Scheduling maintenance
 
-`cortex maintain` runs the reconsolidation pass — reconcile contradictions, build derives/extends edges, decay confidence and soft-retire stale memories, then refresh the owner's and any tracked entities' profiles. It is a one-shot, idempotent-in-effect command: run it periodically and the OS scheduler owns the cadence.
+`cortex maintain` runs the reconsolidation pass — reconcile contradictions, build derives/extends edges, decay confidence and soft-retire stale memories, expire memories past their `forget_after`, then refresh the owner's and any tracked entities' profiles. It is a one-shot, idempotent-in-effect command: run it periodically and the OS scheduler owns the cadence.
 
 Preview first:
 

@@ -2,18 +2,22 @@ package cortex
 
 import "context"
 
-// Maintain runs the reconsolidation passes — reconcile, relate, decay — in a
-// fixed order as one idempotent-in-effect background pass (cortex's "dreaming").
-// It is pure orchestration: it composes ApplyReconcile/Reconcile,
-// BuildMemoryEdges, and DecayConfidence, collecting each sub-report. Each pass
-// is independently skippable via options. A Skipped sub-report (e.g. reconcile
-// or relate without a detector-capable LLM) is recorded, not an error; only a
-// real engine error aborts the pass. Under dry-run, reconcile uses its dry-run
-// path, decay uses WithDecayDryRun, and relate is skipped (it has no dry-run
-// mode — edges are additive), so a dry-run Maintain writes nothing.
+// Maintain runs the reconsolidation passes — reconcile, relate, decay, expire,
+// profile — in a fixed order as one idempotent-in-effect background pass
+// (cortex's "dreaming"). It is pure orchestration: it composes
+// ApplyReconcile/Reconcile, BuildMemoryEdges, DecayConfidence, ExpireMemories,
+// and RefreshProfiles, collecting each sub-report. Each pass is independently
+// skippable via options. A Skipped sub-report (e.g. reconcile or relate without
+// a detector-capable LLM) is recorded, not an error; only a real engine error
+// aborts the pass. Under dry-run, reconcile uses its dry-run path, decay uses
+// WithDecayDryRun, and relate, expire, and profile are skipped (relate edges are
+// additive with no dry-run mode; expire and profile both write), so a dry-run
+// Maintain writes nothing.
 //
 // Order rationale: reconcile first (retire contradictions before linking),
-// relate second (link the reconciled set), decay last (age/prune the settled set).
+// relate second (link the reconciled set), decay third (age/prune the settled
+// set), expire fourth (retire memories past their forget_after), profile last
+// (refresh owner + tracked entities' digests over the settled, pruned set).
 func (c *Cortex) Maintain(ctx context.Context, opts ...MaintainOption) (MaintainReport, error) {
 	cfg := &maintainConfig{}
 	for _, o := range opts {
