@@ -337,3 +337,49 @@ func TestRefreshProfiles_BuildsEligible(t *testing.T) {
 		t.Error("untracked entity should not be profiled")
 	}
 }
+
+func TestPartitionMemories_StaticAlwaysStatic(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	cfg := profileConfig{recentK: 5, window: 30 * 24 * time.Hour, staticCap: 15}
+
+	mk := func(content string, daysAgo int, static bool) Memory {
+		return Memory{Content: content, Confidence: 0.9, CreatedAt: now.AddDate(0, 0, -daysAgo), Static: static}
+	}
+	mems := []Memory{
+		mk("identity-today", 0, true),   // static, created TODAY -> must be static[]
+		mk("episode-today", 1, false),   // non-static, recent -> dynamic[]
+		mk("identity-old", 200, true),   // static, old -> static[]
+	}
+
+	static, dynamic := partitionMemories(mems, cfg, now)
+
+	inStatic := func(s string) bool {
+		for _, m := range static {
+			if m.Content == s {
+				return true
+			}
+		}
+		return false
+	}
+	inDynamic := func(s string) bool {
+		for _, m := range dynamic {
+			if m.Content == s {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !inStatic("identity-today") {
+		t.Error("static memory created today must be in static[]")
+	}
+	if inDynamic("identity-today") {
+		t.Error("static memory must never be in dynamic[]")
+	}
+	if !inStatic("identity-old") {
+		t.Error("old static memory must be in static[]")
+	}
+	if !inDynamic("episode-today") {
+		t.Error("recent non-static memory must be in dynamic[]")
+	}
+}

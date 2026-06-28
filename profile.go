@@ -83,6 +83,11 @@ func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static,
 
 	var recent, rest []Memory
 	for _, m := range mems {
+		// Static memories are never dynamic: route straight to the static pool.
+		if m.Static {
+			rest = append(rest, m)
+			continue
+		}
 		if m.CreatedAt.After(cutoff) || m.CreatedAt.Equal(cutoff) {
 			recent = append(recent, m)
 		} else {
