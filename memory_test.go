@@ -518,3 +518,37 @@ func TestMemory_ForgetAfterColumnExistsAndDefaultsNil(t *testing.T) {
 		t.Errorf("expected ForgetAfter=nil by default, got %v", got[0].ForgetAfter)
 	}
 }
+
+func TestMemory_ForgetAfterRoundTrips(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Bob"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	fa := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	m := &Memory{Content: "Bob has a deadline on Dec 31", EntityIDs: []string{e.ID}, ForgetAfter: &fa}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.GetMemoriesByEntity(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ForgetAfter == nil {
+		t.Fatalf("GetMemoriesByEntity: expected ForgetAfter set, got %+v", got)
+	}
+	if !got[0].ForgetAfter.Equal(fa) {
+		t.Errorf("ForgetAfter = %v, want %v", got[0].ForgetAfter, fa)
+	}
+
+	found, err := c.SearchMemories(ctx, "deadline", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) == 0 || found[0].ForgetAfter == nil || !found[0].ForgetAfter.Equal(fa) {
+		t.Fatalf("SearchMemories: expected ForgetAfter=%v, got %+v", fa, found)
+	}
+}
