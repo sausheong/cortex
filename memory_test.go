@@ -494,3 +494,27 @@ func TestMemory_StaticRoundTrips(t *testing.T) {
 		t.Fatalf("SearchMemories: expected Static=true, got %+v", found)
 	}
 }
+
+func TestMemory_ForgetAfterColumnExistsAndDefaultsNil(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Alice"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	m := &Memory{Content: "Alice exists", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetMemoriesByEntity(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d memories, want 1", len(got))
+	}
+	if got[0].ForgetAfter != nil {
+		t.Errorf("expected ForgetAfter=nil by default, got %v", got[0].ForgetAfter)
+	}
+}

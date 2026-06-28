@@ -57,6 +57,12 @@ type Memory struct {
 	ValidAt   *time.Time `json:"valid_at,omitempty"`
 	InvalidAt *time.Time `json:"invalid_at,omitempty"`
 	ExpiredAt *time.Time `json:"expired_at,omitempty"`
+	// ForgetAfter is an ingestion-set expiry: the event time at which this
+	// memory should stop being current (e.g. "meeting at 3pm today",
+	// "exam tomorrow"). The Maintain expire pass soft-retires memories past
+	// this time. nil = no expiry. Set by the LLM extractor, which resolves
+	// relative phrases against the ingest date.
+	ForgetAfter *time.Time `json:"forget_after,omitempty"`
 }
 
 // MemoryEdge is a typed directed edge between two memories (facts-on-facts).
