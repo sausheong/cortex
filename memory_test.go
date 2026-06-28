@@ -462,3 +462,35 @@ func TestMemory_StaticColumnExistsAndDefaultsFalse(t *testing.T) {
 		t.Errorf("expected Static=false by default, got true")
 	}
 }
+
+func TestMemory_StaticRoundTrips(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Bob"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	m := &Memory{Content: "Bob is from Seattle", EntityIDs: []string{e.ID}, Static: true}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	// via GetMemoriesByEntity
+	got, err := c.GetMemoriesByEntity(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].Static {
+		t.Fatalf("GetMemoriesByEntity: expected Static=true, got %+v", got)
+	}
+
+	// via SearchMemories (FTS)
+	found, err := c.SearchMemories(ctx, "Seattle", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) == 0 || !found[0].Static {
+		t.Fatalf("SearchMemories: expected Static=true, got %+v", found)
+	}
+}
