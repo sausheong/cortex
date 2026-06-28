@@ -20,3 +20,6 @@ coverage.html
 # Internal docs and specs
 /docs
 /openspec
+
+# Exported vault (regenerable via: cortex export --vault ./vault)
+/vault
