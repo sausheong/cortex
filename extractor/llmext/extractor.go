@@ -30,6 +30,8 @@ For each memory, "static" marks whether it is a stable fact:
           "exam tomorrow", anything with a date or that will expire)
 When unsure, use false.
 
+- "forget_after": string (date) — set ONLY for memories that stop being relevant after a known point: appointments, deadlines, "today"/"tomorrow"/"this week", anything time-bound. Resolve relative phrases against today's date and return an absolute date (e.g. today is 2026-06-27, "tomorrow" -> "2026-06-28"). Omit for durable facts. A memory with forget_after should NOT be marked static.
+
 Extract all people, organizations, places, concepts, and other notable entities.
 Identify relationships between entities (e.g., works_at, knows, located_in).
 Create memories for key facts and statements.

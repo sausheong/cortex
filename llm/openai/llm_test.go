@@ -220,3 +220,26 @@ func TestParseExtractionJSON_ReadsStatic(t *testing.T) {
 		t.Error("expected second memory Static=false")
 	}
 }
+
+func TestParseExtractionJSON_ReadsForgetAfter(t *testing.T) {
+	raw := `{"entities":[],"relationships":[],"memories":[` +
+		`{"content":"lunch tomorrow","confidence":1.0,"forget_after":"2026-06-28"},` +
+		`{"content":"Bob is an engineer","confidence":1.0}]}`
+	ex, err := parseExtractionJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ex.Memories) != 2 {
+		t.Fatalf("got %d memories, want 2", len(ex.Memories))
+	}
+	if ex.Memories[0].ForgetAfter == nil {
+		t.Fatal("expected first memory ForgetAfter set")
+	}
+	want := time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC)
+	if !ex.Memories[0].ForgetAfter.Equal(want) {
+		t.Errorf("ForgetAfter = %v, want %v", ex.Memories[0].ForgetAfter, want)
+	}
+	if ex.Memories[1].ForgetAfter != nil {
+		t.Error("expected second memory ForgetAfter nil")
+	}
+}
