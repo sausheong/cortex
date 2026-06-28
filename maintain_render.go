@@ -38,6 +38,13 @@ func RenderMaintainMarkdown(r MaintainReport) string {
 		b.WriteString("_skipped_\n")
 	}
 
+	b.WriteString("\n## Expire\n\n")
+	if r.Expire != nil {
+		b.WriteString(RenderExpireMarkdown(*r.Expire))
+	} else {
+		b.WriteString("_skipped_\n")
+	}
+
 	b.WriteString("\n## Profile\n\n")
 	if r.Profile != nil {
 		b.WriteString(RenderProfileReportMarkdown(*r.Profile))

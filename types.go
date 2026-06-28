@@ -599,6 +599,7 @@ type MaintainReport struct {
 	Reconcile *ReconcileReport `json:"reconcile,omitempty"`
 	Relate    *RelationReport  `json:"relate,omitempty"`
 	Decay     *DecayReport     `json:"decay,omitempty"`
+	Expire    *ExpireReport    `json:"expire,omitempty"`
 	Profile   *ProfileReport   `json:"profile,omitempty"`
 }
 
@@ -609,6 +610,7 @@ type maintainConfig struct {
 	skipReconcile bool
 	skipRelate    bool
 	skipDecay     bool
+	skipExpire    bool
 	skipProfile   bool
 	decayOpts     []DecayOption
 }
@@ -634,6 +636,9 @@ func WithMaintainDecayOptions(o ...DecayOption) MaintainOption {
 
 // WithoutProfile skips the profile-refresh pass in Maintain.
 func WithoutProfile() MaintainOption { return func(c *maintainConfig) { c.skipProfile = true } }
+
+// WithoutExpire skips the expire pass in Maintain.
+func WithoutExpire() MaintainOption { return func(c *maintainConfig) { c.skipExpire = true } }
 
 // --- Profile ---
 

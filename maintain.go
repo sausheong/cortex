@@ -67,7 +67,17 @@ func (c *Cortex) Maintain(ctx context.Context, opts ...MaintainOption) (Maintain
 		report.Decay = &dr
 	}
 
-	// 4. Profile (refresh owner + tracked entities' digests). Skipped under
+	// 4. Expire (retire memories past their forget_after). Skipped under
+	// dry-run because it writes via InvalidateMemory.
+	if !cfg.skipExpire && !cfg.dryRun {
+		er, err := c.ExpireMemories(ctx)
+		if err != nil {
+			return report, err
+		}
+		report.Expire = &er
+	}
+
+	// 5. Profile (refresh owner + tracked entities' digests). Skipped under
 	// dry-run because building writes to entity attributes.
 	if !cfg.skipProfile && !cfg.dryRun {
 		pr, err := c.RefreshProfiles(ctx)

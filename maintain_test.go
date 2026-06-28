@@ -168,3 +168,52 @@ func TestMaintain_DryRunSkipsProfile(t *testing.T) {
 		t.Error("dry-run should skip the profile pass")
 	}
 }
+
+func TestMaintain_RunsExpirePass(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	e := &Entity{Type: "person", Name: "Alice"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	m := &Memory{Content: "expired thing", EntityIDs: []string{e.ID}, ForgetAfter: &past}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := c.Maintain(ctx, WithoutReconcile(), WithoutRelate(), WithoutDecay(), WithoutProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Expire == nil {
+		t.Fatal("expected expire sub-report")
+	}
+	if rep.Expire.Expired != 1 {
+		t.Errorf("expire pass should retire 1, got %d", rep.Expire.Expired)
+	}
+}
+
+func TestMaintain_DryRunSkipsExpire(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	rep, err := c.Maintain(ctx, WithMaintainDryRun())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Expire != nil {
+		t.Error("dry-run should skip the expire pass")
+	}
+}
+
+func TestMaintain_WithoutExpire(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	rep, err := c.Maintain(ctx, WithoutReconcile(), WithoutRelate(), WithoutDecay(), WithoutProfile(), WithoutExpire())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Expire != nil {
+		t.Error("WithoutExpire should skip the expire pass")
+	}
+}

@@ -46,3 +46,21 @@ func TestRenderMaintainMarkdown_ProfileSkipped(t *testing.T) {
 		t.Errorf("expected skipped Profile section in:\n%s", md)
 	}
 }
+
+func TestRenderMaintainMarkdown_IncludesExpire(t *testing.T) {
+	r := MaintainReport{Expire: &ExpireReport{Scanned: 1, Expired: 1}}
+	md := RenderMaintainMarkdown(r)
+	if !strings.Contains(md, "## Expire") {
+		t.Errorf("expected Expire section in:\n%s", md)
+	}
+	if !strings.Contains(md, "Expired: 1") {
+		t.Errorf("expected expire detail in:\n%s", md)
+	}
+}
+
+func TestRenderMaintainMarkdown_ExpireSkipped(t *testing.T) {
+	md := RenderMaintainMarkdown(MaintainReport{})
+	if !strings.Contains(md, "## Expire") {
+		t.Errorf("expected Expire section header even when skipped:\n%s", md)
+	}
+}
