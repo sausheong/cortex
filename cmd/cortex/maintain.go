@@ -16,9 +16,11 @@ func cmdMaintain() {
 	out := ""
 	usage := "usage: cortex maintain [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]\n" +
 		"  Runs the reconsolidation pass: reconcile contradictions, build\n" +
-		"  derives/extends edges, then decay confidence and soft-retire stale\n" +
-		"  memories. Designed to be run periodically (cron/launchd). Modifies the\n" +
-		"  graph unless --dry-run. Under --dry-run, relate is skipped (no dry-run).\n" +
+		"  derives/extends edges, decay confidence and soft-retire stale\n" +
+		"  memories, expire memories past their forget_after, then refresh\n" +
+		"  profiles. Designed to be run periodically (cron/launchd). Modifies the\n" +
+		"  graph unless --dry-run. Under --dry-run, relate, expire, and profile\n" +
+		"  are skipped (they have no dry-run path).\n" +
 		"  --dry-run       preview; write nothing\n" +
 		"  --no-reconcile  skip the reconcile pass\n" +
 		"  --no-relate     skip the relate pass\n" +

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -22,6 +23,8 @@ Identify relationships between entities (e.g., works_at, knows, located_in).
 Create memories for key facts and statements.
 
 When a memory states when something became true (a start date, a join date, an "as of" date), set "valid_at" to that date. Do not guess; omit it if the text does not say.
+
+- "forget_after": string (date) — set ONLY for memories that stop being relevant after a known point: appointments, deadlines, "today"/"tomorrow"/"this week", anything time-bound. Resolve relative phrases against today's date and return an absolute date (e.g. today is 2026-06-27, "tomorrow" -> "2026-06-28"). Omit for durable facts. A memory with forget_after should NOT be marked static.
 
 Return ONLY valid JSON, no markdown formatting or code fences.`
 
@@ -98,6 +101,7 @@ func (l *LLM) Extract(ctx context.Context, text string, prompt string) (cortex.E
 	if prompt == "" {
 		prompt = defaultExtractionPrompt
 	}
+	prompt = fmt.Sprintf("Today's date is %s.\n\n", time.Now().UTC().Format("2006-01-02")) + prompt
 
 	msg, err := l.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     l.model,
@@ -337,17 +341,19 @@ func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
 
 	for _, m := range ej.Memories {
 		var memObj struct {
-			Content    string  `json:"content"`
-			Confidence float64 `json:"confidence"`
-			ValidAt    string  `json:"valid_at"`
-			Static     bool    `json:"static"`
+			Content     string  `json:"content"`
+			Confidence  float64 `json:"confidence"`
+			ValidAt     string  `json:"valid_at"`
+			Static      bool    `json:"static"`
+			ForgetAfter string  `json:"forget_after"`
 		}
 		if err := json.Unmarshal(m, &memObj); err == nil && memObj.Content != "" {
 			extraction.Memories = append(extraction.Memories, cortex.Memory{
-				Content:    memObj.Content,
-				Confidence: memObj.Confidence,
-				ValidAt:    cortex.ParseEventTime(memObj.ValidAt),
-				Static:     memObj.Static,
+				Content:     memObj.Content,
+				Confidence:  memObj.Confidence,
+				ValidAt:     cortex.ParseEventTime(memObj.ValidAt),
+				Static:      memObj.Static,
+				ForgetAfter: cortex.ParseEventTime(memObj.ForgetAfter),
 			})
 			continue
 		}

@@ -75,6 +75,8 @@ func main() {
 		cmdRelate()
 	case "decay":
 		cmdDecay()
+	case "expire":
+		cmdExpire()
 	case "maintain":
 		cmdMaintain()
 	case "profile":
@@ -122,8 +124,10 @@ Commands:
                                  Detect and record derives/extends edges between related memories (additive, idempotent)
   decay [--half-life <dur>] [--floor <0-1>] [--dry-run] [--out <file>]
                                  Apply age-based confidence decay and soft-retire memories below the floor (MODIFIES the graph; use --dry-run to preview)
+  expire [--dry-run] [--out <file>]
+                                 Soft-retire memories whose forget_after has passed (MODIFIES the graph; use --dry-run to preview)
   maintain [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]
-                                 Periodic reconsolidation pass: reconcile, then relate, then decay in one run (MODIFIES the graph; use --dry-run to preview)
+                                 Periodic reconsolidation pass: reconcile, relate, decay, expire, then profile in one run (MODIFIES the graph; use --dry-run to preview)
   profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
                                  Show an entity's context digest (owner by default); --track/--untrack manage auto-refresh
   mcp [--transport stdio|http] [--addr host:port]

@@ -57,6 +57,12 @@ type Memory struct {
 	ValidAt   *time.Time `json:"valid_at,omitempty"`
 	InvalidAt *time.Time `json:"invalid_at,omitempty"`
 	ExpiredAt *time.Time `json:"expired_at,omitempty"`
+	// ForgetAfter is an ingestion-set expiry: the event time at which this
+	// memory should stop being current (e.g. "meeting at 3pm today",
+	// "exam tomorrow"). The Maintain expire pass soft-retires memories past
+	// this time. nil = no expiry. Set by the LLM extractor, which resolves
+	// relative phrases against the ingest date.
+	ForgetAfter *time.Time `json:"forget_after,omitempty"`
 }
 
 // MemoryEdge is a typed directed edge between two memories (facts-on-facts).
@@ -593,6 +599,7 @@ type MaintainReport struct {
 	Reconcile *ReconcileReport `json:"reconcile,omitempty"`
 	Relate    *RelationReport  `json:"relate,omitempty"`
 	Decay     *DecayReport     `json:"decay,omitempty"`
+	Expire    *ExpireReport    `json:"expire,omitempty"`
 	Profile   *ProfileReport   `json:"profile,omitempty"`
 }
 
@@ -603,6 +610,7 @@ type maintainConfig struct {
 	skipReconcile bool
 	skipRelate    bool
 	skipDecay     bool
+	skipExpire    bool
 	skipProfile   bool
 	decayOpts     []DecayOption
 }
@@ -628,6 +636,9 @@ func WithMaintainDecayOptions(o ...DecayOption) MaintainOption {
 
 // WithoutProfile skips the profile-refresh pass in Maintain.
 func WithoutProfile() MaintainOption { return func(c *maintainConfig) { c.skipProfile = true } }
+
+// WithoutExpire skips the expire pass in Maintain.
+func WithoutExpire() MaintainOption { return func(c *maintainConfig) { c.skipExpire = true } }
 
 // --- Profile ---
 
@@ -701,3 +712,30 @@ func WithProfileWindow(d time.Duration) ProfileOption {
 func WithProfileStaticCap(n int) ProfileOption {
 	return func(c *profileConfig) { c.staticCap = n }
 }
+
+// --- Expire (TTL) ---
+
+// ExpireChange is one memory retired (or, under dry-run, that would be
+// retired) by the expire pass because its ForgetAfter has passed.
+type ExpireChange struct {
+	ID          string    `json:"id"`
+	Content     string    `json:"content"`
+	ForgetAfter time.Time `json:"forget_after"`
+}
+
+// ExpireReport summarizes an ExpireMemories run.
+type ExpireReport struct {
+	Scanned int            `json:"scanned"`
+	Expired int            `json:"expired"`
+	DryRun  bool           `json:"dry_run"`
+	Changes []ExpireChange `json:"changes"`
+}
+
+type ExpireOption func(*expireConfig)
+
+type expireConfig struct {
+	dryRun bool
+}
+
+// WithExpireDryRun computes the expire report without writing anything.
+func WithExpireDryRun() ExpireOption { return func(c *expireConfig) { c.dryRun = true } }
