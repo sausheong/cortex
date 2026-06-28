@@ -67,5 +67,15 @@ func (c *Cortex) Maintain(ctx context.Context, opts ...MaintainOption) (Maintain
 		report.Decay = &dr
 	}
 
+	// 4. Profile (refresh owner + tracked entities' digests). Skipped under
+	// dry-run because building writes to entity attributes.
+	if !cfg.skipProfile && !cfg.dryRun {
+		pr, err := c.RefreshProfiles(ctx)
+		if err != nil {
+			return report, err
+		}
+		report.Profile = &pr
+	}
+
 	return report, nil
 }

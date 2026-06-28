@@ -77,6 +77,8 @@ func main() {
 		cmdDecay()
 	case "maintain":
 		cmdMaintain()
+	case "profile":
+		cmdProfile()
 	case "mcp":
 		cmdMCP()
 	default:
@@ -122,6 +124,8 @@ Commands:
                                  Apply age-based confidence decay and soft-retire memories below the floor (MODIFIES the graph; use --dry-run to preview)
   maintain [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]
                                  Periodic reconsolidation pass: reconcile, then relate, then decay in one run (MODIFIES the graph; use --dry-run to preview)
+  profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
+                                 Show an entity's context digest (owner by default); --track/--untrack manage auto-refresh
   mcp [--transport stdio|http] [--addr host:port]
                                  Run the MCP server (Claude Desktop, Claude Code, other MCP clients)`)
 }

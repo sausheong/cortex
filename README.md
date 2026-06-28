@@ -47,6 +47,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Obsidian-compatible vault export** — `cortex export` projects the graph as a browsable markdown vault with frontmatter, wikilinks, and backlinks. Incremental change detection via a hidden manifest
 - **Agent contract** — `cortex init-schema` drops a `CORTEX.md` into a project that tells any LLM-based agent how to use cortex as the knowledge layer (when to recall, when to remember, what not to store)
 - **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report. `cortex reconcile` detects newer memories that supersede older contradicting ones and soft-invalidates the stale ones (dry-run by default)
+- **Entity profiles** — `cortex profile` returns a cached two-part digest of an entity's memories: a `static` half (stable identity and preferences) and a `dynamic` half (recent context). Distilled into bullets by the LLM when configured, raw memory texts otherwise. Rebuilt when stale (24h TTL or a change in memory count). The owner always has a profile; other entities are opt-in via `--track`
 - **Two interfaces** — CLI and MCP server (stdio or streamable HTTP)
 - **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
@@ -201,6 +202,9 @@ Commands:
   reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]
                                  Soft-invalidate memories superseded by newer facts (dry-run by default);
                                  --json saves a dry-run report, --apply --from <file> applies a reviewed one
+  profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
+                                 Show an entity's cached profile (owner by default); --track/--untrack
+                                 opt an entity in/out of auto-refresh during maintain
   config                         Show owner identity
   config --name <name>           Update owner name
   config --nickname <nick>       Update owner nickname
@@ -312,11 +316,27 @@ cortex init-schema [<dir>] [--force]
 
 The template explains to any LLM-based agent how to use cortex as the knowledge layer for the project: when to `recall`, when to `remember`, what not to store, and how the vault fits in. Refuses to overwrite an existing `CORTEX.md` unless `--force` is passed. After running, edit the file to add project-specific conventions.
 
+### `cortex profile`
+
+Show a cached, two-part digest of an entity's memories.
+
+```bash
+cortex profile                  # owner's profile
+cortex profile <entity-id>      # any entity's profile
+cortex profile --track <id>     # opt an entity in to auto-refresh
+cortex profile --untrack <id>   # opt it back out
+cortex profile --json           # machine-readable output
+```
+
+A profile has a `static` half — stable identity and preferences — and a `dynamic` half — recent context. Both are built from the entity's currently-valid linked memories and, when an LLM is configured, distilled into bullets; without one, the raw memory texts are used. The profile is cached on the entity and rebuilt when stale: after a 24h TTL, or as soon as the entity's memory count changes.
+
+The owner entity always has a profile. Other entities are opt-in: `--track <id>` marks an entity so its profile is refreshed during `cortex maintain`, and `--untrack <id>` removes it.
+
 ---
 
 ## Using as an MCP Server
 
-Connect cortex to Claude Code, Cursor, Windsurf, or any MCP-compatible AI tool. The MCP server exposes 8 tools over stdio.
+Connect cortex to Claude Code, Cursor, Windsurf, or any MCP-compatible AI tool. The MCP server exposes 11 tools over stdio.
 
 ### Build
 
@@ -396,6 +416,7 @@ Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Fla
 | `get_relationships` | Get relationships for an entity | `entity_id` | `type` |
 | `traverse` | BFS walk of the knowledge graph | `start_id` | `depth`, `edge_types` |
 | `search` | Direct keyword, vector, or memory search | `query`, `mode` | `limit` |
+| `profile` | Cached two-part (static + dynamic) digest of an entity's memories; owner by default | | `entity_id` |
 
 The `search` tool's `mode` parameter accepts `keyword`, `vector`, or `memory` to select the search strategy directly, bypassing query decomposition.
 
@@ -1081,7 +1102,7 @@ cortex recall "who works at Stripe"
 
 ## Scheduling maintenance
 
-`cortex maintain` runs the reconsolidation pass — reconcile contradictions, build derives/extends edges, then decay confidence and soft-retire stale memories. It is a one-shot, idempotent-in-effect command: run it periodically and the OS scheduler owns the cadence.
+`cortex maintain` runs the reconsolidation pass — reconcile contradictions, build derives/extends edges, decay confidence and soft-retire stale memories, then refresh the owner's and any tracked entities' profiles. It is a one-shot, idempotent-in-effect command: run it periodically and the OS scheduler owns the cadence.
 
 Preview first:
 

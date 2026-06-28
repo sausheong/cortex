@@ -588,6 +588,7 @@ type MaintainReport struct {
 	Reconcile *ReconcileReport `json:"reconcile,omitempty"`
 	Relate    *RelationReport  `json:"relate,omitempty"`
 	Decay     *DecayReport     `json:"decay,omitempty"`
+	Profile   *ProfileReport   `json:"profile,omitempty"`
 }
 
 type MaintainOption func(*maintainConfig)
@@ -597,6 +598,7 @@ type maintainConfig struct {
 	skipReconcile bool
 	skipRelate    bool
 	skipDecay     bool
+	skipProfile   bool
 	decayOpts     []DecayOption
 }
 
@@ -617,4 +619,80 @@ func WithoutDecay() MaintainOption { return func(c *maintainConfig) { c.skipDeca
 // WithMaintainDecayOptions forwards decay options to the decay pass.
 func WithMaintainDecayOptions(o ...DecayOption) MaintainOption {
 	return func(c *maintainConfig) { c.decayOpts = o }
+}
+
+// WithoutProfile skips the profile-refresh pass in Maintain.
+func WithoutProfile() MaintainOption { return func(c *maintainConfig) { c.skipProfile = true } }
+
+// --- Profile ---
+
+// Profile is an entity's cached context digest: a stable "who they are"
+// (Static) plus recent context (Dynamic). It is built from the entity's
+// currently-valid linked memories and cached on the entity. Distilled is
+// false when no LLM was available and the lists are raw memory texts.
+// Cached is true when served from the cache without a rebuild this call.
+type Profile struct {
+	EntityID  string    `json:"entity_id"`
+	Name      string    `json:"name"`
+	Static    []string  `json:"static"`
+	Dynamic   []string  `json:"dynamic"`
+	BuiltAt   time.Time `json:"built_at"`
+	Distilled bool      `json:"distilled"`
+	Cached    bool      `json:"cached"`
+}
+
+// ProfileReport summarizes a RefreshProfiles run (the Maintain profile pass).
+type ProfileReport struct {
+	Scanned int      `json:"scanned"`
+	Rebuilt int      `json:"rebuilt"`
+	Skipped []string `json:"skipped,omitempty"` // entity IDs whose build failed
+}
+
+// Profile tuning defaults.
+const (
+	ProfileDefaultTTL       = 24 * time.Hour
+	ProfileDefaultRecentK   = 7
+	ProfileDefaultWindow    = 30 * 24 * time.Hour
+	ProfileDefaultStaticCap = 15
+)
+
+type ProfileOption func(*profileConfig)
+
+type profileConfig struct {
+	ttl       time.Duration
+	recentK   int
+	window    time.Duration
+	staticCap int
+}
+
+func defaultProfileConfig() profileConfig {
+	return profileConfig{
+		ttl:       ProfileDefaultTTL,
+		recentK:   ProfileDefaultRecentK,
+		window:    ProfileDefaultWindow,
+		staticCap: ProfileDefaultStaticCap,
+	}
+}
+
+// WithProfileTTL sets how long a cached profile is served before a rebuild
+// (default 24h).
+func WithProfileTTL(d time.Duration) ProfileOption {
+	return func(c *profileConfig) { c.ttl = d }
+}
+
+// WithProfileRecentK sets how many recent memories form the dynamic section
+// (default 7).
+func WithProfileRecentK(n int) ProfileOption {
+	return func(c *profileConfig) { c.recentK = n }
+}
+
+// WithProfileWindow sets the recency window for dynamic memories (default 30d).
+func WithProfileWindow(d time.Duration) ProfileOption {
+	return func(c *profileConfig) { c.window = d }
+}
+
+// WithProfileStaticCap caps how many memories feed the static section
+// (default 15).
+func WithProfileStaticCap(n int) ProfileOption {
+	return func(c *profileConfig) { c.staticCap = n }
 }

@@ -317,6 +317,32 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			}
 		},
 	)
+
+	// --- profile ---
+	s.AddTool(
+		mcp.NewTool("profile",
+			mcp.WithDescription("Get a cached context digest for an entity — who they are (static) plus recent context (dynamic). Call this FIRST to load baseline context about the user (omit entity_id for the owner) before answering, instead of guessing what to recall. Returns static[] and dynamic[] fact lists."),
+			mcp.WithString("entity_id", mcp.Description("Entity ID to profile. Omit for the owner entity.")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			entityID := req.GetString("entity_id", "")
+			if entityID == "" {
+				owners, err := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person", Source: "owner"})
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				if len(owners) == 0 {
+					return mcp.NewToolResultError("no owner configured"), nil
+				}
+				entityID = owners[0].ID
+			}
+			p, err := cx.Profile(ctx, entityID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(p)
+		},
+	)
 }
 
 func jsonResult(v any) (*mcp.CallToolResult, error) {

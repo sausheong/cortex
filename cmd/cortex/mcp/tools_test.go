@@ -79,6 +79,7 @@ func TestRegisterTools_AllToolsListed(t *testing.T) {
 		"get_entity", "find_entities", "get_relationships",
 		"traverse", "search",
 		"merge", "lint",
+		"profile",
 	}
 	for _, name := range want {
 		if !got[name] {
@@ -137,6 +138,54 @@ func TestFindEntitiesTool(t *testing.T) {
 	}
 	if len(entities) != 1 || entities[0].Name != "Alice" {
 		t.Errorf("unexpected entities: %+v", entities)
+	}
+}
+
+func TestProfileTool_NoOwner(t *testing.T) {
+	cx := newTestCortex(t)
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "profile"
+	callReq.Params.Arguments = map[string]any{} // omit entity_id -> resolve owner
+
+	resp, err := c.CallTool(context.Background(), callReq)
+	if err != nil {
+		t.Fatalf("CallTool profile: %v", err)
+	}
+	if !resp.IsError {
+		t.Fatalf("expected error result when no owner configured, got: %+v", resp.Content)
+	}
+	if text := textContent(t, resp); !strings.Contains(text, "no owner configured") {
+		t.Errorf("expected 'no owner configured', got: %s", text)
+	}
+}
+
+func TestProfileTool_OwnerRoundTrip(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	owner := &cortex.Entity{Type: "person", Name: "Me", Source: "owner"}
+	if err := cx.PutEntity(ctx, owner); err != nil {
+		t.Fatalf("PutEntity owner: %v", err)
+	}
+
+	c := newTestClient(t, cx)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "profile"
+	callReq.Params.Arguments = map[string]any{} // omit entity_id -> resolve owner
+
+	resp, err := c.CallTool(ctx, callReq)
+	if err != nil {
+		t.Fatalf("CallTool profile: %v", err)
+	}
+	if resp.IsError {
+		t.Fatalf("profile returned error: %+v", resp.Content)
+	}
+	var p cortex.Profile
+	if err := json.Unmarshal([]byte(textContent(t, resp)), &p); err != nil {
+		t.Fatalf("unmarshal Profile: %v", err)
+	}
+	if p.EntityID != owner.ID {
+		t.Errorf("expected profile for owner %s, got %s", owner.ID, p.EntityID)
 	}
 }
 
