@@ -340,12 +340,14 @@ func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
 			Content    string  `json:"content"`
 			Confidence float64 `json:"confidence"`
 			ValidAt    string  `json:"valid_at"`
+			Static     bool    `json:"static"`
 		}
 		if err := json.Unmarshal(m, &memObj); err == nil && memObj.Content != "" {
 			extraction.Memories = append(extraction.Memories, cortex.Memory{
 				Content:    memObj.Content,
 				Confidence: memObj.Confidence,
 				ValidAt:    cortex.ParseEventTime(memObj.ValidAt),
+				Static:     memObj.Static,
 			})
 			continue
 		}

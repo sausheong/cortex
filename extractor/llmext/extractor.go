@@ -11,7 +11,7 @@ const extractionPrompt = `Analyze the following text and extract structured know
 Return a JSON object with the following fields:
 - "entities": array of objects with "name", "type", optional "attributes", and "confidence"
 - "relationships": array of objects with "source" (entity name), "target" (entity name), "type", optional "attributes", and "confidence"
-- "memories": array of objects with "content" (a concise factual statement), optional "entity_ids", and "confidence"
+- "memories": array of objects with "content" (a concise factual statement), optional "entity_ids", optional "static" (boolean), and "confidence"
 
 For each item, "confidence" is a float between 0.0 and 1.0 expressing how
 certain you are about that specific extracted claim:
@@ -22,6 +22,13 @@ certain you are about that specific extracted claim:
 
 Be honest. It is better to mark something low-confidence than to omit it
 or to claim certainty you don't have.
+
+For each memory, "static" marks whether it is a stable fact:
+- true  = identity facts and durable preferences (role, hometown,
+          "prefers dark mode", relationships, long-term traits)
+- false = episodic or time-bound facts (meetings, "learning X this week",
+          "exam tomorrow", anything with a date or that will expire)
+When unsure, use false.
 
 Extract all people, organizations, places, concepts, and other notable entities.
 Identify relationships between entities (e.g., works_at, knows, located_in).

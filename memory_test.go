@@ -437,3 +437,60 @@ func TestSearchMemoriesMode_EventTimeWindow(t *testing.T) {
 		t.Fatalf("expected only the January memory in the Q1 window, got %+v", got)
 	}
 }
+
+func TestMemory_StaticColumnExistsAndDefaultsFalse(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Alice"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	// A memory written without setting Static must come back Static=false.
+	m := &Memory{Content: "Alice exists", EntityIDs: []string{e.ID}}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetMemoriesByEntity(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d memories, want 1", len(got))
+	}
+	if got[0].Static {
+		t.Errorf("expected Static=false by default, got true")
+	}
+}
+
+func TestMemory_StaticRoundTrips(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+
+	e := &Entity{Type: "person", Name: "Bob"}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	m := &Memory{Content: "Bob is from Seattle", EntityIDs: []string{e.ID}, Static: true}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	// via GetMemoriesByEntity
+	got, err := c.GetMemoriesByEntity(ctx, e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].Static {
+		t.Fatalf("GetMemoriesByEntity: expected Static=true, got %+v", got)
+	}
+
+	// via SearchMemories (FTS)
+	found, err := c.SearchMemories(ctx, "Seattle", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) == 0 || !found[0].Static {
+		t.Fatalf("SearchMemories: expected Static=true, got %+v", found)
+	}
+}

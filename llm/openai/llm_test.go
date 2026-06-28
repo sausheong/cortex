@@ -201,3 +201,22 @@ func TestParseExtractionJSON_ReadsValidAt(t *testing.T) {
 		t.Fatal("expected nil ValidAt on memory without valid_at")
 	}
 }
+
+func TestParseExtractionJSON_ReadsStatic(t *testing.T) {
+	raw := `{"entities":[],"relationships":[],"memories":[` +
+		`{"content":"Bob is from Seattle","confidence":1.0,"static":true},` +
+		`{"content":"Bob has a meeting","confidence":1.0,"static":false}]}`
+	ex, err := parseExtractionJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ex.Memories) != 2 {
+		t.Fatalf("got %d memories, want 2", len(ex.Memories))
+	}
+	if !ex.Memories[0].Static {
+		t.Error("expected first memory Static=true")
+	}
+	if ex.Memories[1].Static {
+		t.Error("expected second memory Static=false")
+	}
+}

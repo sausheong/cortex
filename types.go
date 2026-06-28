@@ -42,6 +42,11 @@ type Memory struct {
 	EntityIDs  []string  `json:"entity_ids,omitempty"`
 	Source     string    `json:"source,omitempty"`
 	Speaker    string    `json:"speaker,omitempty"`
+	// Static marks an identity/preference fact (vs. an episodic one). Static
+	// memories are exempt from confidence decay and surface in a profile's
+	// static[] section; non-static memories decay and feed dynamic[]. Set by
+	// the LLM extractor; defaults false.
+	Static     bool      `json:"static"`
 	Confidence float64   `json:"confidence"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`

@@ -41,6 +41,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Remember / Recall / Forget** — simple high-level API inspired by mem0
 - **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
 - **Confidence scores** — every extracted entity, relationship, and memory carries a 0–1 confidence value the LLM assigns at ingest. Filter results with `--min-confidence`; lower-confidence claims show inline in vault pages and recall output
+- **Static memories** — the LLM extractor flags durable identity facts and stable preferences (role, hometown, "prefers dark mode") as `static` at ingest, distinct from episodic, time-bound facts ("exam tomorrow"). Static memories are exempt from confidence decay and always populate a profile's `static[]` section regardless of age
 - **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
 - **Calibrated abstention** — `RecallWithStrength` returns a relevance `Strength` and an `Abstain` hint so an agent can say "I don't know that" instead of fabricating from a weak match. The signal is the query↔result cosine, with a threshold calibrated on a real graph
 - **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
@@ -328,7 +329,7 @@ cortex profile --untrack <id>   # opt it back out
 cortex profile --json           # machine-readable output
 ```
 
-A profile has a `static` half — stable identity and preferences — and a `dynamic` half — recent context. Both are built from the entity's currently-valid linked memories and, when an LLM is configured, distilled into bullets; without one, the raw memory texts are used. The profile is cached on the entity and rebuilt when stale: after a 24h TTL, or as soon as the entity's memory count changes.
+A profile has a `static` half — stable identity and preferences — and a `dynamic` half — recent context. Memories flagged `static` at ingest land in the static half regardless of age; recent non-static memories feed the dynamic half. Both are built from the entity's currently-valid linked memories and, when an LLM is configured, distilled into bullets; without one, the raw memory texts are used. The profile is cached on the entity and rebuilt when stale: after a 24h TTL, or as soon as the entity's memory count changes.
 
 The owner entity always has a profile. Other entities are opt-in: `--track <id>` marks an entity so its profile is refreshed during `cortex maintain`, and `--untrack <id>` removes it.
 
@@ -685,6 +686,7 @@ type Memory struct {
     ID        string             // ULID
     Content   string             // "Alice is joining Stripe next month"
     EntityIDs []string           // Linked entity IDs
+    Static    bool               // Durable identity/preference fact; decay-exempt, feeds profile static[]
     Source    string
     CreatedAt time.Time
     UpdatedAt time.Time
@@ -753,6 +755,8 @@ Examples:
 
 Memories are linked to related entities via a junction table and are searched first during `Recall` because they're denser and more useful than raw text.
 
+Each memory also carries a `static` flag the LLM extractor sets at ingest. Static memories hold durable identity facts and stable preferences ("Alice is a staff engineer", "Carol prefers async communication"); non-static memories are episodic and time-bound ("The project deadline is March 15"). Static memories are exempt from confidence decay — they don't erode or get soft-retired as they age — and always feed a profile's `static[]` section, while recent non-static memories feed `dynamic[]`.
+
 ---
 
 ## Extraction Pipeline
@@ -775,7 +779,7 @@ When you call `Remember`, cortex runs a hybrid extraction pipeline:
 - Raw text is stored as chunks and indexed for FTS5 + vector search
 - Memories are stored with entity links
 
-The LLM extractor now requests a `confidence` field on every extracted item. Existing brain.db files migrate transparently on next `Open` — old rows get `confidence=1.0`.
+The LLM extractor now requests a `confidence` field on every extracted item, and a `static` flag on every memory (durable identity fact vs. episodic). Existing brain.db files migrate transparently on next `Open` — old rows get `confidence=1.0` and `static=false`.
 
 ### Custom Extractors
 

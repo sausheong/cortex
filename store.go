@@ -182,6 +182,11 @@ func Open(path string, opts ...Option) (*Cortex, error) {
 		return nil, fmt.Errorf("cortex: migrate memories.speaker: %w", err)
 	}
 
+	if err := ensureColumn(db, "memories", "static", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cortex: migrate memories.static: %w", err)
+	}
+
 	if err := ensureColumn(db, "memories", "last_decay_at", "DATETIME"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cortex: migrate memories.last_decay_at: %w", err)
