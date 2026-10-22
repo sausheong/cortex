@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
 	"testing"
 	"time"
@@ -322,9 +323,8 @@ func TestForgetRequiresFilter(t *testing.T) {
 }
 
 func TestRememberWithEmbedder(t *testing.T) {
-	c := openTestDB(t)
+	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
-	c.SetEmbedder(&testEmbedder{})
 	c.SetExtractor(&mockExtractor{
 		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
 			return &Extraction{
@@ -507,11 +507,13 @@ func (e *recordingEmbedder) Embed(_ context.Context, texts []string) ([][]float3
 func (e *recordingEmbedder) Dimensions() int { return 8 }
 
 func TestRemember_EmbedsFactAugmentedMemory(t *testing.T) {
-	c := openTestDB(t)
-	ctx := context.Background()
-
 	rec := &recordingEmbedder{}
-	c.SetEmbedder(rec)
+	c, err := Open(pgtest.DSN(t), WithEmbedder(rec))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{
 		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
 			return &Extraction{

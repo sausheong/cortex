@@ -3,10 +3,10 @@ package testutil
 import (
 	"context"
 	"math"
-	"path/filepath"
 	"testing"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 // MockLLM is a configurable mock for the cortex.LLM interface.
@@ -101,14 +101,11 @@ func (m *MockExtractor) Extract(ctx context.Context, content, contentType string
 func OpenTestDB(t *testing.T) *cortex.Cortex {
 	t.Helper()
 
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
 	llm := &MockLLM{}
 	embedder := &MockEmbedder{}
 	extractor := &MockExtractor{}
 
-	c, err := cortex.Open(dbPath,
+	c, err := cortex.Open(pgtest.DSN(t),
 		cortex.WithLLM(llm),
 		cortex.WithEmbedder(embedder),
 		cortex.WithExtractor(extractor),
