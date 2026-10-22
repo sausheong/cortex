@@ -46,6 +46,12 @@ func RenderProfileReportMarkdown(r ProfileReport) string {
 	fmt.Fprintf(&b, "Scanned: %d\n", r.Scanned)
 	fmt.Fprintf(&b, "Rebuilt: %d\n", r.Rebuilt)
 	fmt.Fprintf(&b, "Skipped: %d\n", len(r.Skipped))
+	if r.Undistilled > 0 {
+		fmt.Fprintf(&b, "Undistilled (LLM errors): %d\n", r.Undistilled)
+		for _, e := range r.Errors {
+			fmt.Fprintf(&b, "  - %s\n", e)
+		}
+	}
 	if len(r.Skipped) > 0 {
 		b.WriteString("\n## Skipped\n\n")
 		for _, id := range r.Skipped {

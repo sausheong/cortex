@@ -107,3 +107,38 @@ func openUserCortexOrExit(ref string) *cortex.Cortex {
 	}
 	return cx
 }
+
+// openDefaultUserCortex returns the handle for commands run without --user on
+// the server: the bootstrap user (the owner) built from that user's own
+// provider settings. ok is false when the accounts layer is not configured
+// (no CORTEX_SECRET_KEY) or the bootstrap user has no usable provider, in
+// which case the caller falls back to the environment-built handle.
+func openDefaultUserCortex(ctx context.Context, dsn string, env map[string]string) (cx *cortex.Cortex, ok bool, err error) {
+	if env["CORTEX_SECRET_KEY"] == "" {
+		return nil, false, nil
+	}
+	cx, err = openUserCortex(ctx, dsn, cortex.BootstrapUserID, env)
+	if errors.Is(err, accounts.ErrNoProvider) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return cx, true, nil
+}
+
+// openCortexAsDefaultUser is openCortex, except that with no --user it acts as
+// the bootstrap user with that user's providers when they are configured.
+func openCortexAsDefaultUser() *cortex.Cortex {
+	if userRef == "" {
+		cx, ok, err := openDefaultUserCortex(context.Background(), requireDSN(), environMap())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if ok {
+			return cx
+		}
+	}
+	return openCortex()
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -120,8 +121,10 @@ func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static,
 }
 
 const profileStaticPrompt = "Below are stable, long-term facts about %s. " +
-	"Distill them into a concise deduplicated bullet list of who they are — " +
-	"role, traits, durable preferences. One fact per line, no preamble. " +
+	"Write a concise, deduplicated bullet list that represents who they are as a whole person, " +
+	"covering (where the facts support it): identity, background, work, strengths and capabilities, " +
+	"preferences, and key relationships. Merge near-duplicate facts into one bullet and give no single " +
+	"acquaintance or topic more than a bullet or two. One fact per line, no preamble. " +
 	"Drop anything episodic or time-bound."
 
 const profileDynamicPrompt = "Below are recent notes about %s. " +
@@ -135,8 +138,16 @@ const profileDynamicPrompt = "Below are recent notes about %s. " +
 // distilled=false (logging the error via logf when present). An empty bucket
 // returns (nil, true) without calling the LLM.
 func (c *Cortex) distillBucket(ctx context.Context, name, instruction string, mems []Memory) (lines []string, distilled bool) {
+	lines, distilled, _ = c.distillBucketErr(ctx, name, instruction, mems)
+	return lines, distilled
+}
+
+// distillBucketErr is distillBucket plus the Summarize error (nil when the LLM
+// was absent, returned nothing usable, or succeeded). Transient provider
+// failures are retried before falling back to raw contents.
+func (c *Cortex) distillBucketErr(ctx context.Context, name, instruction string, mems []Memory) (lines []string, distilled bool, err error) {
 	if len(mems) == 0 {
-		return nil, true
+		return nil, true, nil
 	}
 	raw := make([]string, len(mems))
 	for i, m := range mems {
@@ -144,24 +155,24 @@ func (c *Cortex) distillBucket(ctx context.Context, name, instruction string, me
 	}
 
 	if c.cfg.llm == nil {
-		return raw, false
+		return raw, false, nil
 	}
 
 	texts := append([]string{fmt.Sprintf(instruction, name)}, raw...)
-	out, err := c.cfg.llm.Summarize(ctx, texts)
+	out, err := retryLLM(ctx, func() (string, error) { return c.cfg.llm.Summarize(ctx, texts) })
 	if err != nil {
 		if c.cfg.logf != nil {
 			c.cfg.logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
 		}
-		return raw, false
+		return raw, false, err
 	}
 	lines = cleanBullets(out)
 	if len(lines) == 0 {
 		// LLM returned nothing usable; fall back rather than emit an empty
 		// distilled section.
-		return raw, false
+		return raw, false, nil
 	}
-	return lines, true
+	return lines, true, nil
 }
 
 // cleanBullets splits Summarize output into trimmed, non-empty lines with any
@@ -212,7 +223,8 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 		return Profile{}, err
 	}
 
-	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) {
+	// A cached undistilled digest is rebuilt once an LLM is available.
+	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.cfg.llm == nil) {
 		return Profile{
 			EntityID:  e.ID,
 			Name:      e.Name,
@@ -223,16 +235,32 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 			Cached:    true,
 		}, nil
 	}
-	return c.buildProfileFromMemories(ctx, e, mems, cfg, now)
+	p, _, err := c.buildProfile(ctx, e, mems, cfg, now)
+	return p, err
 }
 
 // buildProfileFromMemories partitions + distills the given memories, persists
 // the digest to the entity's attributes, and returns it with Cached=false.
 func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems []Memory, cfg profileConfig, now time.Time) (Profile, error) {
-	staticMems, dynamicMems := partitionMemories(mems, cfg, now)
-	staticLines, sDist := c.distillBucket(ctx, e.Name, profileStaticPrompt, staticMems)
-	dynamicLines, dDist := c.distillBucket(ctx, e.Name, profileDynamicPrompt, dynamicMems)
+	p, _, err := c.buildProfile(ctx, e, mems, cfg, now)
+	return p, err
+}
+
+// buildProfile is buildProfileFromMemories plus the first distill error.
+// The static half is built from a diverse candidate selection (see
+// selectStaticCandidates) rather than the N highest-confidence memories.
+func (c *Cortex) buildProfile(ctx context.Context, e *Entity, mems []Memory, cfg profileConfig, now time.Time) (p Profile, distillErr, err error) {
+	poolCfg := cfg
+	poolCfg.staticCap = len(mems) + 1 // partition keeps the whole static pool; diversity trims it
+	staticPool, dynamicMems := partitionMemories(mems, poolCfg, now)
+	staticMems := selectStaticCandidates(staticPool, e.ID, cfg.staticCap)
+	staticLines, sDist, sErr := c.distillBucketErr(ctx, e.Name, profileStaticPrompt, staticMems)
+	dynamicLines, dDist, dErr := c.distillBucketErr(ctx, e.Name, profileDynamicPrompt, dynamicMems)
 	distilled := sDist && dDist
+	distillErr = sErr
+	if distillErr == nil {
+		distillErr = dErr
+	}
 
 	cp := cachedProfile{
 		Static:      staticLines,
@@ -246,7 +274,7 @@ func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems [
 	}
 	e.Attributes[attrProfile] = cp
 	if err := c.PutEntity(ctx, e); err != nil {
-		return Profile{}, fmt.Errorf("cortex: persist profile: %w", err)
+		return Profile{}, distillErr, fmt.Errorf("cortex: persist profile: %w", err)
 	}
 
 	return Profile{
@@ -257,7 +285,7 @@ func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems [
 		BuiltAt:   now,
 		Distilled: distilled,
 		Cached:    false,
-	}, nil
+	}, distillErr, nil
 }
 
 // readCachedProfile decodes the cached digest from an entity's attributes.
@@ -305,9 +333,16 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 	rep := ProfileReport{Scanned: len(ids)}
 	// Force a rebuild each run by collapsing the TTL; caller opts still apply
 	// after this (so an explicit WithProfileTTL would override, which is fine).
-	forced := append([]ProfileOption{WithProfileTTL(0)}, opts...)
+	cfg := defaultProfileConfig()
+	for _, o := range opts {
+		o(&cfg)
+	}
 	for _, id := range ids {
-		if _, err := c.Profile(ctx, id, forced...); err != nil {
+		p, derr, err := c.rebuildProfile(ctx, id, cfg)
+		if err != nil {
+			if ctx.Err() != nil {
+				return rep, ctx.Err()
+			}
 			rep.Skipped = append(rep.Skipped, id)
 			if c.cfg.logf != nil {
 				c.cfg.logf("cortex: refresh profile %s: %v", id, err)
@@ -315,6 +350,153 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 			continue
 		}
 		rep.Rebuilt++
+		if !p.Distilled && derr != nil {
+			rep.Undistilled++
+			addReportError(&rep.Errors, "distill profile %s: %v", id, derr)
+		}
 	}
 	return rep, nil
+}
+
+// rebuildProfile forces a rebuild of one entity's digest, ignoring the cache.
+func (c *Cortex) rebuildProfile(ctx context.Context, entityID string, cfg profileConfig) (p Profile, distillErr, err error) {
+	e, err := c.GetEntity(ctx, entityID)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	mems, err := c.GetMemoriesByEntity(ctx, entityID)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	return c.buildProfile(ctx, e, mems, cfg, time.Now().UTC())
+}
+
+// Static-candidate selection tuning.
+const (
+	// staticNearDupJaccard is the word-set similarity at/above which two
+	// memories count as near-duplicates (only the better-ranked one is kept).
+	staticNearDupJaccard = 0.6
+	// staticPerEntityCap bounds how many candidates may be co-linked to any one
+	// other entity, so a single acquaintance cannot dominate the static half.
+	staticPerEntityCap = 5
+)
+
+var (
+	nonWordRE = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+	// profileSignalWords flag identity / preference / capability / background
+	// content, which is what a profile's static half should be made of.
+	profileSignalWords = []string{
+		"is a ", "is an ", "works ", "working ", "work as", "role", "job", "career", "founder", "engineer",
+		"lives", "based in", "born", "grew up", "from ", "studied", "degree", "graduated", "university",
+		"prefers", "prefer", "likes", "loves", "enjoys", "favorite", "favourite", "dislikes", "hates",
+		"skilled", "expert", "experience", "proficient", "good at", "speaks", "knows how", "strength",
+		"background", "married", "wife", "husband", "daughter", "son ", "family", "hobby", "interested in",
+	}
+)
+
+func normalizeText(s string) string {
+	return strings.TrimSpace(nonWordRE.ReplaceAllString(strings.ToLower(s), " "))
+}
+
+func wordSet(norm string) map[string]struct{} {
+	set := map[string]struct{}{}
+	for _, w := range strings.Fields(norm) {
+		set[w] = struct{}{}
+	}
+	return set
+}
+
+func jaccard(a, b map[string]struct{}) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	inter := 0
+	for w := range a {
+		if _, ok := b[w]; ok {
+			inter++
+		}
+	}
+	return float64(inter) / float64(len(a)+len(b)-inter)
+}
+
+// staticPriority ranks a memory for inclusion in the static half: identity-ish
+// content and confidence first, a Static flag as a bonus.
+func staticPriority(m Memory) float64 {
+	score := m.Confidence
+	if m.Static {
+		score += 0.5
+	}
+	low := strings.ToLower(m.Content)
+	for _, w := range profileSignalWords {
+		if strings.Contains(low, w) {
+			score += 0.4
+			break
+		}
+	}
+	return score
+}
+
+// selectStaticCandidates picks up to limit memories to feed the static
+// distillation, favouring breadth over recency: candidates are ranked by
+// staticPriority (then recency), near-duplicates of an already-chosen memory
+// (same normalized text or word-set Jaccard >= staticNearDupJaccard) are
+// dropped, and at most staticPerEntityCap chosen memories may link to any one
+// entity other than selfID.
+func selectStaticCandidates(pool []Memory, selfID string, limit int) []Memory {
+	if limit <= 0 || len(pool) == 0 {
+		return nil
+	}
+	ranked := append([]Memory(nil), pool...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		pi, pj := staticPriority(ranked[i]), staticPriority(ranked[j])
+		if pi != pj {
+			return pi > pj
+		}
+		return ranked[i].CreatedAt.After(ranked[j].CreatedAt)
+	})
+
+	var out []Memory
+	var sets []map[string]struct{}
+	perEntity := map[string]int{}
+	for _, m := range ranked {
+		if len(out) >= limit {
+			break
+		}
+		ws := wordSet(normalizeText(m.Content))
+		if len(ws) == 0 {
+			continue
+		}
+		dup := false
+		for _, o := range sets {
+			if jaccard(ws, o) >= staticNearDupJaccard {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		var others []string
+		for _, id := range m.EntityIDs {
+			if id != selfID {
+				others = append(others, id)
+			}
+		}
+		full := false
+		for _, id := range others {
+			if perEntity[id] >= staticPerEntityCap {
+				full = true
+				break
+			}
+		}
+		if full {
+			continue
+		}
+		for _, id := range others {
+			perEntity[id]++
+		}
+		out = append(out, m)
+		sets = append(sets, ws)
+	}
+	return out
 }

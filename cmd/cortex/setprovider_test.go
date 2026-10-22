@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
 )
 
@@ -138,5 +139,36 @@ func TestSetProviderNeedsKeyAndNoKeyArgv(t *testing.T) {
 	}
 	if err := runSetProvider(ctx, &bytes.Buffer{}, st, root, u.ID, []string{spKey}, nil, map[string]string{}, nil); err == nil || strings.Contains(err.Error(), spKey) || !strings.Contains(err.Error(), "positional") {
 		t.Fatalf("positional key must be refused: %v", err)
+	}
+}
+
+func TestProfileDefaultUserIsDistilledWithBootstrapProviders(t *testing.T) {
+	root, dsn := adminRoot(t)
+	st := spStore(t, dsn)
+	ctx := t.Context()
+	srv := fakeProvider(t, false)
+	var out bytes.Buffer
+	if err := runSetProvider(ctx, &out, st, root, "u_bootstrap", []string{"--base-url", srv.URL + "/v1", "--skip-test"}, strings.NewReader(spKey+"\n"), map[string]string{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"CORTEX_SECRET_KEY": strings.Repeat("ab", 32), "CORTEX_ALLOW_PRIVATE_PROVIDERS": "1"}
+	cx, ok, err := openDefaultUserCortex(ctx, dsn, env)
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	defer cx.Close()
+	e := &cortex.Entity{Type: "person", Name: "Me", Source: "owner"}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.PutMemory(ctx, &cortex.Memory{Content: "Me is an engineer", EntityIDs: []string{e.ID}, Static: true, Confidence: 1}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := cx.Profile(ctx, e.ID)
+	if err != nil || !p.Distilled {
+		t.Fatalf("want distilled profile: %+v %v", p, err)
+	}
+	if _, ok, _ := openDefaultUserCortex(ctx, dsn, map[string]string{}); ok {
+		t.Fatal("without CORTEX_SECRET_KEY the default handle must not be used")
 	}
 }

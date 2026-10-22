@@ -14,8 +14,9 @@ func cmdProfile() {
 	untrack := ""
 	jsonOut := false
 	target := "" // entity id; empty = owner
-	usage := "usage: cortex profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]\n" +
+	usage := "usage: cortex profile [--user <id|email>] [<entity-id>] [--track <id>] [--untrack <id>] [--json]\n" +
 		"  (no args)        show the owner's profile\n" +
+		"  --user <ref>     act as that user, with their AI provider (default on the server: the bootstrap user)\n" +
 		"  <entity-id>      show a specific entity's profile\n" +
 		"  --track <id>     mark an entity for auto-refresh during maintain\n" +
 		"  --untrack <id>   stop auto-refresh and drop its cached profile\n" +
@@ -48,7 +49,7 @@ func cmdProfile() {
 		}
 	}
 
-	cx := openCortex()
+	cx := openCortexAsDefaultUser()
 	defer cx.Close()
 	ctx := context.Background()
 
