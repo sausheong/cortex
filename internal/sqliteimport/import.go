@@ -133,8 +133,14 @@ func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, opts Opti
 	}
 	for _, t := range tables {
 		var s, d int
-		if err := src.QueryRowContext(ctx, "SELECT count(*) FROM "+t).Scan(&s); err != nil {
-			return rep, fmt.Errorf("count source %s: %w", t, err)
+		have, err := sourceColumns(ctx, src, t)
+		if err != nil {
+			return rep, err
+		}
+		if len(have) > 0 { // a missing table (older brain) counts as 0 rows
+			if err := src.QueryRowContext(ctx, "SELECT count(*) FROM "+t).Scan(&s); err != nil {
+				return rep, fmt.Errorf("count source %s: %w", t, err)
+			}
 		}
 		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM "+t).Scan(&d); err != nil {
 			return rep, fmt.Errorf("count target %s: %w", t, err)
@@ -170,7 +176,49 @@ func copyAll(ctx context.Context, src, dst *sql.DB, force bool) error {
 	return tx.Commit()
 }
 
+// sourceColumns returns the columns the SQLite table actually has. Brains
+// written by older cortex versions lack later columns (static, forget_after,
+// ...) and tables (memory_edges); an empty result means the table is absent.
+func sourceColumns(ctx context.Context, src *sql.DB, table string) (map[string]bool, error) {
+	rows, err := src.QueryContext(ctx, "SELECT name FROM pragma_table_info(?)", table)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", table, err)
+	}
+	defer rows.Close()
+	have := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, fmt.Errorf("inspect %s: %w", table, err)
+		}
+		have[n] = true
+	}
+	return have, rows.Err()
+}
+
 func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error {
+	have, err := sourceColumns(ctx, src, ts.name)
+	if err != nil {
+		return err
+	}
+	if len(have) == 0 {
+		return nil
+	}
+	// Copy only columns the source has; absent ones take Postgres defaults.
+	// Key columns lead every spec and exist in every version, so idCols stay
+	// valid after filtering.
+	var cols []colSpec
+	for _, col := range ts.cols {
+		if have[col.name] {
+			cols = append(cols, col)
+		}
+	}
+	for _, i := range ts.idCols {
+		if !have[ts.cols[i].name] {
+			return fmt.Errorf("table %s: missing key column %s", ts.name, ts.cols[i].name)
+		}
+	}
+	ts = tableSpec{name: ts.name, cols: cols, idCols: ts.idCols}
 	names := make([]string, len(ts.cols))
 	ph := make([]string, len(ts.cols))
 	for i, col := range ts.cols {

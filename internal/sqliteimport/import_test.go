@@ -157,3 +157,39 @@ func TestImportEmbedResumes(t *testing.T) {
 		}
 	}
 }
+
+// TestImportOlderSchema covers brains written by cortex versions before
+// v0.4.0: no static/forget_after columns and no memory_edges table.
+func TestImportOlderSchema(t *testing.T) {
+	path := makeSQLite(t, "2026-03-01 08:00:00")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{
+		`ALTER TABLE memories DROP COLUMN static`,
+		`ALTER TABLE memories DROP COLUMN forget_after`,
+		`DROP TABLE memory_edges`,
+	} {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	db.Close()
+
+	cx := openTarget(t, &fakeEmb{})
+	rep, err := Import(context.Background(), path, cx, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := rep.Counts["memories"]; p[0] != 2 || p[1] != 2 {
+		t.Errorf("memories: source %d target %d", p[0], p[1])
+	}
+	if p := rep.Counts["memory_edges"]; p[0] != 0 || p[1] != 0 {
+		t.Errorf("memory_edges: source %d target %d", p[0], p[1])
+	}
+	var static bool
+	if err := cx.DB().QueryRow(`SELECT static FROM memories WHERE id='m2'`).Scan(&static); err != nil || static {
+		t.Errorf("m2 static=%v err=%v, want default false", static, err)
+	}
+}
