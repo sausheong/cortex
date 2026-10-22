@@ -157,7 +157,7 @@ if [ -n "$PUBLIC_HOST" ]; then
   fi
   if ! { ufw default deny incoming >/dev/null \
       && ufw default allow outgoing >/dev/null \
-      && ufw allow 22/tcp >/dev/null \
+      && ufw limit 22/tcp >/dev/null \
       && ufw allow 80/tcp >/dev/null \
       && ufw allow 5432/tcp >/dev/null \
       && ufw --force enable >/dev/null; } 2>/dev/null; then
@@ -183,7 +183,10 @@ elif [ -n "$PUBLIC_HOST" ]; then
     else
       CB_ARGS+=(--register-unsafely-without-email)
     fi
-    certbot "${CB_ARGS[@]}"
+    if ! certbot "${CB_ARGS[@]}"; then
+      echo "certbot failed: check that ${PUBLIC_HOST} has a DNS-only (grey-cloud) A record pointing at this host and that port 80 is free" >&2
+      exit 1
+    fi
   fi
   install_certs "$LIVE/fullchain.pem" "$LIVE/privkey.pem"
   USE_SSL=1
