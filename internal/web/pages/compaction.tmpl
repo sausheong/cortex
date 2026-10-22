@@ -1,0 +1,36 @@
+{{define "title"}}Compaction{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Compact memories</h1>
+{{if eq .Status "proposing"}}
+<p>Looking for memories to merge. This page refreshes on its own.</p>
+<meta http-equiv="refresh" content="3">
+{{else if eq .Status "failed"}}
+<p class="error" role="alert">Compaction failed. Check your AI provider settings and try again.</p>
+{{else if eq .Status "ready"}}
+{{if .Changes}}
+<p>Review the proposed changes. Sources are kept and can be restored with Undo.</p>
+<form method="post" action="/compaction/{{.ID}}/apply">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  {{range $i, $c := .Changes}}
+  <section class="change">
+    <label><input type="checkbox" name="idx" value="{{$i}}" checked> <strong>{{$c.Kind}}</strong></label>
+    <p>Replaces:</p>
+    <ul>{{range $c.Sources}}<li>{{.}}</li>{{end}}</ul>
+    <p>With: {{$c.Result}}</p>
+  </section>
+  {{end}}
+  <button class="btn">Apply selected</button>
+</form>
+{{else}}<p>Nothing to compact.</p>{{end}}
+{{else if eq .Status "applied"}}
+<p>Compaction applied.</p>
+<form method="post" action="/compaction/{{.ID}}/undo">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <button class="btn">Undo</button>
+</form>
+{{else if eq .Status "undone"}}
+<p>Compaction undone. Your memories are back as they were.</p>
+{{end}}
+{{end}}
+{{end}}
