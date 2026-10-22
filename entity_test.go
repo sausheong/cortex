@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -641,9 +642,9 @@ func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := cx.db.ExecContext(ctx,
-		`INSERT INTO embeddings (id, ref_id, ref_type, vector) VALUES (?, ?, 'entity', ?)`,
-		"emb_drop", drop.ID, []byte{0x00}); err != nil {
+	vec := make([]float32, cx.dims)
+	vec[0] = 1
+	if err := cx.putEmbedding(ctx, drop.ID, "entity", vec); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
@@ -714,5 +715,54 @@ func TestMergeEntitiesDryRun_NoChanges(t *testing.T) {
 	// drop entity is STILL present.
 	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
 		t.Errorf("drop entity should still exist after dry-run: %v", err)
+	}
+}
+
+func TestFindEntitiesNameLikeCaseInsensitive(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	if err := c.PutEntity(ctx, &Entity{Type: "person", Name: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.FindEntities(ctx, EntityFilter{NameLike: "ali%"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d entities, want 1", len(got))
+	}
+}
+
+func TestPutEntityConcurrentNoDuplicates(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	const n = 20
+	ids := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			e := &Entity{Type: "person", Name: "Bob"}
+			errs[i] = c.PutEntity(ctx, e)
+			ids[i] = e.ID
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+		if ids[i] != ids[0] {
+			t.Fatalf("goroutine %d got id %q, want %q", i, ids[i], ids[0])
+		}
+	}
+	got, err := c.FindEntities(ctx, EntityFilter{Type: "person"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d entities, want 1", len(got))
 	}
 }

@@ -17,50 +17,30 @@ import (
 func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	e.Confidence = coerceConfidence(e.Confidence)
 
-	// Check for existing entity with same name + type.
-	var existingID string
-	err := c.db.QueryRowContext(ctx,
-		"SELECT id FROM entities WHERE name = ? AND type = ?",
-		e.Name, e.Type,
-	).Scan(&existingID)
-
-	attrsJSON, err2 := json.Marshal(e.Attributes)
-	if err2 != nil {
-		return fmt.Errorf("cortex: marshal attributes: %w", err2)
+	attrsJSON, err := json.Marshal(e.Attributes)
+	if err != nil {
+		return fmt.Errorf("cortex: marshal attributes: %w", err)
 	}
 
 	now := time.Now().UTC()
 
-	if err == nil {
-		// Entity exists — update.
-		_, err = c.db.ExecContext(ctx,
-			`UPDATE entities SET attributes = ?, source = ?, confidence = ?, updated_at = ? WHERE id = ?`,
-			string(attrsJSON), e.Source, e.Confidence, now, existingID,
-		)
-		if err != nil {
-			return fmt.Errorf("cortex: update entity: %w", err)
-		}
-		e.ID = existingID
-		e.UpdatedAt = now
-		return nil
-	}
-	if err != sql.ErrNoRows {
-		return fmt.Errorf("cortex: check existing entity: %w", err)
-	}
-
-	// New entity — insert.
-	e.ID = newID()
-	e.CreatedAt = now
-	e.UpdatedAt = now
-
-	_, err = c.db.ExecContext(ctx,
+	// Single atomic upsert: concurrent writers with the same (name, type)
+	// converge on one row.
+	err = c.db.QueryRowContext(ctx,
 		`INSERT INTO entities (id, type, name, attributes, source, confidence, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, e.CreatedAt, e.UpdatedAt,
-	)
+		 VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+		 ON CONFLICT (name, type) DO UPDATE SET
+		   attributes = EXCLUDED.attributes,
+		   source = EXCLUDED.source,
+		   confidence = EXCLUDED.confidence,
+		   updated_at = EXCLUDED.updated_at
+		 RETURNING id, created_at`,
+		newID(), e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, now,
+	).Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("cortex: insert entity: %w", err)
+		return fmt.Errorf("cortex: upsert entity: %w", err)
 	}
+	e.UpdatedAt = now
 	return nil
 }
 
@@ -99,7 +79,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 		args = append(args, f.Type)
 	}
 	if f.NameLike != "" {
-		conditions = append(conditions, "name LIKE ?")
+		conditions = append(conditions, "name ILIKE ?")
 		args = append(args, f.NameLike)
 	}
 	if f.Source != "" {
@@ -340,7 +320,7 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, keepID, dropID string) (Merg
 		return stats, fmt.Errorf("cortex: marshal merged attributes: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE entities SET attributes = ?::jsonb, updated_at = ? WHERE id = ?`,
 		string(attrsJSON), mergeTime, keepID); err != nil {
 		return stats, fmt.Errorf("cortex: update keep attributes: %w", err)
 	}
