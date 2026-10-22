@@ -16,7 +16,7 @@ const spKey = "sk-test-SECRET-1234"
 
 func fakeProvider(t *testing.T, fail bool) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fail {
 			w.WriteHeader(401)
 			return
