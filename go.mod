@@ -4,15 +4,18 @@ go 1.25.1
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.35.0
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/mark3labs/mcp-go v0.47.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/sashabaranov/go-openai v1.41.2
+	golang.org/x/oauth2 v0.36.0
 	modernc.org/sqlite v1.50.1
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
