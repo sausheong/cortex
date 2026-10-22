@@ -37,17 +37,20 @@ func TestBuildHTTPMux_MCPAuthGated(t *testing.T) {
 	}
 }
 
-func TestBuildHTTPMux_NoTokenSkipsAuth(t *testing.T) {
+func TestBuildHTTPMux_EmptyTokenRejectsAll(t *testing.T) {
 	s := server.NewMCPServer("test", "0.0.0", server.WithToolCapabilities(false))
 	mux := buildHTTPMux(s, "")
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`)))
-	// Without a token, the request reaches the streamable HTTP handler and gets
-	// whatever mcp-go decides (likely a 4xx/5xx for malformed input), but
-	// crucially NOT a 401 from our middleware.
-	if rec.Code == http.StatusUnauthorized {
-		t.Errorf("/mcp without configured token should not return 401, got %d", rec.Code)
+	for _, hdr := range []string{"", "Bearer ", "Bearer x"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+		if hdr != "" {
+			req.Header.Set("Authorization", hdr)
+		}
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("empty configured token, header %q: want 401, got %d", hdr, rec.Code)
+		}
 	}
 }
 

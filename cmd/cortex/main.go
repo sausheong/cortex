@@ -93,6 +93,8 @@ func main() {
 		cmdImportSQLite()
 	case "mcp":
 		cmdMCP()
+	case "serve":
+		cmdServe()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -107,6 +109,7 @@ Global options:
   --db <postgres-url>            Postgres connection URL (or CORTEX_DATABASE_URL env var; no default)
 
 Commands:
+  serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
   init                           Initialize the Postgres schema and set the owner
   remember <text>                Remember text
   recall <query> [--min-confidence <0-1>]

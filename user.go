@@ -223,3 +223,17 @@ func (c *Cortex) ResolveUserRef(ctx context.Context, ref string) (*User, error) 
 	}
 	return nil, fmt.Errorf("cortex: %q is ambiguous; use one of the user IDs: %s", ref, strings.Join(ids, ", "))
 }
+
+// OwnerEntityID returns the ID of the handle's user's owner (person) entity,
+// or ErrNotFound when the user has none.
+func (c *Cortex) OwnerEntityID(ctx context.Context) (string, error) {
+	var id sql.NullString
+	err := c.db.QueryRowContext(ctx, `SELECT owner_entity_id FROM users WHERE id = ?`, c.userID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !id.Valid) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("cortex: owner entity: %w", err)
+	}
+	return id.String, nil
+}
