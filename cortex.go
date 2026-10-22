@@ -2,7 +2,6 @@ package cortex
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 )
 
@@ -164,7 +163,7 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 }
 
 // forgetByEntity removes all data associated with a single entity.
-func (c *Cortex) forgetByEntity(ctx context.Context, tx *sql.Tx, entityID string) error {
+func (c *Cortex) forgetByEntity(ctx context.Context, tx *dbTx, entityID string) error {
 	// 1. Delete embeddings for chunks linked to entity.
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE ref_type = 'chunk' AND ref_id IN
@@ -219,7 +218,7 @@ func (c *Cortex) forgetByEntity(ctx context.Context, tx *sql.Tx, entityID string
 }
 
 // forgetBySource removes all data associated with a given source.
-func (c *Cortex) forgetBySource(ctx context.Context, tx *sql.Tx, source string) error {
+func (c *Cortex) forgetBySource(ctx context.Context, tx *dbTx, source string) error {
 	// Get all entity IDs for this source.
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM entities WHERE source = ?`, source,
@@ -299,7 +298,7 @@ func (c *Cortex) forgetBySource(ctx context.Context, tx *sql.Tx, source string) 
 
 // deleteOrphanedMemories removes memories that have no remaining entity links,
 // along with their embeddings.
-func (c *Cortex) deleteOrphanedMemories(ctx context.Context, tx *sql.Tx) error {
+func (c *Cortex) deleteOrphanedMemories(ctx context.Context, tx *dbTx) error {
 	// Find orphaned memory IDs.
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id FROM memories WHERE id NOT IN (SELECT DISTINCT memory_id FROM memory_entities)`,

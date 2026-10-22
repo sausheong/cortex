@@ -6,7 +6,7 @@ DIST_TARGETS := $(addprefix dist-,$(PLATFORMS))
 PREFIX      ?= /usr/local
 INSTALL_DIR := $(PREFIX)/bin
 
-.PHONY: all build clean test test-v test-cover vet tidy install uninstall run-mcp run-mcp-http dist $(DIST_TARGETS) release-archives release release-notes
+.PHONY: all build clean test test-db test-v test-cover vet tidy install uninstall run-mcp run-mcp-http dist $(DIST_TARGETS) release-archives release release-notes
 
 all: build
 
@@ -14,8 +14,25 @@ build:
 	@mkdir -p $(BINARY_DIR)
 	go build -o $(BINARY_DIR)/cortex ./cmd/cortex/
 
-test:
-	go test ./... -count=1
+TEST_DB_URL := postgres://postgres:postgres@localhost:55432/cortex_test?sslmode=disable
+
+# Start (or reuse) a throwaway pgvector Postgres for the DB-backed tests.
+test-db:
+	@if [ -z "`docker ps -q -f name=^cortex-pg$$`" ]; then \
+		if [ -n "`docker ps -aq -f name=^cortex-pg$$`" ]; then \
+			docker start cortex-pg >/dev/null; \
+		else \
+			docker run -d --name cortex-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=cortex_test \
+				-p 55432:5432 pgvector/pgvector:pg17 >/dev/null; \
+		fi; \
+	fi
+	@until docker exec cortex-pg pg_isready -U postgres -d cortex_test >/dev/null 2>&1; do sleep 0.5; done
+	@sleep 1
+	@until docker exec cortex-pg psql -U postgres -d cortex_test -c 'select 1' >/dev/null 2>&1; do sleep 0.5; done
+	@echo "test db ready: $(TEST_DB_URL)"
+
+test: test-db
+	CORTEX_TEST_DATABASE_URL="$(TEST_DB_URL)" go test ./... -count=1
 
 test-v:
 	go test ./... -count=1 -v

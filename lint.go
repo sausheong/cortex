@@ -53,14 +53,14 @@ func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, erro
 	return r, nil
 }
 
-func countRows(ctx context.Context, db *sql.DB, table string) (int, error) {
+func countRows(ctx context.Context, db dbConn, table string) (int, error) {
 	var n int
 	// Table name is hard-coded by caller — safe to interpolate.
 	err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&n)
 	return n, err
 }
 
-func findOrphans(ctx context.Context, db *sql.DB) ([]EntityRef, error) {
+func findOrphans(ctx context.Context, db dbConn) ([]EntityRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT e.id, e.name, e.type FROM entities e
 		WHERE NOT EXISTS (SELECT 1 FROM relationships WHERE source_id = e.id OR target_id = e.id)
@@ -81,7 +81,7 @@ func findOrphans(ctx context.Context, db *sql.DB) ([]EntityRef, error) {
 	return out, rows.Err()
 }
 
-func findEntitiesNoMemories(ctx context.Context, db *sql.DB) ([]EntityRef, error) {
+func findEntitiesNoMemories(ctx context.Context, db dbConn) ([]EntityRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT e.id, e.name, e.type FROM entities e
 		WHERE NOT EXISTS (SELECT 1 FROM memory_entities WHERE entity_id = e.id)
@@ -102,7 +102,7 @@ func findEntitiesNoMemories(ctx context.Context, db *sql.DB) ([]EntityRef, error
 	return out, rows.Err()
 }
 
-func findNearDuplicates(ctx context.Context, db *sql.DB) ([]DuplicatePair, error) {
+func findNearDuplicates(ctx context.Context, db dbConn) ([]DuplicatePair, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.id, a.name, a.type, b.id, b.name, b.type
 		FROM entities a
@@ -127,7 +127,7 @@ func findNearDuplicates(ctx context.Context, db *sql.DB) ([]DuplicatePair, error
 	return out, rows.Err()
 }
 
-func findDeadSources(ctx context.Context, db *sql.DB) ([]string, error) {
+func findDeadSources(ctx context.Context, db dbConn) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT DISTINCT source FROM memories
 		WHERE source IS NOT NULL AND source != ''
@@ -151,7 +151,7 @@ func findDeadSources(ctx context.Context, db *sql.DB) ([]string, error) {
 	return out, rows.Err()
 }
 
-func findUnlinkedMemories(ctx context.Context, db *sql.DB) ([]MemoryRef, error) {
+func findUnlinkedMemories(ctx context.Context, db dbConn) ([]MemoryRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, content, source, confidence FROM memories m
 		WHERE NOT EXISTS (SELECT 1 FROM memory_entities WHERE memory_id = m.id)
@@ -163,7 +163,7 @@ func findUnlinkedMemories(ctx context.Context, db *sql.DB) ([]MemoryRef, error) 
 	return scanMemoryRefs(rows)
 }
 
-func findLowConfidenceMemories(ctx context.Context, db *sql.DB, threshold float64) ([]MemoryRef, error) {
+func findLowConfidenceMemories(ctx context.Context, db dbConn, threshold float64) ([]MemoryRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, content, source, confidence FROM memories
 		WHERE confidence < ?

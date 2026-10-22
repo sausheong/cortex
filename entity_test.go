@@ -3,16 +3,14 @@ package cortex
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
 	"testing"
 )
 
 func openTestDB(t *testing.T) *Cortex {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	c, err := Open(dbPath)
+	c, err := Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
@@ -689,7 +687,6 @@ func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
 		t.Errorf("error = %v, want 'drop entity not found'", err)
 	}
 }
-
 
 // --- Dry-run ---
 

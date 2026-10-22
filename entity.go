@@ -182,7 +182,7 @@ func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string)
 
 // mergeEntitiesTx performs the merge against the provided transaction.
 // Caller is responsible for Commit or Rollback.
-func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (MergeStats, error) {
+func mergeEntitiesTx(ctx context.Context, tx *dbTx, keepID, dropID string) (MergeStats, error) {
 	var stats MergeStats
 
 	keep, err := getEntityTx(ctx, tx, keepID)
@@ -355,7 +355,7 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 
 // getEntityTx loads an entity by ID using the supplied transaction.
 // Returns sql.ErrNoRows if not found.
-func getEntityTx(ctx context.Context, tx *sql.Tx, id string) (*Entity, error) {
+func getEntityTx(ctx context.Context, tx *dbTx, id string) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
 	err := tx.QueryRowContext(ctx,

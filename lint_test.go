@@ -224,7 +224,7 @@ func TestLint_DeadSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Direct INSERT to simulate orphan-source state. cx.db is the private
-	// *sql.DB field on Cortex; tests in this package can access it.
+	// dbConn field on Cortex; tests in this package can access it.
 	if _, err := cx.db.ExecContext(ctx,
 		`INSERT INTO memories (id, content, source) VALUES (?, ?, ?)`,
 		"mem_dead", "an orphan memory", "old-import.md"); err != nil {
