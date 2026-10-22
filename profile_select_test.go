@@ -44,7 +44,6 @@ func TestMaintain_SurvivesLLMFailureAndRunsLaterPasses(t *testing.T) {
 	}
 }
 
-
 func TestProfile_StaticSelectionIsDiverse(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -103,7 +102,6 @@ func TestProfile_StaticSelectionIsDiverse(t *testing.T) {
 		t.Fatalf("duplicates in distill input = %d, want 1..3", dups)
 	}
 }
-
 
 func TestSelectStaticCandidates_PerEntityCap(t *testing.T) {
 	var pool []Memory

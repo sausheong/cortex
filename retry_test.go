@@ -148,4 +148,3 @@ func TestMaintain_ContextCancelledStillAborts(t *testing.T) {
 		t.Fatal("cancelled context must abort")
 	}
 }
-
