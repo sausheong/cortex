@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 )
 
 // vectorResult holds a reference ID and its cosine similarity score.
@@ -18,27 +17,30 @@ type vectorResult struct {
 // or nil if none exists. Lets the reranker reuse vectors written at ingest
 // instead of re-embedding ranked results.
 func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []float32 {
-	var blob []byte
+	var lit string
 	err := c.db.QueryRowContext(ctx,
-		`SELECT vector FROM embeddings WHERE ref_id = ? AND ref_type = ? LIMIT 1`,
+		`SELECT embedding::text FROM embeddings WHERE ref_id = ? AND ref_type = ? LIMIT 1`,
 		refID, refType,
-	).Scan(&blob)
+	).Scan(&lit)
 	if err != nil {
 		return nil
 	}
-	return decodeFloat32s(blob)
+	v, err := parseVectorLiteral(lit)
+	if err != nil {
+		return nil
+	}
+	return v
 }
 
-// putEmbedding stores an embedding vector for a given reference (e.g. a chunk)
-// in the embeddings table as a BLOB.
+// putEmbedding stores an embedding vector (halfvec) for a given reference.
 func (c *Cortex) putEmbedding(ctx context.Context, refID, refType string, embedding []float32) error {
-	id := newID()
-	blob := encodeFloat32s(embedding)
-
+	if len(embedding) != c.dims {
+		return fmt.Errorf("cortex: embedding has %d dims, want %d", len(embedding), c.dims)
+	}
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO embeddings (id, ref_id, ref_type, vector, created_at)
-		 VALUES (?, ?, ?, ?, datetime('now'))`,
-		id, refID, refType, blob,
+		`INSERT INTO embeddings (id, ref_id, ref_type, embedding, created_at)
+		 VALUES (?, ?, ?, ?::halfvec, now())`,
+		newID(), refID, refType, vectorLiteral(embedding),
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert embedding: %w", err)
@@ -46,13 +48,27 @@ func (c *Cortex) putEmbedding(ctx context.Context, refID, refType string, embedd
 	return nil
 }
 
-// searchVectorRaw performs brute-force cosine similarity search over all
-// embeddings of the given refType. It scans every row, computes similarity
-// against queryVec, sorts descending, and returns the top limit results.
+// searchVectorRaw performs cosine nearest-neighbour search over embeddings of
+// the given refType using the partial HNSW index, returning the top limit
+// results with similarity = 1 - cosine distance.
 func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refType string, limit int) ([]vectorResult, error) {
-	rows, err := c.db.QueryContext(ctx,
-		`SELECT ref_id, vector FROM embeddings WHERE ref_type = ?`,
-		refType,
+	if len(queryVec) != c.dims {
+		return nil, fmt.Errorf("cortex: query vector has %d dims, want %d", len(queryVec), c.dims)
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: begin vector search: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL hnsw.iterative_scan = relaxed_order`); err != nil {
+		return nil, fmt.Errorf("cortex: set iterative_scan: %w", err)
+	}
+	lit := vectorLiteral(queryVec)
+	rows, err := tx.QueryContext(ctx,
+		`SELECT ref_id, 1 - (embedding <=> ?::halfvec) AS sim
+		 FROM embeddings WHERE ref_type = ?
+		 ORDER BY embedding <=> ?::halfvec LIMIT ?`,
+		lit, refType, lit, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query embeddings: %w", err)
@@ -61,28 +77,16 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 
 	var results []vectorResult
 	for rows.Next() {
-		var refID string
-		var blob []byte
-		if err := rows.Scan(&refID, &blob); err != nil {
+		var r vectorResult
+		var sim float64
+		if err := rows.Scan(&r.refID, &sim); err != nil {
 			return nil, fmt.Errorf("cortex: scan embedding: %w", err)
 		}
-
-		vec := decodeFloat32s(blob)
-		sim := cosineSimilarity(queryVec, vec)
-		results = append(results, vectorResult{refID: refID, similarity: sim})
+		r.similarity = float32(sim)
+		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("cortex: iterate embeddings: %w", err)
-	}
-
-	// Sort by similarity descending.
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].similarity > results[j].similarity
-	})
-
-	// Return top limit.
-	if len(results) > limit {
-		results = results[:limit]
 	}
 	return results, nil
 }

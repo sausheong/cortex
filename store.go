@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -16,8 +17,9 @@ import (
 
 // Cortex is the main knowledge graph store backed by Postgres.
 type Cortex struct {
-	db  dbConn
-	cfg config
+	db   dbConn
+	cfg  config
+	dims int // embedding dimension (from cortex_meta)
 }
 
 // Open connects to the Postgres database at dsn and applies pending migrations.
@@ -51,6 +53,10 @@ func Open(dsn string, opts ...Option) (*Cortex, error) {
 	mctx, mcancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer mcancel()
 	if err := c.migrate(mctx); err != nil {
+		sdb.Close()
+		return nil, err
+	}
+	if err := c.ensureVectorSchema(mctx); err != nil {
 		sdb.Close()
 		return nil, err
 	}
@@ -120,3 +126,5 @@ func (c *Cortex) SetSyncState(ctx context.Context, connector, state string) erro
 	}
 	return nil
 }
+
+func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
