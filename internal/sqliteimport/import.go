@@ -420,11 +420,12 @@ func loadPending(ctx context.Context, db *sql.DB, q string, n int) ([]pending, e
 	return out, rows.Err()
 }
 
-// maxEmbedChars caps embedding input. Old brains hold chunks of 300K+ chars,
-// far past text-embedding-3's 8192-token limit (which the old store never
-// embedded at all); a prefix is embedded instead and the stored chunk keeps
-// its full text. 16K chars stays under the limit even for dense text.
-const maxEmbedChars = 16000
+// maxEmbedChars caps embedding input, in bytes. Old brains hold chunks of
+// 300K+ chars, far past text-embedding-3's 8192-token limit (which the old
+// store never embedded at all); a prefix is embedded instead and the stored
+// chunk keeps its full text. Every BPE token covers at least one byte, so
+// 8000 bytes can never exceed 8192 tokens, however dense the text.
+const maxEmbedChars = 8000
 
 // truncateRunes returns s cut to at most n bytes on a UTF-8 boundary.
 func truncateRunes(s string, n int) string {
