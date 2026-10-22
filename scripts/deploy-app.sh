@@ -13,20 +13,24 @@
 # binary, copy secrets/settings found in your environment (and the repo .env, if any)
 # into /etc/cortex/cortex.env (values travel over ssh stdin, never argv or output).
 # Then the single restart: stop the service -> final pg_dump -Fc to
-# /root/cortex/pre-multiuser.dump (abort if it fails) -> keep the installed binary as
+# /root/cortex/pre-multiuser-<UTC timestamp>.dump (abort if it fails; an existing dump is
+# never overwritten) -> keep the installed binary as
 # cortex.prev -> install the new binary -> `cortex migrate --timeout 30m` -> daemon-reload
 # and start -> poll https://<fqdn>/healthz. A failed migrate or health check exits
 # non-zero (a failed migrate never starts the new binary) and prints the rollback
 # command (scripts/rollback-app.sh).
+# Only one deploy/rollback runs at a time: a lock directory (/run/cortex-deploy.lock) is held on
+# the server for the whole run. ssh connections are multiplexed (ControlMaster) so the host's
+# ssh rate limit is not hit.
 # Environment: SSH_OPTS (extra ssh/scp options, e.g. "-o BatchMode=yes"),
-# DUMP_PATH (remote dump file, default /root/cortex/pre-multiuser.dump).
+# DUMP_PATH (remote dump file, default /root/cortex/pre-multiuser-<timestamp>.dump; must not exist).
 set -euo pipefail
 
 # Variables copied from the local environment into the server env file when set.
 FORWARD_VARS=(OPENAI_API_KEY OPENAI_BASE_URL
   LLM_PROVIDER LLM_MODEL EMBEDDING_API_KEY EMBEDDING_BASE_URL EMBEDDING_MODEL EMBEDDING_DIMS
   GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET CORTEX_BOOTSTRAP_EMAIL)
-DUMP_PATH="${DUMP_PATH:-/root/cortex/pre-multiuser.dump}"
+DUMP_PATH="${DUMP_PATH:-/root/cortex/pre-multiuser-$(date -u +%Y%m%dT%H%M%SZ).dump}"
 
 FQDN=""
 SHOW_TOKEN=0
@@ -35,7 +39,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --fqdn) FQDN="${2:?--fqdn needs a value}"; shift 2 ;;
     --show-token) SHOW_TOKEN=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     -*) echo "unknown argument: $1" >&2; exit 2 ;;
     *) [ -z "$TARGET" ] || { echo "only one ssh target allowed" >&2; exit 2; }; TARGET="$1"; shift ;;
   esac
@@ -58,10 +62,32 @@ if [ -f "$REPO_ROOT/.env" ]; then
   . "$REPO_ROOT/.env"
   set +a
 fi
+SSH_MUX=(-o ControlMaster=auto -o "ControlPath=/tmp/cx-%C" -o ControlPersist=600)
 # shellcheck disable=SC2206
-SSH_EXTRA=(${SSH_OPTS:-})
+SSH_EXTRA=("${SSH_MUX[@]}" ${SSH_OPTS:-})
 # shellcheck disable=SC2029
-rssh() { ssh ${SSH_EXTRA[@]+"${SSH_EXTRA[@]}"} "$TARGET" "$@"; }
+rssh() { ssh "${SSH_EXTRA[@]}" "$TARGET" "$@"; }
+
+BUILD_DIR=""
+LOCKED=0
+cleanup() {
+  [ -z "$BUILD_DIR" ] || rm -rf "$BUILD_DIR"
+  if [ "$LOCKED" -eq 1 ]; then rssh 'rmdir /run/cortex-deploy.lock' >/dev/null 2>&1 || true; fi
+  ssh "${SSH_MUX[@]}" -O exit "$TARGET" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "==> taking the deploy lock"
+lrc=0
+rssh 'mkdir /run/cortex-deploy.lock 2>/dev/null || exit 7' || lrc=$?
+if [ "$lrc" -eq 7 ]; then
+  echo "another deploy/rollback holds /run/cortex-deploy.lock on the server (if none is running, remove it: ssh ${TARGET} rmdir /run/cortex-deploy.lock)." >&2
+  exit 1
+elif [ "$lrc" -ne 0 ]; then
+  echo "could not reach ${TARGET} over ssh (exit ${lrc})." >&2
+  exit 1
+fi
+LOCKED=1
 
 echo "==> detecting server architecture"
 case "$(rssh uname -m)" in
@@ -72,13 +98,12 @@ esac
 echo "    linux/${GOARCH}"
 
 BUILD_DIR="$(mktemp -d)"
-trap 'rm -rf "$BUILD_DIR"' EXIT
 echo "==> building cortex (linux/${GOARCH}, CGO_ENABLED=0)"
 (cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" \
   go build -trimpath -ldflags "-s -w" -o "$BUILD_DIR/cortex" ./cmd/cortex/)
 
 echo "==> uploading the binary (not installed yet)"
-scp ${SSH_EXTRA[@]+"${SSH_EXTRA[@]}"} -q "$BUILD_DIR/cortex" "${TARGET}:/usr/local/bin/cortex.new"
+scp "${SSH_EXTRA[@]}" -q "$BUILD_DIR/cortex" "${TARGET}:/usr/local/bin/cortex.new"
 rssh 'chmod 0755 /usr/local/bin/cortex.new'
 
 echo "==> updating /etc/cortex/cortex.env"
@@ -154,6 +179,10 @@ DUMP_PATH="$1"
 set -a; . /etc/cortex/cortex.env; set +a
 systemctl stop cortex.service 2>/dev/null || true
 install -d -m 0700 "$(dirname "$DUMP_PATH")"
+if [ -e "$DUMP_PATH" ]; then
+  echo "DUMP_EXISTS" >&2
+  exit 6
+fi
 if ! pg_dump -Fc -f "$DUMP_PATH.tmp" "$CORTEX_DATABASE_URL"; then
   rm -f "$DUMP_PATH.tmp"
   echo "DUMP_FAILED" >&2
@@ -172,6 +201,10 @@ rc=0
 rssh "bash -c $(printf '%q' "$REMOTE_CUTOVER") cutover $(printf '%q' "$DUMP_PATH")" || rc=$?
 if [ "$rc" -eq 3 ]; then
   echo "pg_dump failed: nothing was changed except stopping the service." >&2
+  echo "Start it again with: ssh ${TARGET} systemctl start cortex.service" >&2
+  exit 1
+elif [ "$rc" -eq 6 ]; then
+  echo "${DUMP_PATH} already exists and is never overwritten: nothing was changed except stopping the service." >&2
   echo "Start it again with: ssh ${TARGET} systemctl start cortex.service" >&2
   exit 1
 elif [ "$rc" -ne 0 ]; then
