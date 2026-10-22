@@ -222,7 +222,7 @@ func TestForgetRemovesMemoryFTS(t *testing.T) {
 	matchesFTS := func() bool {
 		var n int
 		if err := c.db.QueryRowContext(ctx,
-			`SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?`, "Stripe",
+			`SELECT count(*) FROM memories WHERE tsv @@ plainto_tsquery('english', ?)`, "Stripe",
 		).Scan(&n); err != nil {
 			t.Fatalf("count memories_fts: %v", err)
 		}

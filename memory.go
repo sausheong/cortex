@@ -37,24 +37,13 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	if m.Speaker != "" {
 		speaker = m.Speaker
 	}
-	res, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO memories (id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)
-	}
-
-	rowID, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("cortex: memory last insert id: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO memories_fts (rowid, content) VALUES (?, ?)`,
-		rowID, m.Content,
-	); err != nil {
-		return fmt.Errorf("cortex: insert memory fts: %w", err)
 	}
 
 	// Insert entity links into junction table.
@@ -90,17 +79,22 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 	}
 
 	clause, targs := mode.clause("m")
-	// Arg order: MATCH placeholder first, then temporal args, then limit.
-	args := []any{ftsQuery(query)}
-	args = append(args, targs...)
+	// Arg order: temporal args, limit, then the tsquery tokens. The '?'
+	// placeholders are numbered 1..n by rebind; the tsquery expression uses
+	// explicit $n numbers that start after them.
+	tsExpr, tsArgs := orTSQuery(query, len(targs)+2)
+	if tsExpr == "" {
+		return nil, nil
+	}
+	args := append([]any{}, targs...)
 	args = append(args, limit)
+	args = append(args, tsArgs...)
 
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after
 		 FROM memories m
-		 JOIN memories_fts f ON m.rowid = f.rowid
-		 WHERE memories_fts MATCH ? AND `+clause+`
-		 ORDER BY f.rank
+		 WHERE m.tsv @@ `+tsExpr+` AND `+clause+`
+		 ORDER BY ts_rank_cd(m.tsv, `+tsExpr+`) DESC
 		 LIMIT ?`,
 		args...,
 	)
@@ -226,26 +220,30 @@ func (c *Cortex) loadMemoryEntityIDs(ctx context.Context, memoryID string) ([]st
 	return ids, nil
 }
 
-// ftsQuery turns an arbitrary user string into a safe FTS5 MATCH expression:
-// each whitespace-separated token is wrapped in double quotes (escaping any
-// embedded quotes) and OR-joined, so no token is interpreted as FTS syntax.
-// Returns "" for an all-whitespace input (caller should treat as no-op).
-func ftsQuery(q string) string {
+// orTSQuery turns an arbitrary user string into an OR-joined tsquery
+// expression: each whitespace-separated token goes through plainto_tsquery
+// (which never raises on punctuation and drops stopwords), and the results are
+// OR-joined. The expression references explicit $n placeholders starting at
+// firstArg; the returned args are the tokens in order. Returns "", nil for an
+// all-whitespace input (callers treat that as no results).
+func orTSQuery(q string, firstArg int) (expr string, args []any) {
 	fields := strings.Fields(q)
 	if len(fields) == 0 {
-		return ""
+		return "", nil
 	}
-	quoted := make([]string, len(fields))
+	parts := make([]string, len(fields))
+	args = make([]any, len(fields))
 	for i, f := range fields {
-		quoted[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+		parts[i] = fmt.Sprintf("plainto_tsquery('english', $%d)", firstArg+i)
+		args[i] = f
 	}
-	return strings.Join(quoted, " OR ")
+	return "(" + strings.Join(parts, " || ") + ")", args
 }
 
 // InvalidateMemory soft-retires a memory: it sets expired_at to now (the
 // system has retired this memory) and, when invalidAt is non-nil, sets
 // invalid_at to the event time the fact stopped being true. The row, its
-// FTS entry, and its embedding are left intact so the memory remains
+// embedding are left intact so the memory remains
 // available to point-in-time history queries; default recall hides it via
 // the currently-valid predicate. Returns an error if no memory has the
 // given id. This is the primitive Phase 2b's reconciliation calls on

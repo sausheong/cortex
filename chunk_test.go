@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -177,5 +178,14 @@ func TestSearchKeywordNoResults(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestPutChunkHuge(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	ch := &Chunk{Content: strings.Repeat("word ", 200000)}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatalf("PutChunk(1M chars) error: %v", err)
 	}
 }

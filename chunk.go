@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// PutChunk inserts a chunk and its content into the FTS5 virtual table.
+// PutChunk inserts a chunk and its content (its tsv column is generated).
 // The operation is wrapped in a transaction. The chunk's ID and CreatedAt
 // are set on the passed struct.
 func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
@@ -31,28 +31,13 @@ func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 	if ch.EntityID != "" {
 		entityID = ch.EntityID
 	}
-	result, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO chunks (id, entity_id, content, metadata, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?::jsonb, ?)`,
 		ch.ID, entityID, ch.Content, string(metaJSON), ch.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert chunk: %w", err)
-	}
-
-	// Get the rowid assigned by SQLite for FTS5 mapping.
-	rowID, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("cortex: get last insert id: %w", err)
-	}
-
-	// Insert into FTS5 virtual table with matching rowid.
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO chunks_fts (rowid, content) VALUES (?, ?)`,
-		rowID, ch.Content,
-	)
-	if err != nil {
-		return fmt.Errorf("cortex: insert chunk fts: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -71,7 +56,7 @@ func (c *Cortex) firstChunkBySource(ctx context.Context, src string) string {
 	var content string
 	err := c.db.QueryRowContext(ctx,
 		`SELECT content FROM chunks
-		 WHERE json_extract(metadata, '$.source') = ?
+		 WHERE metadata->>'source' = ?
 		 ORDER BY created_at ASC LIMIT 1`, src,
 	).Scan(&content)
 	if err != nil {
@@ -80,17 +65,20 @@ func (c *Cortex) firstChunkBySource(ctx context.Context, src string) string {
 	return content
 }
 
-// SearchKeyword performs a full-text search on chunk content using FTS5.
+// SearchKeyword performs a full-text search on chunk content using Postgres tsvector.
 // Results are ordered by relevance (rank). Returns up to limit results.
 func (c *Cortex) SearchKeyword(ctx context.Context, query string, limit int) ([]Chunk, error) {
+	tsExpr, tsArgs := orTSQuery(query, 2)
+	if tsExpr == "" {
+		return nil, nil
+	}
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT c.id, c.entity_id, c.content, c.metadata, c.created_at
 		 FROM chunks c
-		 JOIN chunks_fts f ON c.rowid = f.rowid
-		 WHERE chunks_fts MATCH ?
-		 ORDER BY f.rank
+		 WHERE c.tsv @@ `+tsExpr+`
+		 ORDER BY ts_rank_cd(c.tsv, `+tsExpr+`) DESC
 		 LIMIT ?`,
-		ftsQuery(query), limit,
+		append([]any{limit}, tsArgs...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: keyword search: %w", err)

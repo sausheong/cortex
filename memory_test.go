@@ -179,18 +179,75 @@ func TestPutMemory_PopulatesFTS(t *testing.T) {
 		t.Fatalf("PutMemory: %v", err)
 	}
 
-	// The FTS table must contain the memory, joinable by rowid.
+	// The generated tsv column must match the memory.
 	var got string
 	err := c.db.QueryRowContext(ctx,
-		`SELECT m.content FROM memories m
-		 JOIN memories_fts f ON m.rowid = f.rowid
-		 WHERE memories_fts MATCH ?`, "Stripe",
+		`SELECT content FROM memories WHERE tsv @@ plainto_tsquery('english', ?)`, "Stripe",
 	).Scan(&got)
 	if err != nil {
 		t.Fatalf("expected FTS match for memory, got error: %v", err)
 	}
 	if got != m.Content {
 		t.Fatalf("FTS content mismatch: got %q want %q", got, m.Content)
+	}
+}
+
+func TestOrTSQuery(t *testing.T) {
+	expr, args := orTSQuery("alice stripe", 1)
+	wantExpr := "(plainto_tsquery('english', $1) || plainto_tsquery('english', $2))"
+	if expr != wantExpr {
+		t.Errorf("expr = %q, want %q", expr, wantExpr)
+	}
+	if len(args) != 2 || args[0] != "alice" || args[1] != "stripe" {
+		t.Errorf("args = %v", args)
+	}
+	expr, args = orTSQuery("a", 3)
+	if expr != "(plainto_tsquery('english', $3))" || len(args) != 1 {
+		t.Errorf("single: %q %v", expr, args)
+	}
+	for _, in := range []string{"", "   \t\n"} {
+		expr, args = orTSQuery(in, 1)
+		if expr != "" || args != nil {
+			t.Errorf("empty input %q: got %q %v", in, expr, args)
+		}
+	}
+}
+
+func TestSearchMemoriesOddQueries(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	if err := c.PutMemory(ctx, &Memory{Content: "Alice joined Stripe"}); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	for _, q := range []string{"the", "C++", "\"quoted\"", ""} {
+		got, err := c.SearchMemories(ctx, q, 10)
+		if err != nil {
+			t.Errorf("SearchMemories(%q) error: %v", q, err)
+			continue
+		}
+		if q == "the" && len(got) != 0 {
+			t.Errorf("stopword-only query returned %d results, want 0", len(got))
+		}
+	}
+	for _, q := range []string{"the", "C++", "\"quoted\"", ""} {
+		if _, err := c.SearchKeyword(ctx, q, 10); err != nil {
+			t.Errorf("SearchKeyword(%q) error: %v", q, err)
+		}
+	}
+}
+
+func TestSearchMemoriesOrSemantics(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	if err := c.PutMemory(ctx, &Memory{Content: "Alice joined Stripe"}); err != nil {
+		t.Fatalf("PutMemory: %v", err)
+	}
+	got, err := c.SearchMemories(ctx, "Stripe nonexistentword", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d results, want 1", len(got))
 	}
 }
 
