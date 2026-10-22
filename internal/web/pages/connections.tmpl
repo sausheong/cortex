@@ -1,0 +1,57 @@
+{{define "title"}}Connections{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Connections</h1>
+<p>Assistants and agents that can read and write your memory.</p>
+{{if .NewToken}}
+<section class="notice" id="new-token">
+  <h2>New token for {{.NewName}}</h2>
+  <p>Copy it now. It is shown only once.</p>
+  <p><code id="new-token-value">{{.NewToken}}</code></p>
+</section>
+{{end}}
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<h2>Assistants</h2>
+<ul class="conns">
+{{range .Assistants}}<li>
+  <strong>{{.Name}}</strong>
+  <span>last used: {{if .LastUsed}}{{.LastUsed}}{{else}}never{{end}}</span>
+  <span>written: {{.Written}}</span>
+  {{if .Revoked}}<span>revoked</span>{{else}}
+  <form method="post" action="/connections/{{.ID}}/revoke">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn">Revoke</button>
+    <label><input type="checkbox" name="remove" value="1"> also remove what it wrote</label>
+  </form>{{end}}
+</li>{{else}}<li>None yet.</li>{{end}}
+</ul>
+<h2>Agent tokens</h2>
+<ul class="conns">
+{{range .Agents}}<li>
+  <strong>{{.Name}}</strong>
+  <span>last used: {{if .LastUsed}}{{.LastUsed}}{{else}}never{{end}}</span>
+  <span>written: {{.Written}}</span>
+  {{if .Revoked}}<span>revoked</span>{{else}}
+  <form method="post" action="/connections/{{.ID}}/revoke">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn">Revoke</button>
+    <label><input type="checkbox" name="remove" value="1"> also remove what it wrote</label>
+  </form>{{end}}
+</li>{{else}}<li>None yet.</li>{{end}}
+</ul>
+<form method="post" action="/connections/tokens" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Token name <input name="name" required maxlength="80" placeholder="my agent"></label>
+  <button class="btn">Create token</button>
+</form>
+<h2>Recommended custom instructions</h2>
+<p>Paste this into your assistant's custom instructions.</p>
+<textarea id="instructions" readonly rows="5" style="width:100%">{{.Instructions}}</textarea>
+<p><button class="btn" type="button" id="copy-instructions">Copy</button></p>
+<script>
+document.getElementById('copy-instructions').addEventListener('click',function(){
+var t=document.getElementById('instructions');t.select();
+if(navigator.clipboard){navigator.clipboard.writeText(t.value)}else{document.execCommand('copy')}});
+</script>
+{{end}}
+{{end}}

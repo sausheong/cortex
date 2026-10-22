@@ -66,6 +66,9 @@ type env struct {
 	provErr error
 }
 
+// testMounts lets per-page test files register their routes in newEnv.
+var testMounts []func(mux *http.ServeMux, d Deps)
+
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dsn := pgtest.DSN(t)
@@ -86,7 +89,7 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, root: root, now: time.Now().UTC(), idp: &fakeIdP{ids: map[string]Identity{}}}
 	e.st = &accounts.Store{DB: db, Sealer: sl, Now: func() time.Time { return e.now }}
 	e.srv = newServer(Config{PublicURL: "https://cortex.test", BootstrapEmail: "owner@x.test", Identity: e.idp},
-		root, e.st, Options{Now: func() time.Time { return e.now },
+		root, e.st, Options{Now: func() time.Time { return e.now }, Mounts: testMounts,
 			Enqueue: func(ctx context.Context, userID, kind string) (string, error) {
 				e.enq = append(e.enq, kind)
 				e.enqUser = append(e.enqUser, userID)
