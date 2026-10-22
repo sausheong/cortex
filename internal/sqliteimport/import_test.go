@@ -193,3 +193,35 @@ func TestImportOlderSchema(t *testing.T) {
 		t.Errorf("m2 static=%v err=%v, want default false", static, err)
 	}
 }
+
+// TestImportBatchBoundaries copies with a batch size smaller than a table so
+// both a full batch and a partial remainder are flushed.
+func TestImportBatchBoundaries(t *testing.T) {
+	old := copyBatchRows
+	copyBatchRows = 3
+	t.Cleanup(func() { copyBatchRows = old })
+
+	path := makeSQLite(t, "2026-03-01 08:00:00")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO memory_entities (memory_id,entity_id) VALUES ('m2','e1'),('m2','e2')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	cx := openTarget(t, &fakeEmb{})
+	rep, err := Import(context.Background(), path, cx, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for tbl, p := range rep.Counts {
+		if p[0] != p[1] {
+			t.Errorf("%s: source %d target %d", tbl, p[0], p[1])
+		}
+	}
+	if p := rep.Counts["memory_entities"]; p[1] != 4 {
+		t.Errorf("memory_entities target %d, want 4", p[1])
+	}
+}

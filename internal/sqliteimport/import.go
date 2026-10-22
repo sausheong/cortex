@@ -220,18 +220,30 @@ func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error
 	}
 	ts = tableSpec{name: ts.name, cols: cols, idCols: ts.idCols}
 	names := make([]string, len(ts.cols))
-	ph := make([]string, len(ts.cols))
 	for i, col := range ts.cols {
 		names[i] = col.name
-		ph[i] = "$" + strconv.Itoa(i+1)
 	}
-	ins := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING",
-		ts.name, strings.Join(names, ", "), strings.Join(ph, ", "))
 	rows, err := src.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM %s", strings.Join(names, ", "), ts.name))
 	if err != nil {
 		return fmt.Errorf("read %s: %w", ts.name, err)
 	}
 	defer rows.Close()
+
+	// Rows are sent copyBatchRows at a time in one multi-row INSERT: the
+	// target is usually across a network, and one round trip per row made a
+	// 30K-row brain take most of an hour over Tailscale.
+	var args []any
+	var ids []string
+	flush := func() error {
+		if len(ids) == 0 {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, batchInsert(ts.name, names, len(ids)), args...); err != nil {
+			return fmt.Errorf("table %s rows %s..%s: %w", ts.name, ids[0], ids[len(ids)-1], err)
+		}
+		args, ids = args[:0], ids[:0]
+		return nil
+	}
 	for rows.Next() {
 		raw := make([]any, len(ts.cols))
 		ptrs := make([]any, len(raw))
@@ -246,19 +258,52 @@ func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error
 			idParts = append(idParts, fmt.Sprint(asString(raw[i])))
 		}
 		rowID := strings.Join(idParts, "/")
-		args := make([]any, len(raw))
 		for i, v := range raw {
 			a, err := conv(ts.name, rowID, ts.cols[i].kind, v)
 			if err != nil {
 				return err
 			}
-			args[i] = a
+			args = append(args, a)
 		}
-		if _, err := tx.ExecContext(ctx, ins, args...); err != nil {
-			return fmt.Errorf("table %s row %s: %w", ts.name, rowID, err)
+		ids = append(ids, rowID)
+		if len(ids) == copyBatchRows {
+			if err := flush(); err != nil {
+				return err
+			}
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return flush()
+}
+
+// copyBatchRows is how many rows each INSERT carries. 500 rows of the widest
+// table (13 columns) stays well under Postgres's 65535-parameter limit.
+var copyBatchRows = 500
+
+// batchInsert builds "INSERT INTO t (cols) VALUES ($1,..),(..) ON CONFLICT DO NOTHING"
+// for n rows.
+func batchInsert(table string, cols []string, n int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "INSERT INTO %s (%s) VALUES ", table, strings.Join(cols, ", "))
+	p := 1
+	for r := 0; r < n; r++ {
+		if r > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteByte('(')
+		for c := range cols {
+			if c > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString("$" + strconv.Itoa(p))
+			p++
+		}
+		b.WriteByte(')')
+	}
+	b.WriteString(" ON CONFLICT DO NOTHING")
+	return b.String()
 }
 
 func asString(v any) string {
@@ -312,14 +357,16 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 				break
 			}
 			texts := make([]string, len(items))
+			var names map[string][]string
+			if k.refType == "memory" {
+				if names, err = batchEntityNames(ctx, db, items); err != nil {
+					return count, err
+				}
+			}
 			for i, it := range items {
 				texts[i] = it.text
 				if k.refType == "memory" {
-					names, err := entityNames(ctx, db, it.id)
-					if err != nil {
-						return count, err
-					}
-					texts[i] = cortex.AugmentForEmbedding(it.text, names)
+					texts[i] = cortex.AugmentForEmbedding(it.text, names[it.id])
 				}
 			}
 			vecs, err := emb.Embed(ctx, texts)
@@ -329,25 +376,24 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 			if len(vecs) != len(items) {
 				return count, fmt.Errorf("embedder returned %d vectors for %d texts", len(vecs), len(items))
 			}
-			tx, err := db.BeginTx(ctx, nil)
-			if err != nil {
-				return count, err
-			}
+			// One multi-row INSERT per batch (one round trip), committed
+			// atomically so a rerun resumes cleanly.
+			var q strings.Builder
+			q.WriteString("INSERT INTO embeddings (id, ref_id, ref_type, embedding, created_at) VALUES ")
+			args := make([]any, 0, 4*len(items))
 			for i, it := range items {
 				if len(vecs[i]) != dims {
-					tx.Rollback()
 					return count, fmt.Errorf("embedding has %d dims, want %d", len(vecs[i]), dims)
 				}
-				if _, err := tx.ExecContext(ctx,
-					`INSERT INTO embeddings (id, ref_id, ref_type, embedding, created_at)
-					 VALUES ($1, $2, $3, $4::halfvec, now())`,
-					newID(), it.id, k.refType, vectorLiteral(vecs[i])); err != nil {
-					tx.Rollback()
-					return count, fmt.Errorf("insert embedding: %w", err)
+				if i > 0 {
+					q.WriteString(", ")
 				}
+				n := 4 * i
+				fmt.Fprintf(&q, "($%d, $%d, $%d, $%d::halfvec, now())", n+1, n+2, n+3, n+4)
+				args = append(args, newID(), it.id, k.refType, vectorLiteral(vecs[i]))
 			}
-			if err := tx.Commit(); err != nil {
-				return count, err
+			if _, err := db.ExecContext(ctx, q.String(), args...); err != nil {
+				return count, fmt.Errorf("insert embeddings: %w", err)
 			}
 			count += len(items)
 		}
@@ -372,20 +418,27 @@ func loadPending(ctx context.Context, db *sql.DB, q string, n int) ([]pending, e
 	return out, rows.Err()
 }
 
-func entityNames(ctx context.Context, db *sql.DB, memID string) ([]string, error) {
+// batchEntityNames returns linked entity names keyed by memory ID for every
+// memory in items, in one query.
+func batchEntityNames(ctx context.Context, db *sql.DB, items []pending) (map[string][]string, error) {
+	ids := make([]string, len(items))
+	for i, it := range items {
+		ids[i] = it.id
+	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT e.name FROM memory_entities me JOIN entities e ON e.id = me.entity_id WHERE me.memory_id = $1`, memID)
+		`SELECT me.memory_id, e.name FROM memory_entities me JOIN entities e ON e.id = me.entity_id
+		 WHERE me.memory_id = ANY($1)`, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := map[string][]string{}
 	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		out[id] = append(out[id], name)
 	}
 	return out, rows.Err()
 }
