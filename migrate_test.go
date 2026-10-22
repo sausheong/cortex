@@ -166,7 +166,7 @@ func TestMigration002FreshDB(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer c2.Close()
-	if v := schemaVersion(t, c2); v != 2 {
+	if v := schemaVersion(t, c2); v != 3 {
 		t.Errorf("version = %d", v)
 	}
 }

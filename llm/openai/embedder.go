@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	oai "github.com/sashabaranov/go-openai"
@@ -33,6 +34,13 @@ type Embedder struct {
 	model   oai.EmbeddingModel
 	dims    int
 	baseURL string
+
+	httpClient *http.Client
+}
+
+// WithEmbedderHTTPClient makes the embedder use hc for every request.
+func WithEmbedderHTTPClient(hc *http.Client) EmbedderOption {
+	return func(e *Embedder) { e.httpClient = hc }
 }
 
 // NewEmbedder creates a new OpenAI Embedder. Defaults to text-embedding-3-small (512 dims).
@@ -45,13 +53,14 @@ func NewEmbedder(apiKey string, opts ...EmbedderOption) *Embedder {
 	for _, o := range opts {
 		o(e)
 	}
+	cfg := oai.DefaultConfig(apiKey)
 	if e.baseURL != "" {
-		cfg := oai.DefaultConfig(apiKey)
 		cfg.BaseURL = e.baseURL
-		e.client = oai.NewClientWithConfig(cfg)
-	} else {
-		e.client = oai.NewClient(apiKey)
 	}
+	if e.httpClient != nil {
+		cfg.HTTPClient = e.httpClient
+	}
+	e.client = oai.NewClientWithConfig(cfg)
 	return e
 }
 
