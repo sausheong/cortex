@@ -238,7 +238,7 @@ func TestAccountDeleteThenSigninRestores(t *testing.T) {
 		t.Fatalf("data missing: %s", body)
 	}
 	_, body = e.get("/connections")
-	if strings.Contains(body, "tunnel") {
+	if strings.Contains(body, "/revoke") {
 		t.Fatalf("connection came back: %s", body)
 	}
 	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
