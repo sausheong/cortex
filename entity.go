@@ -165,6 +165,21 @@ func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string)
 func mergeEntitiesTx(ctx context.Context, tx *dbTx, keepID, dropID string) (MergeStats, error) {
 	var stats MergeStats
 
+	// Lock both rows (ordered by id to avoid deadlock) so concurrent upserts
+	// and inserts that reference either entity serialize with the merge.
+	lrows, err := tx.QueryContext(ctx,
+		`SELECT id FROM entities WHERE id IN (?, ?) ORDER BY id FOR UPDATE`, keepID, dropID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: lock entities: %w", err)
+	}
+	for lrows.Next() {
+	}
+	if err := lrows.Err(); err != nil {
+		lrows.Close()
+		return stats, fmt.Errorf("cortex: lock entities: %w", err)
+	}
+	lrows.Close()
+
 	keep, err := getEntityTx(ctx, tx, keepID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

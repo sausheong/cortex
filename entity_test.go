@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func openTestDB(t *testing.T) *Cortex {
@@ -764,5 +765,55 @@ func TestPutEntityConcurrentNoDuplicates(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("got %d entities, want 1", len(got))
+	}
+}
+
+func TestMergeEntities_LocksRows(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "LockKeep"}
+	drop := &Entity{Type: "person", Name: "LockDrop"}
+	if err := c.PutEntity(ctx, keep); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutEntity(ctx, drop); err != nil {
+		t.Fatal(err)
+	}
+	// A concurrent writer holds the keep row; the merge must wait for it.
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE entities SET attributes = '{"concurrent":"yes"}'::jsonb WHERE id = ?`, keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.MergeEntities(ctx, keep.ID, drop.ID)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("merge finished while keep row was locked (err=%v)", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("merge error: %v", err)
+		}
+		got, err := c.GetEntity(ctx, keep.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Attributes["concurrent"] != "yes" {
+			t.Errorf("concurrent attribute update lost: %v", got.Attributes)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("merge did not finish after lock released")
 	}
 }
