@@ -77,6 +77,9 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 
 	var pool *jobs.Pool
 	pool = jobs.NewPool(2, func(ctx context.Context, j jobs.Job) error {
+		if id, ok := strings.CutPrefix(j.Kind, jobs.CompactKindPrefix); ok {
+			return jobs.CompactJob(ctx, root, st, j.UserID, id)
+		}
 		switch j.Kind {
 		case "index":
 			return jobs.IndexJob(ctx, root, st, j.UserID)
@@ -111,7 +114,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		PublicURL: publicURL, BootstrapEmail: bootEmail,
 		GoogleClientID: env["GOOGLE_OAUTH_CLIENT_ID"], GoogleClientSecret: env["GOOGLE_OAUTH_CLIENT_SECRET"],
 		AllowPrivate: st.AllowPrivate,
-	}, root, st, web.Options{MCP: mcpHandler, Enqueue: pool.Enqueue})
+	}, root, st, web.Options{MCP: mcpHandler, Enqueue: pool.Enqueue, Mounts: []func(*http.ServeMux, web.Deps){web.CompactionMount(pool.Enqueue)}})
 
 	return &serveApp{Handler: h, Close: func() { pool.Stop(); cleanup() }}, nil
 }
