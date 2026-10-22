@@ -175,3 +175,20 @@ go get github.com/sausheong/cortex@v0.4.0
 ```
 
 The Postgres version ships as `v0.5.0`.
+
+## Clients on a filtering network (SSH tunnel)
+
+Some networks block new or uncategorised domains by name, so `https://<fqdn>/mcp`
+is reset even though port 443 is open. SSH usually still gets through. Forward a
+local port to cortex over SSH and point the MCP client at it:
+
+```bash
+ssh -N -L 127.0.0.1:8443:127.0.0.1:8080 <user>@<fqdn>
+claude mcp add --transport http --scope user cortex http://127.0.0.1:8443/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+The bearer token is still required: the tunnel only changes the transport. To
+keep the tunnel up, run it from a launchd agent (macOS) with `KeepAlive` and a
+`ThrottleInterval` of at least 30 s, because ufw rate-limits new SSH connections
+(6 per 30 s) and a fast reconnect loop gets refused.
