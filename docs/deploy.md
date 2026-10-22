@@ -43,7 +43,7 @@ client --HTTPS 443--> Caddy --> cortex serve (127.0.0.1:8080) --> Postgres (loca
 What the script sets up:
 
 - **Postgres**: `listen_addresses='localhost'`, no TLS, scram-sha-256, `pg_hba.conf` with only the localhost rules. Port 5432 is closed in `ufw` (an old rule is removed).
-- **User and secrets**: system user `cortex` (no login shell), and `/etc/cortex/cortex.env` (root-owned, mode 0600) holding `CORTEX_DATABASE_URL` (local connection as role `cortex`), `OPENAI_API_KEY` (empty until `deploy-app.sh` fills it), `CORTEX_ADDR`, `CORTEX_PUBLIC_URL` (`https://<fqdn>`), `CORTEX_BOOTSTRAP_EMAIL` (default `sausheong@gmail.com`), `CORTEX_SECRET_KEY` (32 random bytes as hex, generated once; it encrypts every user's provider key) and `CORTEX_AUTH_TOKEN` (32 random bytes as hex; it becomes the bootstrap user's agent token "claude-code (tunnel)"). Existing values are kept on re-runs, so the token never changes unless you change it. If the role exists but the file has no database URL (for example when converting an older install) the role password is reset and the new URL is stored.
+- **User and secrets**: system user `cortex` (no login shell), and `/etc/cortex/cortex.env` (root-owned, mode 0600) holding `CORTEX_DATABASE_URL` (local connection as role `cortex`), `CORTEX_ADDR`, `CORTEX_PUBLIC_URL` (`https://<fqdn>`), `CORTEX_BOOTSTRAP_EMAIL` (default `sausheong@gmail.com`), `CORTEX_SECRET_KEY` (32 random bytes as hex, generated once; it encrypts every user's provider key) and `CORTEX_AUTH_TOKEN` (32 random bytes as hex; it becomes the bootstrap user's agent token "claude-code (tunnel)"). Existing values are kept on re-runs, so the token never changes unless you change it. If the role exists but the file has no database URL (for example when converting an older install) the role password is reset and the new URL is stored.
 - **systemd**: `cortex.service` runs `cortex serve --addr 127.0.0.1:8080` as user `cortex` with that env file (`Restart=on-failure`). The previous unit is saved once as `cortex.service.prev` for rollback, and the script never restarts `cortex.service` (`deploy-app.sh` does the single restart). `cortex-maintain.timer` runs a plain `cortex maintain` (via `cortex-maintain.service`) every day at 03:15 SGT (19:15 UTC) as the same user: per-user maintenance, then the purge (see below). Where systemd is absent (containers) the units are written and a warning is printed.
 - **Caddy** (official apt repo): obtains and renews its own Let's Encrypt certificate for the FQDN, serves 443 (and 80 for ACME and redirect) and reverse-proxies to `127.0.0.1:8080` with response buffering disabled (streamable HTTP).
 - **Auth**: `/mcp` always requires a bearer token (an OAuth access token or an agent token, including the old `CORTEX_AUTH_TOKEN`), even on a loopback bind. `/healthz` is unauthenticated.
@@ -55,11 +55,11 @@ Requirements: DNS for the FQDN must already point at the host (grey-cloud/DNS-on
 After the server is prepared, install the binary and settings from your workstation:
 
 ```bash
-export OPENAI_API_KEY=sk-...          # plus LLM_* / EMBEDDING_* if you use them
+export GOOGLE_OAUTH_CLIENT_ID=... GOOGLE_OAUTH_CLIENT_SECRET=...   # or put them in the repo .env
 ./scripts/deploy-app.sh root@cortex.example.com
 ```
 
-`deploy-app.sh` detects the server architecture over ssh, cross-compiles cortex (`GOOS=linux CGO_ENABLED=0`) and uploads it without installing it. It writes `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMS`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `CORTEX_BOOTSTRAP_EMAIL` from your environment (and from the repo `.env`, if present) into `/etc/cortex/cortex.env` (sent over ssh stdin, never echoed). Then it does the single restart, in this order:
+`deploy-app.sh` detects the server architecture over ssh, cross-compiles cortex (`GOOS=linux CGO_ENABLED=0`) and uploads it without installing it. It writes only `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `CORTEX_BOOTSTRAP_EMAIL` from your environment (and from the repo `.env`, if present; those three keys are parsed out of it, the file is never sourced). Provider settings (`OPENAI_*`, `ANTHROPIC_*`, `LLM_*`, `EMBEDDING_*`) are never forwarded and need not be set: each user's own settings hold the provider config (settings page, or `cortex users set-provider`), and the operator key is never used for users into `/etc/cortex/cortex.env` (sent over ssh stdin, never echoed). Then it does the single restart, in this order:
 
 1. stop `cortex.service`;
 2. final `pg_dump -Fc` to `/root/cortex/pre-multiuser.dump` (taken after the stop, so a rollback loses no writes; the script aborts if the dump fails);
@@ -116,6 +116,9 @@ The command exits non-zero if any user failed, after the purge has run. Admin co
 
 ```bash
 cortex users list                                  # ID, email (verified flag), created, usage
+printf '%s\n' "$KEY" | cortex users set-provider --user <id|verified-email> \
+  [--provider openai-compatible|anthropic] [--base-url URL] [--chat-model M] \
+  [--embed-model M] [--embed-dims N] [--embed-base-url URL] [--skip-test]
 cortex maintain --user <id|verified-email> [--dry-run]
 cortex recall   --user <id|verified-email> "query"
 cortex profile  --user <id|verified-email>
@@ -123,6 +126,8 @@ cortex sync     --user <id|verified-email> <dir>
 cortex import-sqlite --user <id|verified-email> brain.db
 cortex migrate [--timeout 30m]                     # apply migrations, print versions and elapsed time
 ```
+
+`users set-provider` reads the API key from stdin (line 1; optional line 2 is the embedding key) or `CORTEX_PROVIDER_API_KEY` / `CORTEX_PROVIDER_EMBED_API_KEY`, never argv; unset flags keep the user's current values. It tests the provider first (`--skip-test` bypasses), saves through the same validated, encrypted path as the settings page, and queues `index`/`reembed` jobs when needed (it prints when a re-embed is required). It needs `CORTEX_SECRET_KEY`.
 
 `--user` takes a user ID or a verified email only. An email that matches several accounts, or only an unverified account, is refused with the matching IDs listed. With `--user` the command uses that user's own saved provider settings, so it needs `CORTEX_SECRET_KEY` in the environment; the operator's `OPENAI_API_KEY` is never used for another user.
 

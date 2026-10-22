@@ -8,9 +8,10 @@
 #   --show-token   also print CORTEX_AUTH_TOKEN (otherwise only says where it is)
 #
 # Preflight (before the cutover): the host must have cortex.service.prev, CORTEX_SECRET_KEY,
-# CORTEX_PUBLIC_URL (and OPENAI_API_KEY when CORTEX_AUTH_TOKEN is set); else re-run setup-server.sh.
+# CORTEX_PUBLIC_URL; else re-run setup-server.sh. No provider key is needed or forwarded:
+# per-user settings hold it (cortex users set-provider).
 # Steps: detect the server arch, cross-compile (GOOS=linux, CGO_ENABLED=0), upload the
-# binary, copy secrets/settings found in your environment (and the repo .env, if any)
+# binary, copy GOOGLE_OAUTH_CLIENT_ID/SECRET and CORTEX_BOOTSTRAP_EMAIL found in your environment (or the repo .env, if any)
 # into /etc/cortex/cortex.env (values travel over ssh stdin, never argv or output).
 # Then the single restart: stop the service -> final pg_dump -Fc to
 # /root/cortex/pre-multiuser-<UTC timestamp>.dump (abort if it fails; an existing dump is
@@ -27,9 +28,9 @@
 set -euo pipefail
 
 # Variables copied from the local environment into the server env file when set.
-FORWARD_VARS=(OPENAI_API_KEY OPENAI_BASE_URL
-  LLM_PROVIDER LLM_MODEL EMBEDDING_API_KEY EMBEDDING_BASE_URL EMBEDDING_MODEL EMBEDDING_DIMS
-  GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET CORTEX_BOOTSTRAP_EMAIL)
+# Provider settings (OpenAI/Anthropic/LLM/EMBEDDING) are never forwarded: each user's own
+# settings hold them (see `cortex users set-provider`).
+FORWARD_VARS=(GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET CORTEX_BOOTSTRAP_EMAIL)
 DUMP_PATH="${DUMP_PATH:-/root/cortex/pre-multiuser-$(date -u +%Y%m%dT%H%M%SZ).dump}"
 
 FQDN=""
@@ -54,13 +55,21 @@ if ! printf '%s' "$FQDN" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' 
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The repo .env (git-ignored) may hold the Google and provider settings. It is sourced,
-# never printed.
+# The repo .env (git-ignored) may hold the Google and bootstrap settings. Only the
+# FORWARD_VARS keys are parsed out of it (it is never sourced, never printed); a value
+# already in the environment wins.
 if [ -f "$REPO_ROOT/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$REPO_ROOT/.env"
-  set +a
+  for v in "${FORWARD_VARS[@]}"; do
+    [ -z "${!v:-}" ] || continue
+    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${v}=" "$REPO_ROOT/.env" | tail -n1 || true)"
+    [ -n "$line" ] || continue
+    val="${line#*=}"
+    case "$val" in
+      \"*\") val="${val#\"}"; val="${val%\"}" ;;
+      \'*\') val="${val#\'}"; val="${val%\'}" ;;
+    esac
+    [ -z "$val" ] || printf -v "$v" '%s' "$val"
+  done
 fi
 SSH_MUX=(-o ControlMaster=auto -o "ControlPath=/tmp/cx-%C" -o ControlPersist=600)
 # shellcheck disable=SC2206
@@ -118,7 +127,7 @@ n=0
 while IFS= read -r line; do
   key="${line%%=*}"; val="${line#*=}"
   case "$key" in
-    OPENAI_API_KEY|OPENAI_BASE_URL|ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|LLM_PROVIDER|LLM_MODEL|EMBEDDING_API_KEY|EMBEDDING_BASE_URL|EMBEDDING_MODEL|EMBEDDING_DIMS|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|CORTEX_BOOTSTRAP_EMAIL) ;;
+    GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|CORTEX_BOOTSTRAP_EMAIL) ;;
     *) continue ;;
   esac
   grep -v "^${key}=" "$tmp" > "$tmp.n" || true
@@ -141,7 +150,7 @@ for v in "${FORWARD_VARS[@]}"; do
   SENT+=("$v")
 done
 if [ ${#SENT[@]} -eq 0 ]; then
-  echo "    no settings found in your environment (expected e.g. OPENAI_API_KEY); leaving the server's values"
+  echo "    no settings found in your environment (expected GOOGLE_OAUTH_CLIENT_ID etc.); leaving the server's values"
   PAYLOAD=""
 else
   echo "    sending: ${SENT[*]}"
@@ -157,15 +166,12 @@ miss=""
 for k in CORTEX_SECRET_KEY CORTEX_PUBLIC_URL; do
   grep -q "^${k}=." "$ENV_FILE" || miss="$miss $k"
 done
-if grep -q '^CORTEX_AUTH_TOKEN=.' "$ENV_FILE" && ! grep -q '^OPENAI_API_KEY=.' "$ENV_FILE" && [ "${HAVE_OPENAI:-0}" != 1 ]; then
-  miss="$miss OPENAI_API_KEY"
-fi
 if [ -n "$miss" ]; then
   echo "missing on server:$miss" >&2
   exit 5
 fi
 PREFLIGHT_SCRIPT
-if ! rssh "HAVE_OPENAI=$([ -n "${OPENAI_API_KEY:-}" ] && echo 1 || echo 0) bash -c $(printf '%q' "$REMOTE_PREFLIGHT")"; then
+if ! rssh "bash -c $(printf '%q' "$REMOTE_PREFLIGHT")"; then
   echo "preflight failed: the service was not touched. Re-run 'setup-server.sh --app-host <fqdn>' on the server (writes the service unit, CORTEX_SECRET_KEY and CORTEX_PUBLIC_URL), then retry." >&2
   exit 1
 fi

@@ -80,7 +80,7 @@ envval() { sed -n "s/^$1=//p" /etc/cortex/cortex.env | tail -n1; }
 dump_file() { ls -1 /root/cortex/pre-multiuser-*.dump 2>/dev/null | sort | tail -n1; }
 line_of() { grep -n "$1" /tmp/calls.log | head -n1 | cut -d: -f1; }
 
-printf "GOOGLE_OAUTH_CLIENT_ID=gid-123\nGOOGLE_OAUTH_CLIENT_SECRET=topsecret-xyz\nCORTEX_BOOTSTRAP_EMAIL=owner@example.com\n" > /.env
+printf "GOOGLE_OAUTH_CLIENT_ID=gid-123\nGOOGLE_OAUTH_CLIENT_SECRET=\"topsecret-xyz\"\nCORTEX_BOOTSTRAP_EMAIL=owner@example.com\nOPENAI_API_KEY=gov-key\nOPENAI_BASE_URL=https://gov.example\nLLM_MODEL=m\nEMBEDDING_API_KEY=ek\nANTHROPIC_API_KEY=ak\n" > /.env
 
 # --- success path
 reset_server
@@ -99,6 +99,8 @@ check "new binary installed" bash -c "[ \"\$(/usr/local/bin/cortex)\" = new ]"
 check "google id forwarded" test "$(envval GOOGLE_OAUTH_CLIENT_ID)" = gid-123
 check "google secret forwarded" test "$(envval GOOGLE_OAUTH_CLIENT_SECRET)" = topsecret-xyz
 check "bootstrap email forwarded" test "$(envval CORTEX_BOOTSTRAP_EMAIL)" = owner@example.com
+check "provider settings not forwarded" bash -c "! grep -Eq \"^(OPENAI_BASE_URL|LLM_MODEL|EMBEDDING_API_KEY|ANTHROPIC_API_KEY)=\" /etc/cortex/cortex.env"
+check "existing OPENAI_API_KEY on server untouched" test "$(envval OPENAI_API_KEY)" = oa
 check "secret never echoed" bash -c "! grep -q topsecret-xyz /tmp/out1.log"
 check "existing env kept" test "$(envval CORTEX_AUTH_TOKEN)" = tok
 
