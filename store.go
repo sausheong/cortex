@@ -22,6 +22,24 @@ type Cortex struct {
 	userID string // the user this handle is bound to
 	// pinnedGen, when > 0, pins embedding writes to that generation.
 	pinnedGen int
+	// connID, when set, is stamped on every row this handle writes.
+	connID string
+}
+
+// WithConnection returns a copy of the handle whose writes record connID as
+// written_by_connection_id.
+func (c *Cortex) WithConnection(connID string) *Cortex {
+	n := *c
+	n.connID = connID
+	return &n
+}
+
+// nullConn returns the connection ID as a SQL value, NULL when unset.
+func (c *Cortex) nullConn() any {
+	if c.connID == "" {
+		return nil
+	}
+	return c.connID
 }
 
 // Open connects to the Postgres database at dsn and applies pending migrations.

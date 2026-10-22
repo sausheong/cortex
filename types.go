@@ -15,6 +15,7 @@ type Entity struct {
 	Confidence float64        `json:"confidence"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
+	WrittenBy  string         `json:"written_by,omitempty"`
 }
 
 type Relationship struct {
@@ -34,6 +35,7 @@ type Chunk struct {
 	Content   string         `json:"content"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
+	WrittenBy string         `json:"written_by,omitempty"`
 }
 
 type Memory struct {
@@ -42,6 +44,7 @@ type Memory struct {
 	EntityIDs  []string  `json:"entity_ids,omitempty"`
 	Source     string    `json:"source,omitempty"`
 	Speaker    string    `json:"speaker,omitempty"`
+	WrittenBy  string    `json:"written_by,omitempty"`
 	// Static marks an identity/preference fact (vs. an episodic one). Static
 	// memories are exempt from confidence decay and surface in a profile's
 	// static[] section; non-static memories decay and feed dynamic[]. Set by

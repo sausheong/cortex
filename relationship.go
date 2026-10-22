@@ -27,9 +27,9 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 	}
 
 	_, err = c.db.ExecContext(ctx,
-		`INSERT INTO relationships (id, user_id, source_id, target_id, type, attributes, source, confidence, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)`,
-		r.ID, c.userID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, r.CreatedAt,
+		`INSERT INTO relationships (id, user_id, source_id, target_id, type, attributes, source, confidence, created_at, written_by_connection_id)
+		 VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)`,
+		r.ID, c.userID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, r.CreatedAt, c.nullConn(),
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert relationship: %w", err)

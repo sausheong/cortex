@@ -44,9 +44,9 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 		speaker = m.Speaker
 	}
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO memories (id, user_id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, c.userID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter,
+		`INSERT INTO memories (id, user_id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after, written_by_connection_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, c.userID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter, c.nullConn(),
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)
@@ -98,7 +98,7 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 	args = append(args, tsArgs...)
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after
+		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
 		 FROM memories m
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.tsv @@ `+tsExpr+` AND `+clause+`
 		 ORDER BY ts_rank_cd(m.tsv, `+tsExpr+`) DESC
@@ -115,7 +115,7 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 		var m Memory
 		var spk sql.NullString
 		var vat, iat, eat, fa sql.NullTime
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
 		if spk.Valid {
@@ -161,7 +161,7 @@ func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, m
 	args = append(args, targs...)
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after
+		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id AND me.user_id = m.user_id
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND me.entity_id = ? AND `+clause,
@@ -177,7 +177,7 @@ func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, m
 		var m Memory
 		var spk sql.NullString
 		var vat, iat, eat, fa sql.NullTime
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory: %w", err)
 		}
 		if spk.Valid {
@@ -296,9 +296,9 @@ func (c *Cortex) getMemoryByID(ctx context.Context, id string) (*Memory, error) 
 	var spk sql.NullString
 	var vat, iat, eat, fa sql.NullTime
 	err := c.db.QueryRowContext(ctx,
-		`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at, static, forget_after
+		`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at, static, forget_after, COALESCE(written_by_connection_id, '')
 		 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
-	).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa)
+	).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy)
 	if err == sql.ErrNoRows {
 		return nil, errMemoryNotFound()
 	}

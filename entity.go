@@ -28,20 +28,22 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	// Single atomic upsert: concurrent writers with the same (name, type)
 	// converge on one row.
 	err = c.db.QueryRowContext(ctx,
-		`INSERT INTO entities (id, user_id, type, name, attributes, source, confidence, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+		`INSERT INTO entities (id, user_id, type, name, attributes, source, confidence, created_at, updated_at, written_by_connection_id)
+		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, name, type) WHERE deleted_at IS NULL DO UPDATE SET
 		   attributes = EXCLUDED.attributes,
 		   source = CASE WHEN entities.source = 'owner' THEN entities.source ELSE EXCLUDED.source END,
 		   confidence = EXCLUDED.confidence,
-		   updated_at = EXCLUDED.updated_at
+		   updated_at = EXCLUDED.updated_at,
+		   written_by_connection_id = COALESCE(EXCLUDED.written_by_connection_id, entities.written_by_connection_id)
 		 RETURNING id, created_at`,
-		newID(), c.userID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, now,
+		newID(), c.userID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, now, c.nullConn(),
 	).Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("cortex: upsert entity: %w", err)
 	}
 	e.UpdatedAt = now
+	e.WrittenBy = c.connID
 	return nil
 }
 
@@ -50,9 +52,9 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
 	err := c.db.QueryRowContext(ctx,
-		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at
+		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '')
 		 FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
-	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy)
 	if err == sql.ErrNoRows {
 		return nil, errEntityNotFound()
 	}
@@ -71,7 +73,7 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 // FindEntities returns entities matching the given filter. All filter fields
 // are optional — an empty filter returns all entities.
 func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, error) {
-	query := `SELECT id, type, name, attributes, source, confidence, created_at, updated_at FROM entities`
+	query := `SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '') FROM entities`
 	conditions := []string{"user_id = ?", "deleted_at IS NULL"}
 	args := []any{c.userID}
 
@@ -100,7 +102,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 	for rows.Next() {
 		var e Entity
 		var attrsJSON sql.NullString
-		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy); err != nil {
 			return nil, fmt.Errorf("cortex: scan entity: %w", err)
 		}
 		if attrsJSON.Valid && attrsJSON.String != "" {
@@ -434,9 +436,9 @@ func getEntityTx(ctx context.Context, tx *dbTx, userID, id string, includeDelete
 	var e Entity
 	var attrsJSON sql.NullString
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at
+		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '')
 		 FROM entities WHERE id = ? AND user_id = ? AND (deleted_at IS NULL OR ?)`, id, userID, includeDeleted,
-	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy)
 	if err != nil {
 		return nil, err
 	}

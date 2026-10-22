@@ -14,6 +14,7 @@ import (
 func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 	ch.ID = newID()
 	ch.CreatedAt = time.Now().UTC()
+	ch.WrittenBy = c.connID
 
 	metaJSON, err := json.Marshal(ch.Metadata)
 	if err != nil {
@@ -37,9 +38,9 @@ func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 		}
 	}
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO chunks (id, user_id, entity_id, content, metadata, created_at)
-		 VALUES (?, ?, ?, ?, ?::jsonb, ?)`,
-		ch.ID, c.userID, entityID, ch.Content, string(metaJSON), ch.CreatedAt,
+		`INSERT INTO chunks (id, user_id, entity_id, content, metadata, created_at, written_by_connection_id)
+		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)`,
+		ch.ID, c.userID, entityID, ch.Content, string(metaJSON), ch.CreatedAt, c.nullConn(),
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert chunk: %w", err)
