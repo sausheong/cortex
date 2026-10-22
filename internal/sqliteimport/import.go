@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 	_ "modernc.org/sqlite"
@@ -368,6 +369,7 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 				if k.refType == "memory" {
 					texts[i] = cortex.AugmentForEmbedding(it.text, names[it.id])
 				}
+				texts[i] = truncateRunes(texts[i], maxEmbedChars)
 			}
 			vecs, err := emb.Embed(ctx, texts)
 			if err != nil {
@@ -416,6 +418,23 @@ func loadPending(ctx context.Context, db *sql.DB, q string, n int) ([]pending, e
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// maxEmbedChars caps embedding input. Old brains hold chunks of 300K+ chars,
+// far past text-embedding-3's 8192-token limit (which the old store never
+// embedded at all); a prefix is embedded instead and the stored chunk keeps
+// its full text. 16K chars stays under the limit even for dense text.
+const maxEmbedChars = 16000
+
+// truncateRunes returns s cut to at most n bytes on a UTF-8 boundary.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // batchEntityNames returns linked entity names keyed by memory ID for every

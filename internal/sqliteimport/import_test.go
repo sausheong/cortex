@@ -225,3 +225,47 @@ func TestImportBatchBoundaries(t *testing.T) {
 		t.Errorf("memory_entities target %d, want 4", p[1])
 	}
 }
+
+// lenEmb records the longest text it was asked to embed.
+type lenEmb struct {
+	fakeEmb
+	longest atomic.Int64
+}
+
+func (l *lenEmb) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	for _, s := range texts {
+		if n := int64(len(s)); n > l.longest.Load() {
+			l.longest.Store(n)
+		}
+	}
+	return l.fakeEmb.Embed(ctx, texts)
+}
+
+// TestImportTruncatesLongEmbedInput: old brains hold chunks far past the
+// embedding model's token limit; the importer embeds a prefix instead of
+// failing, and the stored chunk keeps its full text.
+func TestImportTruncatesLongEmbedInput(t *testing.T) {
+	path := makeSQLite(t, "2026-03-01 08:00:00")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("word ", 40000) // 200K chars
+	if _, err := db.Exec(`UPDATE chunks SET content = ? WHERE id = 'c1'`, long); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	emb := &lenEmb{}
+	cx := openTarget(t, emb)
+	if _, err := Import(context.Background(), path, cx, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := emb.longest.Load(); got > maxEmbedChars {
+		t.Errorf("embedder got %d chars, want <= %d", got, maxEmbedChars)
+	}
+	var n int
+	if err := cx.DB().QueryRow(`SELECT length(content) FROM chunks WHERE id='c1'`).Scan(&n); err != nil || n != len(long) {
+		t.Errorf("stored chunk length %d (err %v), want %d", n, err, len(long))
+	}
+}
