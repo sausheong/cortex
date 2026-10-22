@@ -94,6 +94,9 @@ const (
 )
 
 type Result struct {
+	// ID identifies the underlying memory, chunk or entity so a caller can
+	// target it (for example with forget).
+	ID         string         `json:"id,omitempty"`
 	Type       string         `json:"type"`
 	Content    string         `json:"content"`
 	Score      float64        `json:"score"`

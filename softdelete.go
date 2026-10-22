@@ -477,3 +477,41 @@ func (c *Cortex) PurgeDeleted(ctx context.Context, olderThan time.Duration) (int
 	}
 	return total, nil
 }
+
+// SoftDeleteChunks marks the chunks with the given IDs as deleted in one
+// batch. The batch ID is empty when nothing matched.
+func (c *Cortex) SoftDeleteChunks(ctx context.Context, ids []string, by string) (string, int, error) {
+	if len(ids) == 0 {
+		return "", 0, fmt.Errorf("cortex: no chunk ids given")
+	}
+	ph := make([]string, len(ids))
+	args := []any{c.userID}
+	for i, id := range ids {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("cortex: begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	batchID, err := newBatch(ctx, tx, c.userID, "chunks")
+	if err != nil {
+		return "", 0, err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE chunks SET deleted_at = now(), deleted_by = ?, delete_batch_id = ?
+		 WHERE user_id = ? AND deleted_at IS NULL AND id IN (`+strings.Join(ph, ",")+`)`,
+		append([]any{by, batchID}, args...)...)
+	if err != nil {
+		return "", 0, fmt.Errorf("cortex: soft delete chunks: %w", err)
+	}
+	n := rowsAffected(res)
+	if n == 0 {
+		return "", 0, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return "", 0, fmt.Errorf("cortex: commit soft delete: %w", err)
+	}
+	return batchID, n, nil
+}

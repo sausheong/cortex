@@ -153,6 +153,8 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			mcp.WithDescription("Remove knowledge from the graph by entity ID or source. Deletion is recoverable for 30 days."),
 			mcp.WithString("entity_id", mcp.Description("Entity ID to forget")),
 			mcp.WithString("source", mcp.Description("Source label to forget")),
+			mcp.WithString("memory_id", mcp.Description("Memory ID to forget (the id of a memory result from recall)")),
+			mcp.WithString("chunk_id", mcp.Description("Chunk ID to forget (the id of a chunk result from recall)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			cx, bad := h.get(ctx)
@@ -161,8 +163,23 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			}
 			entityID := req.GetString("entity_id", "")
 			source := req.GetString("source", "")
+			memoryID := req.GetString("memory_id", "")
+			chunkID := req.GetString("chunk_id", "")
+			if entityID == "" && source == "" && memoryID == "" && chunkID == "" {
+				return mcp.NewToolResultError("one of entity_id, source, memory_id or chunk_id is required"), nil
+			}
+			if memoryID != "" {
+				if _, _, err := cx.SoftDeleteMemories(ctx, cortex.DeleteFilter{IDs: []string{memoryID}}, "user"); err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+			}
+			if chunkID != "" {
+				if _, _, err := cx.SoftDeleteChunks(ctx, []string{chunkID}, "user"); err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+			}
 			if entityID == "" && source == "" {
-				return mcp.NewToolResultError("either entity_id or source is required"), nil
+				return mcp.NewToolResultText("forgotten (recoverable for 30 days)"), nil
 			}
 			filter := cortex.Filter{EntityID: entityID, Source: source}
 			if err := cx.Forget(ctx, filter); err != nil {

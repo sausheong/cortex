@@ -339,6 +339,7 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mo
 		key := "mem:" + m.ID
 		items[i] = rankedItem{id: key, rank: i}
 		res := Result{
+			ID:         m.ID,
 			Type:       "memory",
 			Content:    m.Content,
 			Confidence: m.Confidence,
@@ -383,6 +384,7 @@ func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int
 		key := "mem:" + m.ID
 		items[i] = rankedItem{id: key, rank: i}
 		res := Result{
+			ID:         m.ID,
 			Type:       "memory",
 			Content:    m.Content,
 			Confidence: m.Confidence,
@@ -416,6 +418,7 @@ func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]
 			}
 		}
 		results[key] = Result{
+			ID:         ch.ID,
 			Type:       "chunk",
 			Content:    ch.Content,
 			Confidence: conf,
@@ -451,6 +454,7 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 			}
 		}
 		results[key] = Result{
+			ID:         ch.ID,
 			Type:       "chunk",
 			Content:    ch.Content,
 			Confidence: conf,
@@ -493,6 +497,7 @@ func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]ra
 		}
 
 		results[key] = Result{
+			ID:         e.ID,
 			Type:       "entity",
 			Content:    content,
 			Confidence: e.Confidence,

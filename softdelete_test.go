@@ -602,3 +602,49 @@ func TestVectorSearchSkipsSoftDeletedBeforeLimit(t *testing.T) {
 		t.Fatalf("got %v, want the live memory despite 3 nearer deleted ones", got)
 	}
 }
+
+func TestSoftDeleteChunksByID(t *testing.T) {
+	ctx := context.Background()
+	c := openSD(t)
+	ch := &Chunk{Content: "zebra crossing notes"}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	sdEmbed(t, c, ch.ID, "chunk", ch.Content)
+	if _, _, err := c.SoftDeleteChunks(ctx, nil, "user"); err == nil {
+		t.Fatal("empty ids must error")
+	}
+	_, n, err := c.SoftDeleteChunks(ctx, []string{ch.ID}, "user")
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	out, err := c.RecallWithStrength(ctx, "zebra crossing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range out.Results {
+		if r.ID == ch.ID {
+			t.Fatalf("deleted chunk still recalled")
+		}
+	}
+}
+
+func TestRecallResultsCarryIDs(t *testing.T) {
+	ctx := context.Background()
+	c := openSD(t)
+	m := &Memory{Content: "Bob collects vintage zebra stamps", Source: "s"}
+	if err := c.PutMemory(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	sdEmbed(t, c, m.ID, "memory", m.Content)
+	out, err := c.RecallWithStrength(ctx, "zebra stamps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range out.Results {
+		if r.Type == "memory" && r.ID == m.ID {
+			return
+		}
+	}
+	t.Fatalf("memory id %s not in results %+v", m.ID, out.Results)
+}
