@@ -121,6 +121,10 @@ func TestIsolationForeignIDs(t *testing.T) {
 	ctx := context.Background()
 	w := newIsoWorld(t)
 	absent := "01ZZZZZZZZZZZZZZZZZZZZZZZZ"
+	bBatch, _, err := w.b.SoftDeleteMemories(ctx, DeleteFilter{IDs: []string{w.bMem2.ID}}, "user")
+	if err != nil || bBatch == "" {
+		t.Fatalf("seed b batch: %q %v", bBatch, err)
+	}
 	aOwn := func(f func(c *Cortex, id string) error) func(id string) error {
 		return func(id string) error { return f(w.a, id) }
 	}
@@ -166,6 +170,8 @@ func TestIsolationForeignIDs(t *testing.T) {
 		})},
 		{"Traverse", "entity", aOwn(func(c *Cortex, id string) error { _, err := c.Traverse(ctx, id, WithDepth(2)); return err })},
 		{"Profile", "entity", aOwn(func(c *Cortex, id string) error { _, err := c.Profile(ctx, id); return err })},
+		{"SoftDeleteEntity", "entity", aOwn(func(c *Cortex, id string) error { _, err := c.SoftDeleteEntity(ctx, id, "user"); return err })},
+		{"RestoreBatch", "batch", aOwn(func(c *Cortex, id string) error { return c.RestoreBatch(ctx, id) })},
 		{"TrackProfile", "entity", aOwn(func(c *Cortex, id string) error { return c.TrackProfile(ctx, id) })},
 	}
 	beforeB := snapshot(t, w.b, w.b.userID)
@@ -175,6 +181,9 @@ func TestIsolationForeignIDs(t *testing.T) {
 			foreign := w.bEnt.ID
 			if tc.kind == "memory" {
 				foreign = w.bMem.ID
+			}
+			if tc.kind == "batch" {
+				foreign = bBatch
 			}
 			errForeign := tc.call(foreign)
 			errAbsent := tc.call(absent)
@@ -348,5 +357,32 @@ func TestIsolationLintMaintain(t *testing.T) {
 	// Sanity: maintenance did act on a.
 	if err := w.a.db.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ? AND expired_at IS NOT NULL`, w.a.userID).Scan(&n); err != nil || n == 0 {
 		t.Errorf("a has %d expired memories (err=%v), expected maintenance to expire some", n, err)
+	}
+}
+
+func TestIsolationSoftDeleteAndPurge(t *testing.T) {
+	ctx := context.Background()
+	w := newIsoWorld(t)
+	if _, err := w.b.db.ExecContext(ctx,
+		`UPDATE memories SET deleted_at = now() - interval '40 days' WHERE user_id = ? AND id = ?`, w.b.userID, w.bMem2.ID); err != nil {
+		t.Fatal(err)
+	}
+	beforeB := snapshot(t, w.b, w.b.userID)
+	if _, n, err := w.a.SoftDeleteMemories(ctx, DeleteFilter{All: true}, "user"); err != nil || n != 2 {
+		t.Fatalf("a deleted %d (err %v), want its own 2", n, err)
+	}
+	if _, err := w.a.PurgeDeleted(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshot(t, w.b, w.b.userID); got != beforeB {
+		t.Errorf("a's delete/purge changed b's rows:\n%s\n---\n%s", beforeB, got)
+	}
+	var n int
+	if err := w.b.db.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ?`, w.b.userID).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("b memories = %d (err %v), want 2 incl. its expired row", n, err)
+	}
+	// b's own purge does remove its expired row.
+	if got, err := w.b.PurgeDeleted(ctx, 30*24*time.Hour); err != nil || got != 1 {
+		t.Fatalf("b purge = %d err=%v, want 1", got, err)
 	}
 }

@@ -362,3 +362,75 @@ func TestLintTool_ThresholdImpliesLowConfidence(t *testing.T) {
 		t.Errorf("threshold should imply low_confidence=true; got empty LowConfidenceMemories")
 	}
 }
+
+func TestMCPForgetIsSoft(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	e := &cortex.Entity{Type: "person", Name: "Alice"}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, cx)
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "forget"
+	req.Params.Arguments = map[string]any{"entity_id": e.ID}
+	resp, err := c.CallTool(ctx, req)
+	if err != nil || resp.IsError {
+		t.Fatalf("forget: %v %+v", err, resp)
+	}
+	if txt := textContent(t, resp); !strings.Contains(txt, "30 days") {
+		t.Errorf("forget text %q does not mention 30-day recovery", txt)
+	}
+	if _, err := cx.GetEntity(ctx, e.ID); err == nil {
+		t.Error("entity still visible")
+	}
+	bs, err := cx.ListDeleteBatches(ctx)
+	if err != nil || len(bs) != 1 || bs[0].Entities != 1 {
+		t.Fatalf("batches = %+v err=%v, want one batch holding the entity", bs, err)
+	}
+	if err := cx.RestoreBatch(ctx, bs[0].ID); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if _, err := cx.GetEntity(ctx, e.ID); err != nil {
+		t.Errorf("entity not recoverable: %v", err)
+	}
+}
+
+func TestMCPMergeIsSoft(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
+	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	for _, e := range []*cortex.Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := newTestClient(t, cx)
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "merge"
+	req.Params.Arguments = map[string]any{"keep_id": keep.ID, "drop_id": drop.ID}
+	resp, err := c.CallTool(ctx, req)
+	if err != nil || resp.IsError {
+		t.Fatalf("merge: %v %+v", err, resp)
+	}
+	found := false
+	for _, ct := range resp.Content {
+		if tc, ok := mcp.AsTextContent(ct); ok && strings.Contains(tc.Text, "30 days") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("merge result does not mention 30-day recovery: %+v", resp.Content)
+	}
+	var stats cortex.MergeStats
+	if err := json.Unmarshal([]byte(textContent(t, resp)), &stats); err != nil || stats.BatchID == "" {
+		t.Fatalf("stats = %+v err=%v", stats, err)
+	}
+	if err := cx.RestoreBatch(ctx, stats.BatchID); err != nil {
+		t.Fatalf("restore merge: %v", err)
+	}
+	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
+		t.Errorf("dropped entity not recoverable: %v", err)
+	}
+}

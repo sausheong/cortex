@@ -297,13 +297,13 @@ func TestTeamDataset_ForgetBySource(t *testing.T) {
 		t.Errorf("expected 0 entities after Forget, got %d", len(remaining))
 	}
 
-	// All four memories were linked only to team-seed entities; after forgetting
-	// those entities, memories become orphaned and are removed.
+	// Soft forget keeps memory links, so the four memories linked only to
+	// team-seed entities are still found.
 	mems, err := cx.SearchMemories(ctx, "Alice Bob Carol Dave Eve", 20)
 	if err != nil {
 		t.Fatalf("SearchMemories after forget: %v", err)
 	}
-	if len(mems) != 0 {
-		t.Errorf("expected 0 memories after Forget, got %d", len(mems))
+	if len(mems) != 4 {
+		t.Errorf("expected 4 memories after Forget, got %d", len(mems))
 	}
 }

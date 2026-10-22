@@ -105,13 +105,13 @@ func ExampleCortex_Recall() {
 	// type: chunk
 }
 
-// ExampleCortex_Forget shows how to remove an entity and all associated
-// data (chunks, memories, relationships) from the knowledge graph.
+// ExampleCortex_Forget shows how to remove an entity and its relationships
+// and chunks from the knowledge graph. The delete is recoverable for 30 days.
 func ExampleCortex_Forget() {
 	dsn, cleanup, ok := pgtest.ExampleDSN()
 	if !ok {
 		// No database configured: echo the expected output so the example passes.
-		fmt.Print("before forget: 1 entity\nafter forget: 0 entities\norphaned memories removed: true\n")
+		fmt.Print("before forget: 1 entity\nafter forget: 0 entities\nmemories kept (recoverable): true\n")
 		return
 	}
 	defer cleanup()
@@ -146,11 +146,11 @@ func ExampleCortex_Forget() {
 	after, _ := cx.FindEntities(ctx, EntityFilter{Type: "person"})
 	mems, _ := cx.SearchMemories(ctx, "Alice", 5)
 	fmt.Printf("after forget: %d entities\n", len(after))
-	fmt.Printf("orphaned memories removed: %v\n", len(mems) == 0)
+	fmt.Printf("memories kept (recoverable): %v\n", len(mems) == 1)
 	// Output:
 	// before forget: 1 entity
 	// after forget: 0 entities
-	// orphaned memories removed: true
+	// memories kept (recoverable): true
 }
 
 // ExampleCortex_Traverse shows how to walk the knowledge graph starting

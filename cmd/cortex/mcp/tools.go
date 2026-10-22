@@ -92,7 +92,7 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- forget ---
 	s.AddTool(
 		mcp.NewTool("forget",
-			mcp.WithDescription("Remove knowledge from the graph by entity ID or source."),
+			mcp.WithDescription("Remove knowledge from the graph by entity ID or source. Deletion is recoverable for 30 days."),
 			mcp.WithString("entity_id", mcp.Description("Entity ID to forget")),
 			mcp.WithString("source", mcp.Description("Source label to forget")),
 		),
@@ -106,7 +106,7 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			if err := cx.Forget(ctx, filter); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText("forgotten"), nil
+			return mcp.NewToolResultText("forgotten (recoverable for 30 days)"), nil
 		},
 	)
 
@@ -278,7 +278,11 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return jsonResult(stats)
+			res, err := jsonResult(stats)
+			if err == nil && !res.IsError && !dryRun {
+				res.Content = append(res.Content, mcp.NewTextContent("The dropped entity is recoverable for 30 days; the merge can be undone."))
+			}
+			return res, err
 		},
 	)
 

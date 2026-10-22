@@ -452,6 +452,8 @@ type MergeStats struct {
 	Embeddings    int // dropped (stale embedding for drop entity)
 	DupesDropped  int // duplicate relationships + memory_entity rows removed during dedup
 	AttrConflicts int // count of attributes where keep already had a value (keep won)
+	// BatchID identifies the soft-delete batch; RestoreBatch undoes the merge.
+	BatchID string `json:"batch_id,omitempty"`
 }
 
 // Supersession is a gate-passed proposed invalidation produced by a reconcile
