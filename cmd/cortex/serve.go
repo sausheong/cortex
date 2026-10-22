@@ -19,6 +19,7 @@ import (
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/jobs"
 	"github.com/sausheong/cortex/internal/web"
+	"github.com/sausheong/cortex/internal/web/oauth"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -110,13 +111,41 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 	mcpserver.RegisterToolsFor(s, nil, publicURL)
 	mcpHandler := mcpserver.NewHTTPHandler(s, resolve, publicURL, accounts.NewLimiter(30, 30, nil))
 
-	h := web.NewServer(web.Config{
-		PublicURL: publicURL, BootstrapEmail: bootEmail,
-		GoogleClientID: env["GOOGLE_OAUTH_CLIENT_ID"], GoogleClientSecret: env["GOOGLE_OAUTH_CLIENT_SECRET"],
-		AllowPrivate: st.AllowPrivate,
-	}, root, st, web.Options{MCP: mcpHandler, Enqueue: pool.Enqueue, Mounts: []func(*http.ServeMux, web.Deps){web.CompactionMount(pool.Enqueue)}})
+	h := buildHandler(handlerDeps{
+		Cfg: web.Config{
+			PublicURL: publicURL, BootstrapEmail: bootEmail,
+			GoogleClientID: env["GOOGLE_OAUTH_CLIENT_ID"], GoogleClientSecret: env["GOOGLE_OAUTH_CLIENT_SECRET"],
+			AllowPrivate: st.AllowPrivate,
+		},
+		Root: root, Store: st, MCP: mcpHandler, Enqueue: pool.Enqueue,
+	})
 
 	return &serveApp{Handler: h, Close: func() { pool.Stop(); cleanup() }}, nil
+}
+
+// handlerDeps is everything buildHandler needs to assemble the full HTTP
+// surface of `cortex serve`.
+type handlerDeps struct {
+	Cfg     web.Config
+	Root    *cortex.Cortex
+	Store   *accounts.Store
+	MCP     http.Handler
+	Enqueue func(ctx context.Context, userID, kind string) (string, error)
+	Now     func() time.Time
+}
+
+// buildHandler assembles every route served by `cortex serve`: the web UI,
+// /mcp, the connections and compaction pages, and the OAuth server. It is the
+// single place routes are wired so a test can exercise the real thing.
+func buildHandler(d handlerDeps) http.Handler {
+	return web.NewServer(d.Cfg, d.Root, d.Store, web.Options{
+		MCP: d.MCP, Enqueue: d.Enqueue, Now: d.Now,
+		Mounts: []func(*http.ServeMux, web.Deps){
+			web.ConnectionsMount,
+			web.CompactionMount(d.Enqueue),
+			oauth.Mount(oauth.Options{}), // CIMD fetches use the hardened default client
+		},
+	})
 }
 
 func environMap() map[string]string {
