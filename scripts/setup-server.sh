@@ -99,6 +99,9 @@ fi
 have_systemd() { command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; }
 
 export DEBIAN_FRONTEND=noninteractive
+# A previously added Caddy upstream repo may be unverifiable (see setup_app_host); it is re-added there.
+rm -f /etc/apt/sources.list.d/caddy-stable.list
+
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl gnupg lsb-release cron rclone >/dev/null
 
@@ -406,7 +409,13 @@ UNIT
   fi
   curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
     -o /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -qq
+  if ! apt-get update -qq; then
+    # The upstream repo's signing subkey is rejected by apt's sqv policy on some
+    # releases (NO_PUBKEY). Drop the repo and use the distro's caddy package.
+    echo "warning: Caddy upstream apt repo unusable; falling back to the distro caddy package" >&2
+    rm -f /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -qq
+  fi
   apt-get install -y -qq caddy >/dev/null
   install -d /etc/caddy
   {
