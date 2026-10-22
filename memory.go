@@ -88,20 +88,37 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 	// Arg order: temporal args, limit, then the tsquery tokens. The '?'
 	// placeholders are numbered 1..n by rebind; the tsquery expression uses
 	// explicit $n numbers that start after them.
-	tsExpr, tsArgs := orTSQuery(query, len(targs)+3)
-	if tsExpr == "" {
+	// Arg order: user id (df), user id (corpus size), user id (rows), temporal
+	// args, limit, then the tsquery tokens at explicit $n numbers.
+	tokExprs, tsArgs := tsTokenExprs(query, len(targs)+5)
+	if len(tokExprs) == 0 {
 		return nil, nil
 	}
-	args := []any{c.userID}
+	args := []any{c.userID, c.userID, c.userID}
 	args = append(args, targs...)
 	args = append(args, limit)
 	args = append(args, tsArgs...)
 
+	// Ranking is IDF-weighted: each matching query token contributes
+	// ln(1 + N/df), so rare words outweigh common ones (ts_rank_cd has no IDF
+	// and let question filler words outrank the distinctive keyword), divided
+	// by sqrt(distinct lexemes) as a mild length normalisation. Recalibrated
+	// against the SQLite BM25 baseline with cortex-eval (fts-only R@1).
+	vals := make([]string, len(tokExprs))
+	for i, e := range tokExprs {
+		vals[i] = "(" + e + ")"
+	}
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
-		 FROM memories m
-		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.tsv @@ `+tsExpr+` AND `+clause+`
-		 ORDER BY ts_rank_cd(m.tsv, `+tsExpr+`) DESC
+		`WITH d AS (
+		   SELECT tok.q AS q,
+		          (SELECT count(*) FROM memories x WHERE x.user_id = ? AND x.deleted_at IS NULL AND x.tsv @@ tok.q) AS n
+		   FROM (VALUES `+strings.Join(vals, ", ")+`) AS tok(q)
+		 ), tot AS (SELECT GREATEST(count(*), 1)::float8 AS c FROM memories WHERE user_id = ? AND deleted_at IS NULL)
+		 SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
+		 FROM memories m JOIN d ON m.tsv @@ d.q CROSS JOIN tot
+		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND `+clause+`
+		 GROUP BY m.id
+		 ORDER BY sum(ln(1 + tot.c / GREATEST(d.n, 1))) / sqrt(GREATEST(array_length(tsvector_to_array(m.tsv), 1), 1)) DESC, m.id
 		 LIMIT ?`,
 		args...,
 	)
@@ -237,17 +254,24 @@ func (c *Cortex) loadMemoryEntityIDs(ctx context.Context, memoryID string) ([]st
 // firstArg; the returned args are the tokens in order. Returns "", nil for an
 // all-whitespace input (callers treat that as no results).
 func orTSQuery(q string, firstArg int) (expr string, args []any) {
-	fields := strings.Fields(q)
-	if len(fields) == 0 {
+	parts, args := tsTokenExprs(q, firstArg)
+	if len(parts) == 0 {
 		return "", nil
 	}
-	parts := make([]string, len(fields))
+	return "(" + strings.Join(parts, " || ") + ")", args
+}
+
+// tsTokenExprs returns one plainto_tsquery expression per whitespace-separated
+// token (placeholders $firstArg, $firstArg+1, ...) and the matching args.
+func tsTokenExprs(q string, firstArg int) (exprs []string, args []any) {
+	fields := strings.Fields(q)
+	exprs = make([]string, len(fields))
 	args = make([]any, len(fields))
 	for i, f := range fields {
-		parts[i] = fmt.Sprintf("plainto_tsquery('english', $%d)", firstArg+i)
+		exprs[i] = fmt.Sprintf("plainto_tsquery('english', $%d)", firstArg+i)
 		args[i] = f
 	}
-	return "(" + strings.Join(parts, " || ") + ")", args
+	return exprs, args
 }
 
 // InvalidateMemory soft-retires a memory: it sets expired_at to now (the

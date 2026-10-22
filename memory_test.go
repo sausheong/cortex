@@ -573,3 +573,31 @@ func TestMemory_ForgetAfterRoundTrips(t *testing.T) {
 		t.Fatalf("SearchMemories: expected ForgetAfter=%v, got %+v", fa, found)
 	}
 }
+
+// A rare query token must outrank a common one: the memory holding the
+// distinctive keyword wins over memories that only share a frequent word.
+func TestSearchMemories_RareTokenOutranksCommon(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	for _, content := range []string{
+		"The team meeting discussed the budget and the schedule for the project",
+		"The team meeting covered the project schedule and the budget review",
+		"The team meeting agenda includes the project budget and schedule",
+		"Zanzibar vendor contract was renewed",
+		"Alice prefers dark roast coffee",
+		"Bob moved to Singapore last spring",
+		"The garden needs watering twice a week",
+		"Carol booked flights to Lisbon",
+	} {
+		if err := c.PutMemory(ctx, &Memory{Content: content}); err != nil {
+			t.Fatalf("PutMemory: %v", err)
+		}
+	}
+	got, err := c.SearchMemories(ctx, "meeting Zanzibar", 10)
+	if err != nil {
+		t.Fatalf("SearchMemories: %v", err)
+	}
+	if len(got) == 0 || got[0].Content != "Zanzibar vendor contract was renewed" {
+		t.Fatalf("rare-token memory should rank first, got %d results, first=%q", len(got), got[0].Content)
+	}
+}

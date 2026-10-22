@@ -135,18 +135,23 @@ const AbstainTopK = 5
 // AbstainRelevanceThreshold is the max query-result cosine below which
 // RecallWithStrength advises abstention when an embedder is configured.
 //
-// Calibrated via a threshold sweep (cortex-eval) over a real 1202-memory graph
-// with text-embedding-3-small, using 120 answerable questions, 20 out-of-domain
-// ("easy") negatives, and 20 counterfactual ("hard") negatives. The sweep showed
-// a clean plateau at t ∈ [0.35, 0.45] where easy-negative abstention is 100% and
-// the false-abstention rate on real questions is 0%; 0.40 is the center of that
-// plateau (false abstention first appears at 0.50). Out-of-domain questions are
+// Calibrated 2026-10-22 via a threshold sweep (cortex-eval) over a real
+// 1274-memory graph in Postgres, stored as 512-dim halfvec (HNSW), with
+// text-embedding-3-small at 512 dims, using 120 answerable questions, 20
+// out-of-domain ("easy") negatives, and 20 counterfactual ("hard") negatives.
+// The sweep showed a plateau at t in [0.45, 0.55] where easy-negative
+// abstention is 100% and the false-abstention rate on real questions is 0.8%
+// (one question of 120, constant across the plateau; it was 0% only at
+// t <= 0.25, where easy abstention is 15%); 0.50 is the center of that
+// plateau. Easy abstention falls to 95% at 0.40 and false abstention rises to
+// 2.5% at 0.60. The 512-dim vectors shift the curve up by about 0.05-0.10 from
+// the 1536-dim SQLite calibration (0.40). Out-of-domain questions are
 // reliably caught here. Counterfactual "hard" negatives (vocabulary-close but
-// asking an absent fact) are NOT reliably caught by query-content cosine — they
+// asking an absent fact) are NOT reliably caught by query-content cosine: they
 // retrieve the same nearby memory a real question would, so their max cosine is
 // as high as a true hit's; catching them needs an answer-grounded check beyond
 // retrieval similarity, which this signal does not attempt.
-const AbstainRelevanceThreshold = 0.40
+const AbstainRelevanceThreshold = 0.50
 
 type Filter struct {
 	EntityID string
