@@ -19,8 +19,9 @@ type vectorResult struct {
 func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []float32 {
 	var lit string
 	err := c.db.QueryRowContext(ctx,
-		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ? ORDER BY generation DESC LIMIT 1`,
-		c.userID, refID, refType,
+		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ?
+		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?) LIMIT 1`,
+		c.userID, refID, refType, c.userID,
 	).Scan(&lit)
 	if err != nil {
 		return nil
@@ -30,24 +31,6 @@ func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []fl
 		return nil
 	}
 	return v
-}
-
-// putEmbedding stores an embedding vector (halfvec) for a given reference.
-func (c *Cortex) putEmbedding(ctx context.Context, refID, refType string, embedding []float32) error {
-	if len(embedding) < 1 || len(embedding) > 4000 {
-		return fmt.Errorf("cortex: embedding has %d dims, want 1..4000", len(embedding))
-	}
-	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO embeddings (id, user_id, ref_id, ref_type, embedding, dims, generation, created_at)
-		 VALUES (?, ?, ?, ?, ?::halfvec, ?, 1, now())
-		 ON CONFLICT (user_id, ref_type, ref_id, generation) DO UPDATE SET
-		   embedding = EXCLUDED.embedding, dims = EXCLUDED.dims`,
-		newID(), c.userID, refID, refType, vectorLiteral(embedding), len(embedding),
-	)
-	if err != nil {
-		return fmt.Errorf("cortex: insert embedding: %w", err)
-	}
-	return nil
 }
 
 // searchVectorRaw performs cosine nearest-neighbour search over embeddings of
@@ -70,8 +53,9 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 	rows, err := tx.QueryContext(ctx,
 		fmt.Sprintf(`SELECT ref_id, 1 - (embedding::halfvec(%d) <=> ?::halfvec) AS sim
 		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d
+		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?)
 		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, dims),
-		lit, c.userID, refType, lit, limit,
+		lit, c.userID, refType, c.userID, lit, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query embeddings: %w", err)

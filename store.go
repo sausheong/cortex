@@ -20,6 +20,8 @@ type Cortex struct {
 	db     dbConn
 	cfg    config
 	userID string // the user this handle is bound to
+	// pinnedGen, when > 0, pins embedding writes to that generation.
+	pinnedGen int
 }
 
 // Open connects to the Postgres database at dsn and applies pending migrations.
