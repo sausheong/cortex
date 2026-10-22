@@ -164,6 +164,9 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 
 // forgetByEntity removes all data associated with a single entity.
 func (c *Cortex) forgetByEntity(ctx context.Context, tx *dbTx, entityID string) error {
+	if err := requireEntity(ctx, tx, c.userID, entityID); err != nil {
+		return err
+	}
 	// 1. Delete embeddings for chunks linked to entity.
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE user_id = ? AND ref_type = 'chunk' AND ref_id IN

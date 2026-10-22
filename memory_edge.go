@@ -13,6 +13,12 @@ import (
 // CreatedAt are set; on a conflict no-op the row already in the table is kept
 // and its id may differ from e.ID.
 func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
+	if err := requireMemory(ctx, c.db, c.userID, e.SourceID); err != nil {
+		return err
+	}
+	if err := requireMemory(ctx, c.db, c.userID, e.TargetID); err != nil {
+		return err
+	}
 	if e.ID == "" {
 		e.ID = newID()
 	}
@@ -37,6 +43,9 @@ func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
 // GetMemoryEdges returns every edge where memoryID is the source or the
 // target — the memory's full edge neighborhood.
 func (c *Cortex) GetMemoryEdges(ctx context.Context, memoryID string) ([]MemoryEdge, error) {
+	if err := requireMemory(ctx, c.db, c.userID, memoryID); err != nil {
+		return nil, err
+	}
 	return c.queryMemoryEdges(ctx,
 		`SELECT id, source_id, target_id, type, source, created_at
 		 FROM memory_edges
@@ -49,6 +58,9 @@ func (c *Cortex) GetMemoryEdges(ctx context.Context, memoryID string) ([]MemoryE
 // GetMemoryEdgesByType returns edges of the given type where memoryID is the
 // source or the target.
 func (c *Cortex) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType string) ([]MemoryEdge, error) {
+	if err := requireMemory(ctx, c.db, c.userID, memoryID); err != nil {
+		return nil, err
+	}
 	return c.queryMemoryEdges(ctx,
 		`SELECT id, source_id, target_id, type, source, created_at
 		 FROM memory_edges

@@ -53,7 +53,7 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 		 FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
 	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return nil, notFound("cortex: entity %q not found", id)
+		return nil, errEntityNotFound()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get entity: %w", err)
@@ -181,14 +181,14 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID strin
 	keep, err := getEntityTx(ctx, tx, userID, keepID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return stats, fmt.Errorf("cortex: keep entity not found: %s", keepID)
+			return stats, notFound("cortex: keep entity not found")
 		}
 		return stats, fmt.Errorf("cortex: load keep entity: %w", err)
 	}
 	drop, err := getEntityTx(ctx, tx, userID, dropID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return stats, fmt.Errorf("cortex: drop entity not found: %s", dropID)
+			return stats, notFound("cortex: drop entity not found")
 		}
 		return stats, fmt.Errorf("cortex: load drop entity: %w", err)
 	}

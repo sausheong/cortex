@@ -11,6 +11,12 @@ import (
 // PutRelationship inserts a new relationship with a generated ULID.
 // Attributes are stored as JSON TEXT.
 func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
+	if err := requireEntity(ctx, c.db, c.userID, r.SourceID); err != nil {
+		return err
+	}
+	if err := requireEntity(ctx, c.db, c.userID, r.TargetID); err != nil {
+		return err
+	}
 	r.Confidence = coerceConfidence(r.Confidence)
 	r.ID = newID()
 	r.CreatedAt = time.Now().UTC()
@@ -38,6 +44,9 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 	cfg := &relFilterConfig{}
 	for _, f := range filters {
 		f(cfg)
+	}
+	if err := requireEntity(ctx, c.db, c.userID, entityID); err != nil {
+		return nil, err
 	}
 
 	query := `SELECT id, source_id, target_id, type, attributes, source, confidence, created_at

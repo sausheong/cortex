@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -171,10 +172,16 @@ func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileRepor
 
 	for _, p := range report.Proposed {
 		stale, err := c.getMemoryByID(ctx, p.StaleID)
+		if errors.Is(err, ErrNotFound) {
+			stale, err = nil, nil
+		}
 		if err != nil {
 			return out, err
 		}
 		newer, err := c.getMemoryByID(ctx, p.SupersededByID)
+		if errors.Is(err, ErrNotFound) {
+			newer, err = nil, nil
+		}
 		if err != nil {
 			return out, err
 		}

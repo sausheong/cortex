@@ -33,6 +33,12 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	}
 	defer tx.Rollback()
 
+	for _, entityID := range m.EntityIDs {
+		if err := requireEntity(ctx, tx, c.userID, entityID); err != nil {
+			return err
+		}
+	}
+
 	var speaker any
 	if m.Speaker != "" {
 		speaker = m.Speaker
@@ -146,6 +152,9 @@ func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Me
 // GetMemoriesByEntity. The validity predicate is derived from mode
 // (default = currently-valid).
 func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, mode temporalMode) ([]Memory, error) {
+	if err := requireEntity(ctx, c.db, c.userID, entityID); err != nil {
+		return nil, err
+	}
 	clause, targs := mode.clause("m")
 	// Arg order: user id, entity_id, then temporal args.
 	args := []any{c.userID, entityID}
@@ -273,7 +282,7 @@ func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *tim
 		return fmt.Errorf("cortex: invalidate memory rows affected: %w", err)
 	}
 	if n == 0 {
-		return notFound("cortex: memory %q not found", id)
+		return errMemoryNotFound()
 	}
 	return nil
 }
@@ -291,7 +300,7 @@ func (c *Cortex) getMemoryByID(ctx context.Context, id string) (*Memory, error) 
 		 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
 	).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, errMemoryNotFound()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get memory by id: %w", err)

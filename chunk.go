@@ -31,6 +31,11 @@ func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 	if ch.EntityID != "" {
 		entityID = ch.EntityID
 	}
+	if ch.EntityID != "" {
+		if err := requireEntity(ctx, tx, c.userID, ch.EntityID); err != nil {
+			return err
+		}
+	}
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO chunks (id, user_id, entity_id, content, metadata, created_at)
 		 VALUES (?, ?, ?, ?, ?::jsonb, ?)`,
