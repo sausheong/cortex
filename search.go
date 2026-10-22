@@ -60,7 +60,7 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 		return nil, fmt.Errorf("cortex: begin vector search: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL hnsw.iterative_scan = relaxed_order`); err != nil {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
 		return nil, fmt.Errorf("cortex: set iterative_scan: %w", err)
 	}
 	lit := vectorLiteral(queryVec)
