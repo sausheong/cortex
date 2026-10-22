@@ -6,7 +6,7 @@ DIST_TARGETS := $(addprefix dist-,$(PLATFORMS))
 PREFIX      ?= /usr/local
 INSTALL_DIR := $(PREFIX)/bin
 
-.PHONY: all build clean test test-db test-v test-cover vet tidy install uninstall run-mcp run-mcp-http dist $(DIST_TARGETS) release-archives release release-notes
+.PHONY: test-deploy all build clean test test-db test-v test-cover vet tidy install uninstall run-mcp run-mcp-http dist $(DIST_TARGETS) release-archives release release-notes
 
 all: build
 
@@ -15,6 +15,11 @@ build:
 	go build -o $(BINARY_DIR)/cortex ./cmd/cortex/
 
 TEST_DB_URL := postgres://postgres:postgres@localhost:55432/cortex_test?sslmode=disable
+
+# Shellcheck the deploy scripts and smoke-test setup-server.sh --app-host in an Ubuntu container.
+test-deploy:
+	shellcheck scripts/*.sh
+	scripts/test-setup-server.sh
 
 # Start (or reuse) a throwaway pgvector Postgres for the DB-backed tests.
 test-db:

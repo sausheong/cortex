@@ -114,7 +114,7 @@ This gives you the core library, all connectors, and all provider implementation
 cortex init
 ```
 
-This connects to the Postgres database named by `CORTEX_DATABASE_URL` (or `--db <dsn>`), applies the schema migrations, and creates the owner entity. Set it first, for example `export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@host:5432/cortex'`. To provision a server (droplet or Raspberry Pi), see [docs/deploy.md](docs/deploy.md); a public server uses TLS only, so use `?sslmode=verify-full` in the DSN. To bring over a v0.4 SQLite brain, run `cortex import-sqlite <brain.db>`.
+This connects to the Postgres database named by `CORTEX_DATABASE_URL` (or `--db <dsn>`), applies the schema migrations, and creates the owner entity. Set it first, for example `export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@host:5432/cortex'`. To provision a server (droplet or Raspberry Pi), see [docs/deploy.md](docs/deploy.md); Postgres is never exposed publicly (the hosted setup reaches it only through cortex over HTTPS, see below). To bring over a v0.4 SQLite brain, run `cortex import-sqlite <brain.db>`.
 
 During initialization, cortex will prompt for your identity:
 - **Name** (required)
@@ -415,6 +415,17 @@ curl http://127.0.0.1:8080/healthz
 ```
 
 Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Flags win over env. Stdio remains the default — `cortex mcp` with no arguments serves stdio.
+
+### MCP over HTTPS (hosted)
+
+To reach your memory from anywhere (Claude Code on several machines, phones, hosted agents), run cortex and Postgres on one small server. `scripts/setup-server.sh --app-host cortex.example.com` installs Postgres (localhost only), a `cortex` systemd service on `127.0.0.1:8080`, a nightly `cortex maintain` timer and Caddy, which terminates HTTPS with its own Let's Encrypt certificate. `scripts/deploy-app.sh root@cortex.example.com` then builds and ships the binary and your `OPENAI_API_KEY` (and any `LLM_*`/`EMBEDDING_*` settings). Port 5432 is never exposed; `/mcp` always requires `Authorization: Bearer <CORTEX_AUTH_TOKEN>`.
+
+```bash
+claude mcp add --transport http cortex https://cortex.example.com/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+Full instructions, security notes and conversion of older installs: [docs/deploy.md](docs/deploy.md).
 
 ### Available MCP Tools
 
