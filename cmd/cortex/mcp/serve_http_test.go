@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"bytes"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -75,5 +77,66 @@ func TestMaybeWarnNonLoopback(t *testing.T) {
 				t.Errorf("expected warning containing %q, got %q", c.warnSub, out)
 			}
 		})
+	}
+}
+
+// Behind a reverse proxy the bind is loopback; the token must still be
+// enforced whenever it is set, on any bind address.
+func TestServeHTTP_LoopbackBindEnforcesToken(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	if !isLoopback(addr) {
+		t.Fatalf("test addr %q should be loopback", addr)
+	}
+
+	s := server.NewMCPServer("test", "0.0.0", server.WithToolCapabilities(false))
+	const tok = "s3cret"
+	go func() { _ = serveHTTP(s, addr, tok) }()
+
+	base := "http://" + addr
+	for i := 0; i < 50; i++ {
+		if resp, err := http.Get(base + "/healthz"); err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	const initBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`
+	post := func(auth string) int {
+		req, _ := http.NewRequest(http.MethodPost, base+"/mcp", strings.NewReader(initBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := post(""); got != http.StatusUnauthorized {
+		t.Errorf("no token: got %d, want 401", got)
+	}
+	if got := post("Bearer wrong"); got != http.StatusUnauthorized {
+		t.Errorf("wrong token: got %d, want 401", got)
+	}
+	if got := post("Bearer " + tok); got != http.StatusOK {
+		t.Errorf("correct token: got %d, want 200", got)
+	}
+	resp, err := http.Get(base + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("healthz unauthenticated: got %d, want 200", resp.StatusCode)
 	}
 }

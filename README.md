@@ -1076,7 +1076,7 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 | `CORTEX_DATABASE_URL` | _(required)_ | Postgres DSN (CLI, MCP). Replaces `CORTEX_DB` |
 | `CORTEX_TRANSPORT` | `stdio` | MCP transport: `stdio` or `http` |
 | `CORTEX_ADDR` | `127.0.0.1:8080` | Listen address when transport is `http` |
-| `CORTEX_AUTH_TOKEN` | _(unset)_ | Bearer token required for HTTP transport on non-loopback binds |
+| `CORTEX_AUTH_TOKEN` | _(unset)_ | Bearer token for the HTTP transport. When set it is always enforced (any bind address); a non-loopback bind without it logs a warning |
 
 ### Example Configurations
 

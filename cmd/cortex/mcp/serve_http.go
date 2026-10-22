@@ -9,8 +9,9 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// buildHTTPMux composes the streamable-HTTP MCP handler with optional bearer-
-// token auth and an unauthenticated /healthz endpoint. Factored out of
+// buildHTTPMux composes the streamable-HTTP MCP handler with bearer-token auth
+// that is enforced whenever token is non-empty, regardless of the bind address
+// (a reverse proxy makes the bind loopback while the service is still public) and an unauthenticated /healthz endpoint. Factored out of
 // serveHTTP so it can be tested without binding a port.
 func buildHTTPMux(s *server.MCPServer, token string) *http.ServeMux {
 	streamable := server.NewStreamableHTTPServer(s)
