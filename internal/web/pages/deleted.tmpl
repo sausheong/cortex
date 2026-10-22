@@ -1,0 +1,16 @@
+{{define "title"}}Recently deleted{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Recently deleted</h1>
+{{if .Deleted}}<p class="notice">Deleted {{.Deleted}} memories.</p>{{end}}
+<p class="note">Deletions can be restored for 30 days, then they are removed for good.</p>
+<ul>
+{{range .Batches}}
+  <li>{{.CreatedAt.Format "2006-01-02 15:04"}} · {{.Kind}} · {{.Memories}} memories, {{.Entities}} entities
+    <form method="post" action="/memories/restore/{{.ID}}" style="display:inline">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="link">Restore</button></form></li>
+{{else}}<li class="note">Nothing to restore.</li>{{end}}
+</ul>
+<p><a href="/memories">Back to memories</a></p>
+{{end}}
+{{end}}

@@ -1,0 +1,13 @@
+{{define "title"}}Account{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Account</h1>
+<p>Storage: {{.MB}} MB · {{.Usage.Memories}} memories · {{.Usage.Entities}} entities · {{.Usage.Chunks}} chunks{{if .Usage.Deleted}} · {{.Usage.Deleted}} deleted (restorable for 30 days){{end}}</p>
+<h2>Delete account</h2>
+<p>This signs you out and disconnects every assistant at once. Your data is kept for 30 days; signing in again within that time restores it, without connections.</p>
+<form method="post" action="/account/delete" onsubmit="return confirm('Delete your account?')">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <button class="btn">Delete my account</button>
+</form>
+{{end}}
+{{end}}
