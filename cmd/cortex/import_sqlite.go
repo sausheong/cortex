@@ -48,7 +48,7 @@ func cmdImportSQLite() {
 	cx := openCortex()
 	defer cx.Close()
 
-	rep, err := sqliteimport.Import(context.Background(), opts.Path, cx, sqliteimport.Options{
+	rep, err := sqliteimport.Import(context.Background(), opts.Path, cx, cx.UserID(), sqliteimport.Options{
 		Force: opts.Force, EmbedOnly: opts.EmbedOnly,
 	})
 	mismatch := false

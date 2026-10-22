@@ -121,11 +121,12 @@ type sampledMem struct {
 func sampleMemories(ctx context.Context, db *sql.DB, n int) []sampledMem {
 	queries := []string{
 		`SELECT id, content, COALESCE(source,'') FROM memories
-		 WHERE (expired_at IS NULL AND invalid_at IS NULL)
+		 WHERE user_id = 'u_bootstrap' AND deleted_at IS NULL
+		   AND (expired_at IS NULL AND invalid_at IS NULL)
 		   AND LENGTH(content) BETWEEN 20 AND 400
 		 ORDER BY random() LIMIT $1`,
 		`SELECT id, content, COALESCE(source,'') FROM memories
-		 WHERE LENGTH(content) BETWEEN 20 AND 400
+		 WHERE user_id = 'u_bootstrap' AND LENGTH(content) BETWEEN 20 AND 400
 		 ORDER BY random() LIMIT $1`,
 	}
 	for _, q := range queries {

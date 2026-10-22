@@ -23,10 +23,10 @@ func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
 		source = e.Source
 	}
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO memory_edges (id, source_id, target_id, type, source, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (source_id, target_id, type) DO NOTHING`,
-		e.ID, e.SourceID, e.TargetID, e.Type, source, e.CreatedAt,
+		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
+		e.ID, c.userID, e.SourceID, e.TargetID, e.Type, source, e.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory edge: %w", err)
@@ -40,9 +40,9 @@ func (c *Cortex) GetMemoryEdges(ctx context.Context, memoryID string) ([]MemoryE
 	return c.queryMemoryEdges(ctx,
 		`SELECT id, source_id, target_id, type, source, created_at
 		 FROM memory_edges
-		 WHERE source_id = ? OR target_id = ?
+		 WHERE user_id = ? AND (source_id = ? OR target_id = ?)
 		 ORDER BY created_at`,
-		memoryID, memoryID,
+		c.userID, memoryID, memoryID,
 	)
 }
 
@@ -52,9 +52,9 @@ func (c *Cortex) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType st
 	return c.queryMemoryEdges(ctx,
 		`SELECT id, source_id, target_id, type, source, created_at
 		 FROM memory_edges
-		 WHERE (source_id = ? OR target_id = ?) AND type = ?
+		 WHERE user_id = ? AND (source_id = ? OR target_id = ?) AND type = ?
 		 ORDER BY created_at`,
-		memoryID, memoryID, edgeType,
+		c.userID, memoryID, memoryID, edgeType,
 	)
 }
 

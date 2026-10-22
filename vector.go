@@ -7,9 +7,6 @@ import (
 	"strings"
 )
 
-// defaultEmbeddingDims is used when no embedder is configured at first Open.
-const defaultEmbeddingDims = 512
-
 // checkPgvectorVersion returns an error if v is older than 0.8.0.
 func checkPgvectorVersion(v string) error {
 	parts := strings.Split(strings.TrimSpace(v), ".")
@@ -27,72 +24,15 @@ func checkPgvectorVersion(v string) error {
 	return fmt.Errorf("cortex: pgvector %s is too old, need >= 0.8.0 (ALTER EXTENSION vector UPDATE)", v)
 }
 
-// ensureVectorSchema checks the pgvector version and, on first Open, creates
-// the dimension-dependent embedding column and partial HNSW indexes.
+// ensureVectorSchema checks the pgvector version. The embedding column and
+// its indexes are managed per user by migration 002 and the vector layer.
 func (c *Cortex) ensureVectorSchema(ctx context.Context) error {
 	var ver string
 	if err := c.db.QueryRowContext(ctx,
 		`SELECT extversion FROM pg_extension WHERE extname = 'vector'`).Scan(&ver); err != nil {
 		return fmt.Errorf("cortex: pgvector extension not found: %w", err)
 	}
-	if err := checkPgvectorVersion(ver); err != nil {
-		return err
-	}
-
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("cortex: begin vector setup: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(4243)`); err != nil {
-		return fmt.Errorf("cortex: vector setup lock: %w", err)
-	}
-
-	var stored string
-	err = tx.QueryRowContext(ctx, `SELECT value FROM cortex_meta WHERE key = 'embedding_dims'`).Scan(&stored)
-	switch {
-	case err == nil:
-		n, perr := strconv.Atoi(stored)
-		if perr != nil {
-			return fmt.Errorf("cortex: bad stored embedding_dims %q", stored)
-		}
-		c.dims = n
-		if c.cfg.embedder != nil && c.cfg.embedder.Dimensions() != n {
-			return fmt.Errorf("cortex: embedder dimension %d does not match stored dimension %d", c.cfg.embedder.Dimensions(), n)
-		}
-		return nil
-	case !isNoRows(err):
-		return fmt.Errorf("cortex: read embedding_dims: %w", err)
-	}
-
-	n := defaultEmbeddingDims
-	if c.cfg.embedder != nil {
-		n = c.cfg.embedder.Dimensions()
-	}
-	if n <= 0 {
-		return fmt.Errorf("cortex: invalid embedder dimension %d", n)
-	}
-	stmts := []string{
-		fmt.Sprintf(`ALTER TABLE embeddings ADD COLUMN embedding halfvec(%d) NOT NULL`, n),
-	}
-	for _, rt := range []string{"entity", "memory", "chunk"} {
-		stmts = append(stmts, fmt.Sprintf(
-			`CREATE INDEX idx_embeddings_hnsw_%s ON embeddings USING hnsw (embedding halfvec_cosine_ops) WHERE ref_type = '%s'`, rt, rt))
-	}
-	for _, s := range stmts {
-		if _, err := tx.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("cortex: vector schema: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO cortex_meta (key, value) VALUES ('embedding_dims', ?)`, strconv.Itoa(n)); err != nil {
-		return fmt.Errorf("cortex: record embedding_dims: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("cortex: commit vector setup: %w", err)
-	}
-	c.dims = n
-	return nil
+	return checkPgvectorVersion(ver)
 }
 
 // vectorLiteral renders v in pgvector text form, e.g. [0.1,0.2].

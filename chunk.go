@@ -32,9 +32,9 @@ func (c *Cortex) PutChunk(ctx context.Context, ch *Chunk) error {
 		entityID = ch.EntityID
 	}
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO chunks (id, entity_id, content, metadata, created_at)
-		 VALUES (?, ?, ?, ?::jsonb, ?)`,
-		ch.ID, entityID, ch.Content, string(metaJSON), ch.CreatedAt,
+		`INSERT INTO chunks (id, user_id, entity_id, content, metadata, created_at)
+		 VALUES (?, ?, ?, ?, ?::jsonb, ?)`,
+		ch.ID, c.userID, entityID, ch.Content, string(metaJSON), ch.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert chunk: %w", err)
@@ -56,8 +56,8 @@ func (c *Cortex) firstChunkBySource(ctx context.Context, src string) string {
 	var content string
 	err := c.db.QueryRowContext(ctx,
 		`SELECT content FROM chunks
-		 WHERE metadata->>'source' = ?
-		 ORDER BY created_at ASC LIMIT 1`, src,
+		 WHERE user_id = ? AND deleted_at IS NULL AND metadata->>'source' = ?
+		 ORDER BY created_at ASC LIMIT 1`, c.userID, src,
 	).Scan(&content)
 	if err != nil {
 		return ""
@@ -68,17 +68,17 @@ func (c *Cortex) firstChunkBySource(ctx context.Context, src string) string {
 // SearchKeyword performs a full-text search on chunk content using Postgres tsvector.
 // Results are ordered by relevance (rank). Returns up to limit results.
 func (c *Cortex) SearchKeyword(ctx context.Context, query string, limit int) ([]Chunk, error) {
-	tsExpr, tsArgs := orTSQuery(query, 2)
+	tsExpr, tsArgs := orTSQuery(query, 3)
 	if tsExpr == "" {
 		return nil, nil
 	}
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT c.id, c.entity_id, c.content, c.metadata, c.created_at
 		 FROM chunks c
-		 WHERE c.tsv @@ `+tsExpr+`
+		 WHERE c.user_id = ? AND c.deleted_at IS NULL AND c.tsv @@ `+tsExpr+`
 		 ORDER BY ts_rank_cd(c.tsv, `+tsExpr+`) DESC
 		 LIMIT ?`,
-		append([]any{limit}, tsArgs...)...,
+		append([]any{c.userID, limit}, tsArgs...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: keyword search: %w", err)

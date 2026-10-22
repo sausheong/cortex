@@ -82,7 +82,7 @@ func openTarget(t *testing.T, emb cortex.Embedder) *cortex.Cortex {
 func TestImportCopiesAll(t *testing.T) {
 	path := makeSQLite(t, "2026-03-01 08:00:00")
 	cx := openTarget(t, &fakeEmb{})
-	rep, err := Import(context.Background(), path, cx, Options{})
+	rep, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +114,10 @@ func TestImportCopiesAll(t *testing.T) {
 func TestImportRefusesNonEmpty(t *testing.T) {
 	path := makeSQLite(t, "2026-03-01 08:00:00")
 	cx := openTarget(t, &fakeEmb{})
-	if _, err := Import(context.Background(), path, cx, Options{}); err != nil {
+	if _, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Import(context.Background(), path, cx, Options{}); err == nil {
+	if _, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{}); err == nil {
 		t.Fatal("second import without Force should error")
 	}
 }
@@ -125,7 +125,7 @@ func TestImportRefusesNonEmpty(t *testing.T) {
 func TestImportBadTimestamp(t *testing.T) {
 	path := makeSQLite(t, "garbage")
 	cx := openTarget(t, &fakeEmb{})
-	_, err := Import(context.Background(), path, cx, Options{})
+	_, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{})
 	if err == nil || !strings.Contains(err.Error(), "table entities row e1") || !strings.Contains(err.Error(), "garbage") {
 		t.Fatalf("err = %v", err)
 	}
@@ -139,11 +139,11 @@ func TestImportEmbedResumes(t *testing.T) {
 	path := makeSQLite(t, "2026-03-01 08:00:00")
 	bad := &fakeEmb{failAt: 2}
 	cx := openTarget(t, bad)
-	if _, err := Import(context.Background(), path, cx, Options{BatchSize: 1}); err == nil {
+	if _, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{BatchSize: 1}); err == nil {
 		t.Fatal("expected embed error")
 	}
 	cx.SetEmbedder(&fakeEmb{})
-	if _, err := Import(context.Background(), path, cx, Options{EmbedOnly: true, BatchSize: 1}); err != nil {
+	if _, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{EmbedOnly: true, BatchSize: 1}); err != nil {
 		t.Fatal(err)
 	}
 	for _, q := range []string{
@@ -178,7 +178,7 @@ func TestImportOlderSchema(t *testing.T) {
 	db.Close()
 
 	cx := openTarget(t, &fakeEmb{})
-	rep, err := Import(context.Background(), path, cx, Options{})
+	rep, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestImportBatchBoundaries(t *testing.T) {
 	db.Close()
 
 	cx := openTarget(t, &fakeEmb{})
-	rep, err := Import(context.Background(), path, cx, Options{})
+	rep, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestImportTruncatesLongEmbedInput(t *testing.T) {
 
 	emb := &lenEmb{}
 	cx := openTarget(t, emb)
-	if _, err := Import(context.Background(), path, cx, Options{}); err != nil {
+	if _, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := emb.longest.Load(); got > maxEmbedChars {
@@ -267,5 +267,27 @@ func TestImportTruncatesLongEmbedInput(t *testing.T) {
 	var n int
 	if err := cx.DB().QueryRow(`SELECT length(content) FROM chunks WHERE id='c1'`).Scan(&n); err != nil || n != len(long) {
 		t.Errorf("stored chunk length %d (err %v), want %d", n, err, len(long))
+	}
+}
+
+func TestImportSqliteFreshDB(t *testing.T) {
+	path := makeSQLite(t, "2026-03-01 08:00:00")
+	cx := openTarget(t, &fakeEmb{})
+	// A fresh Postgres has no cortex_meta embedding_dims row; the source
+	// carries none either, so dims come from the vectors themselves.
+	var n int
+	if err := cx.DB().QueryRow(`SELECT count(*) FROM cortex_meta WHERE key = 'embedding_dims'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("fresh DB has embedding_dims row (n=%d err=%v)", n, err)
+	}
+	rep, err := Import(context.Background(), path, cx, cortex.BootstrapUserID, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Embedded == 0 {
+		t.Fatal("nothing embedded")
+	}
+	var bad int
+	if err := cx.DB().QueryRow(`SELECT count(*) FROM embeddings WHERE dims <> 512 OR generation <> 1 OR user_id <> 'u_bootstrap'`).Scan(&bad); err != nil || bad != 0 {
+		t.Fatalf("bad embedding rows = %d err=%v", bad, err)
 	}
 }

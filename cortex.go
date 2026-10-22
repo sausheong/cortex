@@ -166,22 +166,22 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 func (c *Cortex) forgetByEntity(ctx context.Context, tx *dbTx, entityID string) error {
 	// 1. Delete embeddings for chunks linked to entity.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM embeddings WHERE ref_type = 'chunk' AND ref_id IN
-		 (SELECT id FROM chunks WHERE entity_id = ?)`, entityID,
+		`DELETE FROM embeddings WHERE user_id = ? AND ref_type = 'chunk' AND ref_id IN
+		 (SELECT id FROM chunks WHERE entity_id = ? AND user_id = ?)`, c.userID, entityID, c.userID,
 	); err != nil {
 		return fmt.Errorf("cortex: delete chunk embeddings: %w", err)
 	}
 
 	// 2. Delete chunks linked to entity.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM chunks WHERE entity_id = ?`, entityID,
+		`DELETE FROM chunks WHERE entity_id = ? AND user_id = ?`, entityID, c.userID,
 	); err != nil {
 		return fmt.Errorf("cortex: delete chunks: %w", err)
 	}
 
 	// 3. Delete memory_entities links for entity.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM memory_entities WHERE entity_id = ?`, entityID,
+		`DELETE FROM memory_entities WHERE entity_id = ? AND user_id = ?`, entityID, c.userID,
 	); err != nil {
 		return fmt.Errorf("cortex: delete memory entity links: %w", err)
 	}
@@ -193,15 +193,15 @@ func (c *Cortex) forgetByEntity(ctx context.Context, tx *dbTx, entityID string) 
 
 	// 5. Delete relationships involving entity.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM relationships WHERE source_id = ? OR target_id = ?`,
-		entityID, entityID,
+		`DELETE FROM relationships WHERE user_id = ? AND (source_id = ? OR target_id = ?)`,
+		c.userID, entityID, entityID,
 	); err != nil {
 		return fmt.Errorf("cortex: delete relationships: %w", err)
 	}
 
 	// 6. Delete the entity itself.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM entities WHERE id = ?`, entityID,
+		`DELETE FROM entities WHERE id = ? AND user_id = ?`, entityID, c.userID,
 	); err != nil {
 		return fmt.Errorf("cortex: delete entity: %w", err)
 	}
@@ -213,7 +213,7 @@ func (c *Cortex) forgetByEntity(ctx context.Context, tx *dbTx, entityID string) 
 func (c *Cortex) forgetBySource(ctx context.Context, tx *dbTx, source string) error {
 	// Get all entity IDs for this source.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM entities WHERE source = ?`, source,
+		`SELECT id FROM entities WHERE user_id = ? AND source = ?`, c.userID, source,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: query entities by source: %w", err)
@@ -236,30 +236,30 @@ func (c *Cortex) forgetBySource(ctx context.Context, tx *dbTx, source string) er
 	for _, entityID := range entityIDs {
 		// Delete chunk embeddings.
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM embeddings WHERE ref_type = 'chunk' AND ref_id IN
-			 (SELECT id FROM chunks WHERE entity_id = ?)`, entityID,
+			`DELETE FROM embeddings WHERE user_id = ? AND ref_type = 'chunk' AND ref_id IN
+			 (SELECT id FROM chunks WHERE entity_id = ? AND user_id = ?)`, c.userID, entityID, c.userID,
 		); err != nil {
 			return fmt.Errorf("cortex: delete chunk embeddings for source: %w", err)
 		}
 
 		// Delete chunks.
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM chunks WHERE entity_id = ?`, entityID,
+			`DELETE FROM chunks WHERE entity_id = ? AND user_id = ?`, entityID, c.userID,
 		); err != nil {
 			return fmt.Errorf("cortex: delete chunks for source: %w", err)
 		}
 
 		// Delete memory entity links.
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM memory_entities WHERE entity_id = ?`, entityID,
+			`DELETE FROM memory_entities WHERE entity_id = ? AND user_id = ?`, entityID, c.userID,
 		); err != nil {
 			return fmt.Errorf("cortex: delete memory entity links for source: %w", err)
 		}
 
 		// Delete relationships.
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM relationships WHERE source_id = ? OR target_id = ?`,
-			entityID, entityID,
+			`DELETE FROM relationships WHERE user_id = ? AND (source_id = ? OR target_id = ?)`,
+			c.userID, entityID, entityID,
 		); err != nil {
 			return fmt.Errorf("cortex: delete relationships for source: %w", err)
 		}
@@ -267,7 +267,7 @@ func (c *Cortex) forgetBySource(ctx context.Context, tx *dbTx, source string) er
 
 	// Delete entities by source.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM entities WHERE source = ?`, source,
+		`DELETE FROM entities WHERE user_id = ? AND source = ?`, c.userID, source,
 	); err != nil {
 		return fmt.Errorf("cortex: delete entities by source: %w", err)
 	}
@@ -285,7 +285,8 @@ func (c *Cortex) forgetBySource(ctx context.Context, tx *dbTx, source string) er
 func (c *Cortex) deleteOrphanedMemories(ctx context.Context, tx *dbTx) error {
 	// Find orphaned memory IDs.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM memories WHERE id NOT IN (SELECT DISTINCT memory_id FROM memory_entities)`,
+		`SELECT id FROM memories WHERE user_id = ? AND id NOT IN (SELECT DISTINCT memory_id FROM memory_entities WHERE user_id = ?)`,
+		c.userID, c.userID,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: find orphaned memories: %w", err)
@@ -307,12 +308,12 @@ func (c *Cortex) deleteOrphanedMemories(ctx context.Context, tx *dbTx) error {
 	// Delete embeddings and memories for each orphan.
 	for _, id := range orphanIDs {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM embeddings WHERE ref_type = 'memory' AND ref_id = ?`, id,
+			`DELETE FROM embeddings WHERE user_id = ? AND ref_type = 'memory' AND ref_id = ?`, c.userID, id,
 		); err != nil {
 			return fmt.Errorf("cortex: delete orphaned memory embedding: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM memories WHERE id = ?`, id,
+			`DELETE FROM memories WHERE id = ? AND user_id = ?`, id, c.userID,
 		); err != nil {
 			return fmt.Errorf("cortex: delete orphaned memory: %w", err)
 		}

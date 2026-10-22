@@ -643,7 +643,7 @@ func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	vec := make([]float32, cx.dims)
+	vec := make([]float32, 8)
 	vec[0] = 1
 	if err := cx.putEmbedding(ctx, drop.ID, "entity", vec); err != nil {
 		t.Fatal(err)

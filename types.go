@@ -169,6 +169,13 @@ type config struct {
 	embedder  Embedder
 	extractor Extractor
 	logf      func(format string, args ...any) // optional diagnostic sink; nil = silent
+
+	migrationTimeout time.Duration // 0 = default (60s)
+}
+
+// WithMigrationTimeout bounds how long Open waits for migrations (default 60s).
+func WithMigrationTimeout(d time.Duration) Option {
+	return func(c *config) { c.migrationTimeout = d }
 }
 
 type LLM interface {

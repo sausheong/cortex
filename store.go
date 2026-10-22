@@ -17,9 +17,9 @@ import (
 
 // Cortex is the main knowledge graph store backed by Postgres.
 type Cortex struct {
-	db   dbConn
-	cfg  config
-	dims int // embedding dimension (from cortex_meta)
+	db     dbConn
+	cfg    config
+	userID string // the user this handle is bound to
 }
 
 // Open connects to the Postgres database at dsn and applies pending migrations.
@@ -46,11 +46,15 @@ func Open(dsn string, opts ...Option) (*Cortex, error) {
 		return nil, fmt.Errorf("cortex: can't reach Postgres at %s: %w", hostPort, err)
 	}
 
-	c := &Cortex{db: dbConn{sdb}}
+	c := &Cortex{db: dbConn{sdb}, userID: BootstrapUserID}
 	for _, o := range opts {
 		o(&c.cfg)
 	}
-	mctx, mcancel := context.WithTimeout(context.Background(), 60*time.Second)
+	mt := c.cfg.migrationTimeout
+	if mt <= 0 {
+		mt = 60 * time.Second
+	}
+	mctx, mcancel := context.WithTimeout(context.Background(), mt)
 	defer mcancel()
 	if err := c.migrate(mctx); err != nil {
 		sdb.Close()
@@ -102,7 +106,7 @@ func (c *Cortex) SetEmbedder(e Embedder) { c.cfg.embedder = e }
 func (c *Cortex) GetSyncState(ctx context.Context, connector string) (string, error) {
 	var state string
 	err := c.db.QueryRowContext(ctx,
-		"SELECT state FROM sync_state WHERE connector = ?", connector,
+		"SELECT state FROM sync_state WHERE user_id = ? AND connector = ?", c.userID, connector,
 	).Scan(&state)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -116,10 +120,10 @@ func (c *Cortex) GetSyncState(ctx context.Context, connector string) (string, er
 // SetSyncState upserts the sync state for a connector.
 func (c *Cortex) SetSyncState(ctx context.Context, connector, state string) error {
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO sync_state (connector, state, updated_at)
-		 VALUES (?, ?, now())
-		 ON CONFLICT(connector) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
-		connector, state,
+		`INSERT INTO sync_state (user_id, connector, state, updated_at)
+		 VALUES (?, ?, ?, now())
+		 ON CONFLICT(user_id, connector) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+		c.userID, connector, state,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: set sync state: %w", err)

@@ -47,6 +47,12 @@ func loadMigrations() ([]migration, error) {
 // migrate applies unapplied migrations in order. A transaction-scoped
 // advisory lock serialises concurrent Opens.
 func (c *Cortex) migrate(ctx context.Context) error {
+	return c.migrateUpTo(ctx, 0)
+}
+
+// migrateUpTo applies unapplied migrations with version <= max (all of them
+// when max <= 0). It is a test hook for upgrade-path tests.
+func (c *Cortex) migrateUpTo(ctx context.Context, max int) error {
 	migs, err := loadMigrations()
 	if err != nil {
 		return err
@@ -86,7 +92,7 @@ func (c *Cortex) migrate(ctx context.Context) error {
 	rows.Close()
 
 	for _, m := range migs {
-		if applied[m.version] {
+		if applied[m.version] || (max > 0 && m.version > max) {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, m.sql); err != nil {

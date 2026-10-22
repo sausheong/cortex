@@ -130,7 +130,7 @@ func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (R
 
 // allEntityIDs returns every entity id in the graph.
 func (c *Cortex) allEntityIDs(ctx context.Context) ([]string, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT id FROM entities`)
+	rows, err := c.db.QueryContext(ctx, `SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL`, c.userID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list entity ids: %w", err)
 	}

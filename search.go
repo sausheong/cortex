@@ -19,8 +19,8 @@ type vectorResult struct {
 func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []float32 {
 	var lit string
 	err := c.db.QueryRowContext(ctx,
-		`SELECT embedding::text FROM embeddings WHERE ref_id = ? AND ref_type = ? LIMIT 1`,
-		refID, refType,
+		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ? ORDER BY generation DESC LIMIT 1`,
+		c.userID, refID, refType,
 	).Scan(&lit)
 	if err != nil {
 		return nil
@@ -34,13 +34,15 @@ func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []fl
 
 // putEmbedding stores an embedding vector (halfvec) for a given reference.
 func (c *Cortex) putEmbedding(ctx context.Context, refID, refType string, embedding []float32) error {
-	if len(embedding) != c.dims {
-		return fmt.Errorf("cortex: embedding has %d dims, want %d", len(embedding), c.dims)
+	if len(embedding) < 1 || len(embedding) > 4000 {
+		return fmt.Errorf("cortex: embedding has %d dims, want 1..4000", len(embedding))
 	}
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO embeddings (id, ref_id, ref_type, embedding, created_at)
-		 VALUES (?, ?, ?, ?::halfvec, now())`,
-		newID(), refID, refType, vectorLiteral(embedding),
+		`INSERT INTO embeddings (id, user_id, ref_id, ref_type, embedding, dims, generation, created_at)
+		 VALUES (?, ?, ?, ?, ?::halfvec, ?, 1, now())
+		 ON CONFLICT (user_id, ref_type, ref_id, generation) DO UPDATE SET
+		   embedding = EXCLUDED.embedding, dims = EXCLUDED.dims`,
+		newID(), c.userID, refID, refType, vectorLiteral(embedding), len(embedding),
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert embedding: %w", err)
@@ -52,8 +54,9 @@ func (c *Cortex) putEmbedding(ctx context.Context, refID, refType string, embedd
 // the given refType using the partial HNSW index, returning the top limit
 // results with similarity = 1 - cosine distance.
 func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refType string, limit int) ([]vectorResult, error) {
-	if len(queryVec) != c.dims {
-		return nil, fmt.Errorf("cortex: query vector has %d dims, want %d", len(queryVec), c.dims)
+	dims := len(queryVec)
+	if dims < 1 || dims > 4000 {
+		return nil, fmt.Errorf("cortex: query vector has %d dims, want 1..4000", dims)
 	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -65,10 +68,10 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 	}
 	lit := vectorLiteral(queryVec)
 	rows, err := tx.QueryContext(ctx,
-		`SELECT ref_id, 1 - (embedding <=> ?::halfvec) AS sim
-		 FROM embeddings WHERE ref_type = ?
-		 ORDER BY embedding <=> ?::halfvec LIMIT ?`,
-		lit, refType, lit, limit,
+		fmt.Sprintf(`SELECT ref_id, 1 - (embedding::halfvec(%d) <=> ?::halfvec) AS sim
+		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d
+		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, dims),
+		lit, c.userID, refType, lit, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query embeddings: %w", err)
@@ -120,7 +123,7 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 		var metaJSON sql.NullString
 		err := c.db.QueryRowContext(ctx,
 			`SELECT id, entity_id, content, metadata, created_at
-			 FROM chunks WHERE id = ?`, r.refID,
+			 FROM chunks WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, r.refID, c.userID,
 		).Scan(&ch.ID, &entityID, &ch.Content, &metaJSON, &ch.CreatedAt)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but chunk was deleted
@@ -177,12 +180,12 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 		var m Memory
 		var spk sql.NullString
 		var vat, iat, eat sql.NullTime
-		// Arg order: ref id first, then temporal args.
-		args := []any{r.refID}
+		// Arg order: ref id, user id, then temporal args.
+		args := []any{r.refID, c.userID}
 		args = append(args, targs...)
 		err := c.db.QueryRowContext(ctx,
 			`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
-			 FROM memories WHERE id = ? AND `+clause, args...,
+			 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND `+clause, args...,
 		).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but memory was deleted

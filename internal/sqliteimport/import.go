@@ -110,9 +110,12 @@ var specs = []tableSpec{
 	{"sync_state", []colSpec{c("connector", ""), c("state", ""), c("updated_at", "t")}, []int{0}},
 }
 
-// Import copies the SQLite brain at sqlitePath into cx, then embeds anything
-// that lacks an embedding.
-func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, opts Options) (Report, error) {
+// Import copies the SQLite brain at sqlitePath into cx for userID, then
+// embeds anything of that user's that lacks an embedding.
+func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, userID string, opts Options) (Report, error) {
+	if userID == "" {
+		return Report{}, fmt.Errorf("import: user ID is required")
+	}
 	rep := Report{Counts: map[string][2]int{}}
 	if opts.BatchSize <= 0 {
 		opts.BatchSize = 64
@@ -128,7 +131,7 @@ func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, opts Opti
 	dst := cx.DB()
 
 	if !opts.EmbedOnly {
-		if err := copyAll(ctx, src, dst, opts.Force); err != nil {
+		if err := copyAll(ctx, src, dst, userID, opts.Force); err != nil {
 			return rep, err
 		}
 	}
@@ -143,21 +146,25 @@ func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, opts Opti
 				return rep, fmt.Errorf("count source %s: %w", t, err)
 			}
 		}
-		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM "+t).Scan(&d); err != nil {
+		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM "+t+" WHERE user_id = $1", userID).Scan(&d); err != nil {
 			return rep, fmt.Errorf("count target %s: %w", t, err)
 		}
 		rep.Counts[t] = [2]int{s, d}
 	}
 
-	n, err := embedMissing(ctx, dst, cx.Embedder(), opts.BatchSize)
+	srcDims, err := sourceDims(ctx, src)
+	if err != nil {
+		return rep, err
+	}
+	n, err := embedMissing(ctx, dst, cx.Embedder(), userID, srcDims, opts.BatchSize)
 	rep.Embedded = n
 	return rep, err
 }
 
-func copyAll(ctx context.Context, src, dst *sql.DB, force bool) error {
+func copyAll(ctx context.Context, src, dst *sql.DB, userID string, force bool) error {
 	if !force {
 		var n int
-		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM entities").Scan(&n); err != nil {
+		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM entities WHERE user_id = $1", userID).Scan(&n); err != nil {
 			return fmt.Errorf("check target: %w", err)
 		}
 		if n > 0 {
@@ -170,7 +177,7 @@ func copyAll(ctx context.Context, src, dst *sql.DB, force bool) error {
 	}
 	defer tx.Rollback()
 	for _, ts := range specs {
-		if err := copyTable(ctx, src, tx, ts); err != nil {
+		if err := copyTable(ctx, src, tx, userID, ts); err != nil {
 			return err
 		}
 	}
@@ -197,7 +204,7 @@ func sourceColumns(ctx context.Context, src *sql.DB, table string) (map[string]b
 	return have, rows.Err()
 }
 
-func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error {
+func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, userID string, ts tableSpec) error {
 	have, err := sourceColumns(ctx, src, ts.name)
 	if err != nil {
 		return err
@@ -239,7 +246,7 @@ func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error
 		if len(ids) == 0 {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, batchInsert(ts.name, names, len(ids)), args...); err != nil {
+		if _, err := tx.ExecContext(ctx, batchInsert(ts.name, append([]string{"user_id"}, names...), len(ids)), args...); err != nil {
 			return fmt.Errorf("table %s rows %s..%s: %w", ts.name, ids[0], ids[len(ids)-1], err)
 		}
 		args, ids = args[:0], ids[:0]
@@ -259,6 +266,7 @@ func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error
 			idParts = append(idParts, fmt.Sprint(asString(raw[i])))
 		}
 		rowID := strings.Join(idParts, "/")
+		args = append(args, userID)
 		for i, v := range raw {
 			a, err := conv(ts.name, rowID, ts.cols[i].kind, v)
 			if err != nil {
@@ -280,7 +288,7 @@ func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error
 }
 
 // copyBatchRows is how many rows each INSERT carries. 500 rows of the widest
-// table (13 columns) stays well under Postgres's 65535-parameter limit.
+// table (14 columns with user_id) stays well under Postgres's 65535-parameter limit.
 var copyBatchRows = 500
 
 // batchInsert builds "INSERT INTO t (cols) VALUES ($1,..),(..) ON CONFLICT DO NOTHING"
@@ -317,24 +325,23 @@ func asString(v any) string {
 type pending struct{ id, text string }
 
 // embedMissing embeds every memory, chunk and entity lacking an embedding.
-func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch int) (int, error) {
+// dims is the source brain's embedding dimension (0 = unknown: the first
+// vector decides); it is written per row.
+func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, userID string, dims, batch int) (int, error) {
 	var count int
-	var dims int
-	var ds string
-	if err := db.QueryRowContext(ctx, `SELECT value FROM cortex_meta WHERE key='embedding_dims'`).Scan(&ds); err != nil {
-		return 0, fmt.Errorf("read embedding_dims: %w", err)
-	}
-	dims, _ = strconv.Atoi(ds)
 
 	kinds := []struct{ refType, query string }{
 		{"memory", `SELECT m.id, m.content FROM memories m
-			WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.ref_id = m.id AND e.ref_type = 'memory')
+			WHERE m.user_id = $2 AND m.deleted_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.user_id = m.user_id AND e.ref_id = m.id AND e.ref_type = 'memory')
 			ORDER BY m.id LIMIT $1`},
 		{"chunk", `SELECT ch.id, ch.content FROM chunks ch
-			WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.ref_id = ch.id AND e.ref_type = 'chunk')
+			WHERE ch.user_id = $2 AND ch.deleted_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.user_id = ch.user_id AND e.ref_id = ch.id AND e.ref_type = 'chunk')
 			ORDER BY ch.id LIMIT $1`},
 		{"entity", `SELECT en.id, en.name FROM entities en
-			WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.ref_id = en.id AND e.ref_type = 'entity')
+			WHERE en.user_id = $2 AND en.deleted_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.user_id = en.user_id AND e.ref_id = en.id AND e.ref_type = 'entity')
 			ORDER BY en.id LIMIT $1`},
 	}
 	if emb == nil {
@@ -342,7 +349,8 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 			var n int
 			q := strings.Replace(k.query, "SELECT", "SELECT count(*) FROM (SELECT", 1)
 			q = strings.Replace(q, "LIMIT $1", "LIMIT 1) x", 1)
-			if err := db.QueryRowContext(ctx, q).Scan(&n); err == nil && n > 0 {
+			q = strings.Replace(q, "$2", "$1", 1)
+			if err := db.QueryRowContext(ctx, q, userID).Scan(&n); err == nil && n > 0 {
 				return 0, fmt.Errorf("rows need embeddings but no embedder is configured")
 			}
 		}
@@ -350,7 +358,7 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 	}
 	for _, k := range kinds {
 		for {
-			items, err := loadPending(ctx, db, k.query, batch)
+			items, err := loadPending(ctx, db, k.query, batch, userID)
 			if err != nil {
 				return count, err
 			}
@@ -360,7 +368,7 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 			texts := make([]string, len(items))
 			var names map[string][]string
 			if k.refType == "memory" {
-				if names, err = batchEntityNames(ctx, db, items); err != nil {
+				if names, err = batchEntityNames(ctx, db, userID, items); err != nil {
 					return count, err
 				}
 			}
@@ -381,19 +389,23 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 			// One multi-row INSERT per batch (one round trip), committed
 			// atomically so a rerun resumes cleanly.
 			var q strings.Builder
-			q.WriteString("INSERT INTO embeddings (id, ref_id, ref_type, embedding, created_at) VALUES ")
-			args := make([]any, 0, 4*len(items))
+			q.WriteString("INSERT INTO embeddings (id, user_id, ref_id, ref_type, embedding, dims, generation, created_at) VALUES ")
+			args := make([]any, 0, 6*len(items))
 			for i, it := range items {
+				if dims == 0 {
+					dims = len(vecs[i])
+				}
 				if len(vecs[i]) != dims {
 					return count, fmt.Errorf("embedding has %d dims, want %d", len(vecs[i]), dims)
 				}
 				if i > 0 {
 					q.WriteString(", ")
 				}
-				n := 4 * i
-				fmt.Fprintf(&q, "($%d, $%d, $%d, $%d::halfvec, now())", n+1, n+2, n+3, n+4)
-				args = append(args, newID(), it.id, k.refType, vectorLiteral(vecs[i]))
+				n := 6 * i
+				fmt.Fprintf(&q, "($%d, $%d, $%d, $%d, $%d::halfvec, $%d, 1, now())", n+1, n+2, n+3, n+4, n+5, n+6)
+				args = append(args, newID(), userID, it.id, k.refType, vectorLiteral(vecs[i]), dims)
 			}
+			q.WriteString(" ON CONFLICT (user_id, ref_type, ref_id, generation) DO NOTHING")
 			if _, err := db.ExecContext(ctx, q.String(), args...); err != nil {
 				return count, fmt.Errorf("insert embeddings: %w", err)
 			}
@@ -403,8 +415,8 @@ func embedMissing(ctx context.Context, db *sql.DB, emb cortex.Embedder, batch in
 	return count, nil
 }
 
-func loadPending(ctx context.Context, db *sql.DB, q string, n int) ([]pending, error) {
-	rows, err := db.QueryContext(ctx, q, n)
+func loadPending(ctx context.Context, db *sql.DB, q string, n int, userID string) ([]pending, error) {
+	rows, err := db.QueryContext(ctx, q, n, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -440,14 +452,14 @@ func truncateRunes(s string, n int) string {
 
 // batchEntityNames returns linked entity names keyed by memory ID for every
 // memory in items, in one query.
-func batchEntityNames(ctx context.Context, db *sql.DB, items []pending) (map[string][]string, error) {
+func batchEntityNames(ctx context.Context, db *sql.DB, userID string, items []pending) (map[string][]string, error) {
 	ids := make([]string, len(items))
 	for i, it := range items {
 		ids[i] = it.id
 	}
 	rows, err := db.QueryContext(ctx,
-		`SELECT me.memory_id, e.name FROM memory_entities me JOIN entities e ON e.id = me.entity_id
-		 WHERE me.memory_id = ANY($1)`, ids)
+		`SELECT me.memory_id, e.name FROM memory_entities me JOIN entities e ON e.id = me.entity_id AND e.user_id = me.user_id
+		 WHERE me.user_id = $2 AND me.memory_id = ANY($1)`, ids, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -477,3 +489,25 @@ func vectorLiteral(v []float32) string {
 }
 
 func newID() string { return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String() }
+
+// sourceDims returns the embedding dimension recorded in the SQLite brain's
+// own cortex_meta, or 0 when it has none.
+func sourceDims(ctx context.Context, src *sql.DB) (int, error) {
+	have, err := sourceColumns(ctx, src, "cortex_meta")
+	if err != nil {
+		return 0, err
+	}
+	if !have["key"] || !have["value"] {
+		return 0, nil
+	}
+	var v string
+	err = src.QueryRowContext(ctx, `SELECT value FROM cortex_meta WHERE key = 'embedding_dims'`).Scan(&v)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read source embedding_dims: %w", err)
+	}
+	n, _ := strconv.Atoi(v)
+	return n, nil
+}

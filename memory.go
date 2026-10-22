@@ -38,9 +38,9 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 		speaker = m.Speaker
 	}
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO memories (id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter,
+		`INSERT INTO memories (id, user_id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, c.userID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory: %w", err)
@@ -49,8 +49,8 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 	// Insert entity links into junction table.
 	for _, entityID := range m.EntityIDs {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO memory_entities (memory_id, entity_id) VALUES (?, ?)`,
-			m.ID, entityID,
+			`INSERT INTO memory_entities (user_id, memory_id, entity_id) VALUES (?, ?, ?)`,
+			c.userID, m.ID, entityID,
 		)
 		if err != nil {
 			return fmt.Errorf("cortex: insert memory entity link: %w", err)
@@ -82,18 +82,19 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 	// Arg order: temporal args, limit, then the tsquery tokens. The '?'
 	// placeholders are numbered 1..n by rebind; the tsquery expression uses
 	// explicit $n numbers that start after them.
-	tsExpr, tsArgs := orTSQuery(query, len(targs)+2)
+	tsExpr, tsArgs := orTSQuery(query, len(targs)+3)
 	if tsExpr == "" {
 		return nil, nil
 	}
-	args := append([]any{}, targs...)
+	args := []any{c.userID}
+	args = append(args, targs...)
 	args = append(args, limit)
 	args = append(args, tsArgs...)
 
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after
 		 FROM memories m
-		 WHERE m.tsv @@ `+tsExpr+` AND `+clause+`
+		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.tsv @@ `+tsExpr+` AND `+clause+`
 		 ORDER BY ts_rank_cd(m.tsv, `+tsExpr+`) DESC
 		 LIMIT ?`,
 		args...,
@@ -146,15 +147,15 @@ func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Me
 // (default = currently-valid).
 func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, mode temporalMode) ([]Memory, error) {
 	clause, targs := mode.clause("m")
-	// Arg order: entity_id first, then temporal args.
-	args := []any{entityID}
+	// Arg order: user id, entity_id, then temporal args.
+	args := []any{c.userID, entityID}
 	args = append(args, targs...)
 
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after
 		 FROM memories m
-		 JOIN memory_entities me ON m.id = me.memory_id
-		 WHERE me.entity_id = ? AND `+clause,
+		 JOIN memory_entities me ON m.id = me.memory_id AND me.user_id = m.user_id
+		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND me.entity_id = ? AND `+clause,
 		args...,
 	)
 	if err != nil {
@@ -198,8 +199,8 @@ func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, m
 // memory_entities junction table.
 func (c *Cortex) loadMemoryEntityIDs(ctx context.Context, memoryID string) ([]string, error) {
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT entity_id FROM memory_entities WHERE memory_id = ?`,
-		memoryID,
+		`SELECT entity_id FROM memory_entities WHERE user_id = ? AND memory_id = ?`,
+		c.userID, memoryID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: load memory entity IDs: %w", err)
@@ -255,13 +256,13 @@ func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *tim
 	var err error
 	if invalidAt != nil {
 		res, err = c.db.ExecContext(ctx,
-			`UPDATE memories SET expired_at = ?, invalid_at = ?, updated_at = ? WHERE id = ?`,
-			now, invalidAt.UTC(), now, id,
+			`UPDATE memories SET expired_at = ?, invalid_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+			now, invalidAt.UTC(), now, id, c.userID,
 		)
 	} else {
 		res, err = c.db.ExecContext(ctx,
-			`UPDATE memories SET expired_at = ?, updated_at = ? WHERE id = ?`,
-			now, now, id,
+			`UPDATE memories SET expired_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+			now, now, id, c.userID,
 		)
 	}
 	if err != nil {
@@ -272,7 +273,7 @@ func (c *Cortex) InvalidateMemory(ctx context.Context, id string, invalidAt *tim
 		return fmt.Errorf("cortex: invalidate memory rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("cortex: memory %q not found", id)
+		return notFound("cortex: memory %q not found", id)
 	}
 	return nil
 }
@@ -287,7 +288,7 @@ func (c *Cortex) getMemoryByID(ctx context.Context, id string) (*Memory, error) 
 	var vat, iat, eat, fa sql.NullTime
 	err := c.db.QueryRowContext(ctx,
 		`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at, static, forget_after
-		 FROM memories WHERE id = ?`, id,
+		 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
 	).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa)
 	if err == sql.ErrNoRows {
 		return nil, nil
