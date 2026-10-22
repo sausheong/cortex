@@ -1,0 +1,711 @@
+package web
+
+import (
+	"context"
+	"crypto/tls"
+	"database/sql"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/pgtest"
+)
+
+const testKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+
+type fakeIdP struct {
+	mu       sync.Mutex
+	ids      map[string]Identity // by code
+	state    string
+	nonce    string
+	badNonce bool
+}
+
+func (f *fakeIdP) AuthURL(state, nonce string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state, f.nonce = state, nonce
+	return "https://idp.test/auth?state=" + url.QueryEscape(state)
+}
+
+func (f *fakeIdP) Exchange(ctx context.Context, code, nonce string) (Identity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.badNonce {
+		return Identity{}, errors.New("nonce mismatch")
+	}
+	id, ok := f.ids[code]
+	if !ok {
+		return Identity{}, errors.New("bad code")
+	}
+	return id, nil
+}
+
+type env struct {
+	t       *testing.T
+	srv     *server
+	ts      *httptest.Server
+	c       *http.Client
+	jar     *cookiejar.Jar
+	root    *cortex.Cortex
+	st      *accounts.Store
+	idp     *fakeIdP
+	now     time.Time
+	enq     []string
+	enqUser []string
+	provErr error
+}
+
+// testMounts lets per-page test files register their routes in newEnv.
+var testMounts []func(mux *http.ServeMux, d Deps)
+
+func newEnv(t *testing.T) *env {
+	t.Helper()
+	dsn := pgtest.DSN(t)
+	root, err := cortex.Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { root.Close() })
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	sl, err := accounts.NewSealer(testKeyHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &env{t: t, root: root, now: time.Now().UTC(), idp: &fakeIdP{ids: map[string]Identity{}}}
+	e.st = &accounts.Store{DB: db, Sealer: sl, Now: func() time.Time { return e.now }}
+	e.srv = newServer(Config{PublicURL: "https://cortex.test", BootstrapEmail: "owner@x.test", Identity: e.idp},
+		root, e.st, Options{Now: func() time.Time { return e.now }, Mounts: testMounts,
+			Enqueue: func(ctx context.Context, userID, kind string) (string, error) {
+				e.enq = append(e.enq, kind)
+				e.enqUser = append(e.enqUser, userID)
+				return "j_stub", nil
+			}})
+	e.srv.testProvider = func(ctx context.Context, s accounts.Settings) error { return e.provErr }
+	e.ts = httptest.NewUnstartedServer(e.srv.handler())
+	e.ts.StartTLS()
+	t.Cleanup(e.ts.Close)
+	e.newClient()
+	return e
+}
+
+func (e *env) newClient() {
+	e.jar, _ = cookiejar.New(nil)
+	e.c = &http.Client{
+		Jar:           e.jar,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+func (e *env) get(path string) (*http.Response, string) {
+	e.t.Helper()
+	resp, err := e.c.Get(e.ts.URL + path)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(b)
+}
+
+func (e *env) post(path string, form url.Values) (*http.Response, string) {
+	e.t.Helper()
+	resp, err := e.c.PostForm(e.ts.URL+path, form)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, string(b)
+}
+
+// start performs /auth/google/start and returns the state sent to the IdP.
+func (e *env) start(next string) string {
+	e.t.Helper()
+	p := "/auth/google/start"
+	if next != "" {
+		p += "?next=" + url.QueryEscape(next)
+	}
+	resp, _ := e.get(p)
+	if resp.StatusCode != http.StatusFound {
+		e.t.Fatalf("start: %d", resp.StatusCode)
+	}
+	return e.idp.state
+}
+
+func (e *env) callback(state, code string) (*http.Response, string) {
+	return e.get("/auth/google/callback?state=" + url.QueryEscape(state) + "&code=" + code)
+}
+
+// signIn runs the whole sign-in for identity id.
+func (e *env) signIn(id Identity, next string) *http.Response {
+	e.t.Helper()
+	code := "code-" + id.Sub
+	e.idp.ids[code] = id
+	resp, _ := e.callback(e.start(next), code)
+	return resp
+}
+
+var csrfRe = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+
+func (e *env) csrf() string {
+	e.t.Helper()
+	_, body := e.get("/settings")
+	m := csrfRe.FindStringSubmatch(body)
+	if m == nil {
+		e.t.Fatalf("no csrf in page: %.200s", body)
+	}
+	return m[1]
+}
+
+func (e *env) userBySub(sub string) *cortex.User {
+	e.t.Helper()
+	u, err := e.root.UserByGoogleSub(e.t.Context(), sub)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return u
+}
+
+func alice() Identity {
+	return Identity{Sub: "g-alice", Email: "alice@x.test", Name: "Alice", EmailVerified: true}
+}
+
+func settingsForm(csrf string, kv ...string) url.Values {
+	v := url.Values{"csrf": {csrf}, "provider": {"openai-compatible"}, "base_url": {"https://api.example.com/v1"},
+		"api_key": {"sk-secret-3f9a"}, "chat_model": {"m"}, "embed_model": {"e"}, "embed_dims": {"512"}}
+	for i := 0; i+1 < len(kv); i += 2 {
+		v.Set(kv[i], kv[i+1])
+	}
+	return v
+}
+
+func (e *env) insertEmbedding(userID string) {
+	e.t.Helper()
+	vec := "[" + strings.Repeat("0.1,", 511) + "0.1]"
+	if _, err := e.st.DB.Exec(`INSERT INTO embeddings (id, ref_id, ref_type, user_id, embedding, dims, generation)
+		VALUES ($1,'r','memory',$2,$3::halfvec,512,1)`, "emb_"+userID, userID, vec); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) createIndex512() {
+	e.t.Helper()
+	if _, err := e.st.DB.Exec(`CREATE INDEX emb_hnsw_memory_512 ON embeddings (ref_id)`); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestFirstSigninCreatesUserAndRedirectsToSettings(t *testing.T) {
+	e := newEnv(t)
+	resp := e.signIn(alice(), "")
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/settings" {
+		t.Fatalf("got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	u := e.userBySub("g-alice")
+	if u.Email != "alice@x.test" || !u.EmailVerified || u.ID == cortex.BootstrapUserID {
+		t.Fatalf("%+v", u)
+	}
+	if r, _ := e.get("/settings"); r.StatusCode != 200 {
+		t.Fatalf("settings: %d", r.StatusCode)
+	}
+	// Second sign-in is an existing user: lands on /.
+	e.newClient()
+	if resp := e.signIn(alice(), ""); resp.Header.Get("Location") != "/" {
+		t.Fatalf("existing user landed on %q", resp.Header.Get("Location"))
+	}
+}
+
+func TestBootstrapBindsOnVerifiedEmail(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(Identity{Sub: "g-owner", Email: "owner@x.test", Name: "Owner", EmailVerified: true}, "")
+	u := e.userBySub("g-owner")
+	if u.ID != cortex.BootstrapUserID {
+		t.Fatalf("expected bootstrap user, got %s", u.ID)
+	}
+}
+
+func TestUnverifiedBootstrapEmailCreatesNewUser(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(Identity{Sub: "g-fake", Email: "owner@x.test", Name: "Fake", EmailVerified: false}, "")
+	u := e.userBySub("g-fake")
+	if u.ID == cortex.BootstrapUserID || u.EmailVerified {
+		t.Fatalf("unverified email bound bootstrap: %+v", u)
+	}
+	users, _ := e.root.ListUsers(t.Context())
+	for _, x := range users {
+		if x.ID == cortex.BootstrapUserID && x.GoogleSub != "" {
+			t.Fatal("bootstrap user was bound")
+		}
+	}
+}
+
+func TestCallbackRejectsStateMismatch(t *testing.T) {
+	e := newEnv(t)
+	e.idp.ids["c"] = alice()
+	e.start("")
+	resp, _ := e.callback("wrong", "c")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("got %d", resp.StatusCode)
+	}
+	if _, err := e.root.UserByGoogleSub(t.Context(), "g-alice"); err == nil {
+		t.Fatal("user created")
+	}
+}
+
+func TestCallbackRejectsNonceMismatch(t *testing.T) {
+	e := newEnv(t)
+	e.idp.ids["c"] = alice()
+	st := e.start("")
+	e.idp.badNonce = true
+	resp, _ := e.callback(st, "c")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("got %d", resp.StatusCode)
+	}
+	if _, err := e.root.UserByGoogleSub(t.Context(), "g-alice"); err == nil {
+		t.Fatal("user created")
+	}
+}
+
+func TestCallbackRejectsMissingLoginCookie(t *testing.T) {
+	e := newEnv(t)
+	e.idp.ids["c"] = alice()
+	st := e.start("")
+	e.newClient() // drops the login cookie
+	resp, _ := e.callback(st, "c")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("got %d", resp.StatusCode)
+	}
+}
+
+func TestLoginAttemptSingleUse(t *testing.T) {
+	e := newEnv(t)
+	e.idp.ids["c"] = alice()
+	st := e.start("")
+	if resp, _ := e.callback(st, "c"); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first: %d", resp.StatusCode)
+	}
+	// Replay with the same login cookie value.
+	u, _ := url.Parse(e.ts.URL)
+	var login string
+	for _, c := range e.jar.Cookies(u) {
+		if c.Name == loginCookie {
+			login = c.Value
+		}
+	}
+	if login != "" {
+		t.Fatal("login cookie should be cleared after use")
+	}
+	var n int
+	e.st.DB.QueryRow(`SELECT count(*) FROM login_attempts`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("attempt not consumed: %d", n)
+	}
+	if resp, _ := e.callback(st, "c"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("replay: %d", resp.StatusCode)
+	}
+}
+
+func TestReturnToMustBeSameOrigin(t *testing.T) {
+	for _, tc := range []struct{ next, want string }{
+		{"https://evil.example", "/"},
+		{"//evil.example", "/"},
+		{`/\evil`, "/"},
+		{"/connections", "/connections"},
+	} {
+		e := newEnv(t)
+		// An existing user, so that the landing page is return_to.
+		if _, err := e.root.CreateUser(t.Context(), "g-alice", "alice@x.test", "Alice", true); err != nil {
+			t.Fatal(err)
+		}
+		resp := e.signIn(alice(), tc.next)
+		if got := resp.Header.Get("Location"); got != tc.want {
+			t.Errorf("next=%q landed on %q, want %q", tc.next, got, tc.want)
+		}
+	}
+}
+
+func TestSigninRotatesSessionID(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	u, _ := url.Parse(e.ts.URL)
+	sess := func() string {
+		for _, c := range e.jar.Cookies(u) {
+			if c.Name == sessionCookie {
+				return c.Value
+			}
+		}
+		return ""
+	}
+	old := sess()
+	if old == "" {
+		t.Fatal("no session cookie")
+	}
+	e.signIn(alice(), "")
+	if now := sess(); now == "" || now == old {
+		t.Fatalf("session not rotated: %q -> %q", old, now)
+	}
+	if _, err := e.srv.sessions.Lookup(t.Context(), old); err == nil {
+		t.Fatal("old session still valid")
+	}
+	// A session cookie planted before sign-in is dead afterwards.
+	e.newClient()
+	e.jar.SetCookies(u, []*http.Cookie{{Name: sessionCookie, Value: "planted", Path: "/", Secure: true}})
+	e.signIn(alice(), "")
+	if sess() == "planted" {
+		t.Fatal("planted session survived sign-in")
+	}
+}
+
+func TestDeletedUserSessionRejected(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	if r, _ := e.get("/settings"); r.StatusCode != 200 {
+		t.Fatalf("settings: %d", r.StatusCode)
+	}
+	if err := e.st.DeleteAccount(t.Context(), e.userBySub("g-alice").ID); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := e.get("/settings"); r.StatusCode != http.StatusFound || !strings.HasPrefix(r.Header.Get("Location"), "/auth/google/start") {
+		t.Fatalf("deleted user got %d %q", r.StatusCode, r.Header.Get("Location"))
+	}
+}
+
+func TestSigninRestoresDeletedAccountWithNotice(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	id := e.userBySub("g-alice").ID
+	if err := e.st.DeleteAccount(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	e.newClient()
+	e.idp.ids["c"] = alice()
+	resp, body := e.callback(e.start(""), "c")
+	if resp.StatusCode != 200 || !strings.Contains(body, "your account was restored") && !strings.Contains(body, "Your account was restored") {
+		t.Fatalf("%d %.300s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "Reconnect your assistants") {
+		t.Fatalf("no reconnect notice: %s", body)
+	}
+	if e.userBySub("g-alice").DeletedAt != nil {
+		t.Fatal("not restored")
+	}
+	if r, _ := e.get("/settings"); r.StatusCode != 200 {
+		t.Fatalf("settings after restore: %d", r.StatusCode)
+	}
+}
+
+func TestDeletedPastWindowCannotSignIn(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	id := e.userBySub("g-alice").ID
+	e.st.DeleteAccount(t.Context(), id)
+	e.now = e.now.Add(31 * 24 * time.Hour)
+	e.newClient()
+	e.idp.ids["c"] = alice()
+	if resp, _ := e.callback(e.start(""), "c"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("got %d", resp.StatusCode)
+	}
+}
+
+func TestPostWithoutCSRFRejected(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	if r, _ := e.post("/settings", settingsForm("")); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("empty csrf: %d", r.StatusCode)
+	}
+	if r, _ := e.post("/settings", settingsForm("wrong")); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("wrong csrf: %d", r.StatusCode)
+	}
+	if r, _ := e.post("/logout", url.Values{}); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("logout without csrf: %d", r.StatusCode)
+	}
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID); !errors.Is(err, accounts.ErrNoSettings) {
+		t.Fatal("settings saved without csrf")
+	}
+}
+
+func TestLogout(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	if r, _ := e.post("/logout", url.Values{"csrf": {e.csrf()}}); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("logout: %d", r.StatusCode)
+	}
+	if r, _ := e.get("/settings"); r.StatusCode != http.StatusFound {
+		t.Fatalf("after logout: %d", r.StatusCode)
+	}
+}
+
+func TestSecurityHeadersOnAllPages(t *testing.T) {
+	e := newEnv(t)
+	check := func(name string, r *http.Response) {
+		t.Helper()
+		if r.Header.Get("Content-Security-Policy") != "frame-ancestors 'none'" || r.Header.Get("X-Frame-Options") != "DENY" {
+			t.Errorf("%s: missing headers: %v", name, r.Header)
+		}
+	}
+	r, _ := e.get("/")
+	check("/", r)
+	r, _ = e.get("/nope")
+	if r.StatusCode != 404 {
+		t.Fatalf("404 page: %d", r.StatusCode)
+	}
+	check("404", r)
+	e.signIn(alice(), "")
+	r, _ = e.get("/settings")
+	check("/settings", r)
+	r, _ = e.post("/settings", settingsForm("bad"))
+	if r.StatusCode != 403 {
+		t.Fatalf("403 page: %d", r.StatusCode)
+	}
+	check("403", r)
+}
+
+func TestPutSettingsPromotesWhenNothingToReembed(t *testing.T) {
+	e := newEnv(t)
+	ctx := t.Context()
+	// A user with no data changing model and dims.
+	a, _ := e.root.CreateUser(ctx, "ga", "a@x.test", "A", true)
+	s := accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
+	if need, err := e.st.PutSettings(ctx, a.ID, s); err != nil || need {
+		t.Fatalf("first: %v %v", need, err)
+	}
+	s.EmbedModel, s.EmbedDims = "e2", 768
+	if need, err := e.st.PutSettings(ctx, a.ID, s); err != nil || need {
+		t.Fatalf("no data: need=%v err=%v", need, err)
+	}
+	if act, _ := e.st.GetActiveEmbed(ctx, a.ID); act.EmbedModel != "e2" || act.EmbedDims != 768 {
+		t.Fatalf("active %+v", act)
+	}
+	// A user with data changing only the embed key.
+	b, _ := e.root.CreateUser(ctx, "gb", "b@x.test", "B", true)
+	s = accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
+	e.st.PutSettings(ctx, b.ID, s)
+	e.insertEmbedding(b.ID)
+	s.EmbedAPIKey = "newkey-9999"
+	if need, err := e.st.PutSettings(ctx, b.ID, s); err != nil || need {
+		t.Fatalf("key only: need=%v err=%v", need, err)
+	}
+	if act, _ := e.st.GetActiveEmbed(ctx, b.ID); act.EmbedAPIKey != "newkey-9999" {
+		t.Fatalf("key not swapped: %+v", act)
+	}
+	// A user with data changing the model keeps the old active embedder.
+	s.EmbedModel = "e3"
+	need, err := e.st.PutSettings(ctx, b.ID, s)
+	if err != nil || !need {
+		t.Fatalf("model change: need=%v err=%v", need, err)
+	}
+	if act, _ := e.st.GetActiveEmbed(ctx, b.ID); act.EmbedModel != "e" {
+		t.Fatalf("active changed early: %+v", act)
+	}
+}
+
+func TestSettingsProviderFailureSavesNothing(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	e.provErr = errors.New("provider rejected the key")
+	r, body := e.post("/settings", settingsForm(e.csrf()))
+	if r.StatusCode != 400 || !strings.Contains(body, "provider rejected the key") {
+		t.Fatalf("%d %.300s", r.StatusCode, body)
+	}
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID); !errors.Is(err, accounts.ErrNoSettings) {
+		t.Fatal("settings saved after failed test")
+	}
+	if len(e.enq) != 0 {
+		t.Fatalf("enqueued %v", e.enq)
+	}
+}
+
+func TestSettingsRejectsPrivateURL(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	for _, u := range []string{"https://127.0.0.1/v1", "https://169.254.169.254/", "http://api.example.com/v1"} {
+		r, _ := e.post("/settings", settingsForm(e.csrf(), "base_url", u))
+		if r.StatusCode != 400 {
+			t.Errorf("%s: %d", u, r.StatusCode)
+		}
+	}
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID); !errors.Is(err, accounts.ErrNoSettings) {
+		t.Fatal("settings saved")
+	}
+}
+
+func TestSettingsProviderTestRateLimited(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	c := e.csrf()
+	e.provErr = errors.New("provider unreachable")
+	for i := 0; i < 10; i++ {
+		if r, _ := e.post("/settings", settingsForm(c)); r.StatusCode != 400 {
+			t.Fatalf("attempt %d: %d", i+1, r.StatusCode)
+		}
+	}
+	if r, _ := e.post("/settings", settingsForm(c)); r.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("11th: %d", r.StatusCode)
+	}
+	e.now = e.now.Add(time.Minute)
+	if r, _ := e.post("/settings", settingsForm(c)); r.StatusCode != 400 {
+		t.Fatalf("after refill: %d", r.StatusCode)
+	}
+}
+
+func TestSettingsEmbedChangeEnqueuesReembed(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	id := e.userBySub("g-alice").ID
+	e.createIndex512()
+	if r, _ := e.post("/settings", settingsForm(e.csrf())); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first save: %d", r.StatusCode)
+	}
+	e.insertEmbedding(id)
+	e.enq = nil
+	// Chat-model-only change enqueues nothing.
+	if r, _ := e.post("/settings", settingsForm(e.csrf(), "chat_model", "m2")); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("chat change: %d", r.StatusCode)
+	}
+	if len(e.enq) != 0 {
+		t.Fatalf("chat-only change enqueued %v", e.enq)
+	}
+	// An embedding model change enqueues exactly one reembed.
+	if r, _ := e.post("/settings", settingsForm(e.csrf(), "embed_model", "e-new")); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("embed change: %d", r.StatusCode)
+	}
+	if len(e.enq) != 1 || e.enq[0] != "reembed" || e.enqUser[0] != id {
+		t.Fatalf("enqueued %v for %v", e.enq, e.enqUser)
+	}
+}
+
+func TestFirstSaveEnqueuesIndex(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	e.createIndex512() // present, yet the first save still enqueues
+	e.post("/settings", settingsForm(e.csrf()))
+	if len(e.enq) != 1 || e.enq[0] != "index" {
+		t.Fatalf("enqueued %v", e.enq)
+	}
+}
+
+func TestDimsChangeEnqueuesIndex(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	e.createIndex512()
+	e.post("/settings", settingsForm(e.csrf()))
+	e.enq = nil
+	e.post("/settings", settingsForm(e.csrf(), "chat_model", "other"))
+	if len(e.enq) != 0 {
+		t.Fatalf("chat-only change enqueued %v", e.enq)
+	}
+	e.post("/settings", settingsForm(e.csrf(), "embed_dims", "768"))
+	if len(e.enq) != 1 || e.enq[0] != "index" {
+		t.Fatalf("new dims enqueued %v", e.enq)
+	}
+}
+
+func TestNilEnqueueFailsReembedChange(t *testing.T) {
+	e := newEnv(t)
+	e.srv.opts.Enqueue = nil
+	e.signIn(alice(), "")
+	id := e.userBySub("g-alice").ID
+	e.post("/settings", settingsForm(e.csrf()))
+	e.insertEmbedding(id)
+	r, body := e.post("/settings", settingsForm(e.csrf(), "embed_model", "e-new"))
+	if r.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, "re-embedding is not available") {
+		t.Fatalf("%d %.300s", r.StatusCode, body)
+	}
+}
+
+func (e *env) insertJob(id, userID, kind, status, errText string) {
+	e.t.Helper()
+	if _, err := e.st.DB.Exec(`INSERT INTO jobs (id, user_id, kind, status, error) VALUES ($1,$2,$3,$4,$5)`,
+		id, userID, kind, status, errText); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestFailedReembedShowsRetry(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	id := e.userBySub("g-alice").ID
+	e.createIndex512()
+	e.post("/settings", settingsForm(e.csrf()))
+	e.insertEmbedding(id)
+	e.post("/settings", settingsForm(e.csrf(), "embed_model", "e-new")) // pending
+	e.insertJob("j_failed", id, "reembed", "failed", "provider unreachable")
+	e.enq = nil
+	_, body := e.get("/settings")
+	if !strings.Contains(body, "provider unreachable") || !strings.Contains(body, "Retry re-embedding") {
+		t.Fatalf("no error/retry: %s", body)
+	}
+	if r, _ := e.post("/settings/reembed", url.Values{"csrf": {e.csrf()}}); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("retry: %d", r.StatusCode)
+	}
+	if len(e.enq) != 1 || e.enq[0] != "reembed" {
+		t.Fatalf("retry enqueued %v", e.enq)
+	}
+	// A queued/running job blocks another retry.
+	e.insertJob("j_run", id, "reembed", "running", "")
+	e.post("/settings/reembed", url.Values{"csrf": {e.csrf()}})
+	if len(e.enq) != 1 {
+		t.Fatalf("retry while running enqueued %v", e.enq)
+	}
+	// Retry without CSRF is refused.
+	if r, _ := e.post("/settings/reembed", url.Values{}); r.StatusCode != http.StatusForbidden {
+		t.Fatalf("retry without csrf: %d", r.StatusCode)
+	}
+}
+
+func TestSettingsShowsMaskedKey(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	e.post("/settings", settingsForm(e.csrf()))
+	_, body := e.get("/settings")
+	if !strings.Contains(body, "••••3f9a") || strings.Contains(body, "sk-secret") {
+		t.Fatalf("key not masked: %s", body)
+	}
+	// A blank key on save keeps the stored one.
+	e.post("/settings", settingsForm(e.csrf(), "api_key", "", "chat_model", "m9"))
+	s, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID)
+	if err != nil || s.APIKey != "sk-secret-3f9a" || s.ChatModel != "m9" {
+		t.Fatalf("%+v %v", s, err)
+	}
+}
+
+func TestSigninPageHasOperatorNotice(t *testing.T) {
+	e := newEnv(t)
+	_, body := e.get("/")
+	if !strings.Contains(body, "The operator of this service can technically access data stored here.") {
+		t.Fatalf("no notice: %s", body)
+	}
+}
+
+func TestJobProgressOwnOnly(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	aid := e.userBySub("g-alice").ID
+	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
+	e.insertJob("j_a", aid, "reembed", "running", "")
+	e.insertJob("j_b", b.ID, "reembed", "running", "")
+	r1, b1 := e.get("/settings/job/j_b")
+	r2, b2 := e.get("/settings/job/j_absent")
+	if r1.StatusCode != 404 || r2.StatusCode != 404 || b1 != b2 {
+		t.Fatalf("foreign %d %q vs absent %d %q", r1.StatusCode, b1, r2.StatusCode, b2)
+	}
+	if r, body := e.get("/settings/job/j_a"); r.StatusCode != 200 || !strings.Contains(body, `"running"`) {
+		t.Fatalf("own: %d %s", r.StatusCode, body)
+	}
+}

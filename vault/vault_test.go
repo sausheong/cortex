@@ -8,15 +8,14 @@ import (
 	"testing"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-// seedBrain creates a temp brain.db with a small fixed graph and returns
+// seedBrain creates a temp Postgres schema with a small fixed graph and returns
 // an open *cortex.Cortex plus a cleanup func. No LLM / embedder configured.
 func seedBrain(t *testing.T) (*cortex.Cortex, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "brain.db")
-	cx, err := cortex.Open(dbPath)
+	cx, err := cortex.Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("open cortex: %v", err)
 	}
@@ -272,9 +271,7 @@ func TestExport_EntityRenameMovesPage(t *testing.T) {
 }
 
 func TestExport_CollidingSourcesProduceMatchingLinks(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "brain.db")
-	cx, err := cortex.Open(dbPath)
+	cx, err := cortex.Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,9 +347,7 @@ func TestExport_CollidingSourcesProduceMatchingLinks(t *testing.T) {
 }
 
 func TestExport_SourceSlugCollisionHandled(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "brain.db")
-	cx, err := cortex.Open(dbPath)
+	cx, err := cortex.Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}

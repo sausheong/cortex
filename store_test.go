@@ -2,310 +2,87 @@ package cortex
 
 import (
 	"context"
-	"database/sql"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-func TestOpenCreatesDatabase(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+func schemaVersion(t *testing.T, c *Cortex) int {
+	t.Helper()
+	var v int
+	if err := c.db.QueryRowContext(context.Background(), `SELECT max(version) FROM schema_migrations`).Scan(&v); err != nil {
+		t.Fatalf("schema_migrations: %v", err)
+	}
+	return v
+}
 
-	c, err := Open(dbPath)
+func TestOpenAppliesMigrations(t *testing.T) {
+	c, err := Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
 	defer c.Close()
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatal("expected database file to be created")
+	if v := schemaVersion(t, c); v != 3 {
+		t.Errorf("version = %d, want 3", v)
+	}
+	var n int
+	err = c.db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM information_schema.columns
+		 WHERE table_schema = current_schema() AND table_name = 'memories' AND column_name = 'tsv'`).Scan(&n)
+	if err != nil || n != 1 {
+		t.Errorf("memories.tsv missing (n=%d err=%v)", n, err)
 	}
 }
 
-func TestOpenCreatesTablesAndIndexes(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
-	c, err := Open(dbPath)
+func TestOpenIdempotent(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	c1, err := Open(dsn)
 	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-	defer c.Close()
-
-	expectedTables := []string{
-		"entities",
-		"relationships",
-		"chunks",
-		"memories",
-		"memory_entities",
-		"embeddings",
-		"sync_state",
-	}
-
-	for _, table := range expectedTables {
-		var name string
-		err := c.db.QueryRow(
-			"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
-		).Scan(&name)
-		if err != nil {
-			t.Errorf("table %q not found: %v", table, err)
-		}
-	}
-}
-
-func TestOpenExistingDatabase(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
-	// First open — creates the DB.
-	c1, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("first Open() error: %v", err)
+		t.Fatal(err)
 	}
 	c1.Close()
-
-	// Second open — reuses existing DB.
-	c2, err := Open(dbPath)
+	c2, err := Open(dsn)
 	if err != nil {
-		t.Fatalf("second Open() error: %v", err)
+		t.Fatalf("second Open: %v", err)
 	}
 	defer c2.Close()
+	if v := schemaVersion(t, c2); v != 3 {
+		t.Errorf("version = %d, want 3", v)
+	}
+}
+
+func TestOpenUnreachable(t *testing.T) {
+	start := time.Now()
+	_, err := Open("postgres://u:p@127.0.0.1:1/x?sslmode=disable")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if time.Since(start) > 6*time.Second {
+		t.Errorf("took %v", time.Since(start))
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Errorf("error should name host:port, got %v", err)
+	}
 }
 
 func TestSyncStateMultipleConnectors(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	c, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-	defer c.Close()
-
-	ctx := context.Background()
-
-	if err := c.SetSyncState(ctx, "connector-a", "state-A"); err != nil {
-		t.Fatalf("SetSyncState(a): %v", err)
-	}
-	if err := c.SetSyncState(ctx, "connector-b", "state-B"); err != nil {
-		t.Fatalf("SetSyncState(b): %v", err)
-	}
-
-	stateA, err := c.GetSyncState(ctx, "connector-a")
-	if err != nil {
-		t.Fatalf("GetSyncState(a): %v", err)
-	}
-	if stateA != "state-A" {
-		t.Errorf("connector-a: got %q, want %q", stateA, "state-A")
-	}
-
-	stateB, err := c.GetSyncState(ctx, "connector-b")
-	if err != nil {
-		t.Fatalf("GetSyncState(b): %v", err)
-	}
-	if stateB != "state-B" {
-		t.Errorf("connector-b: got %q, want %q", stateB, "state-B")
-	}
-
-	// Update A without affecting B.
-	if err := c.SetSyncState(ctx, "connector-a", "state-A2"); err != nil {
-		t.Fatalf("SetSyncState(a update): %v", err)
-	}
-	stateB2, _ := c.GetSyncState(ctx, "connector-b")
-	if stateB2 != "state-B" {
-		t.Errorf("connector-b changed unexpectedly: got %q", stateB2)
-	}
-}
-
-func TestOpenNestedDirectory(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "deep", "nested", "dir", "test.db")
-
-	c, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open() nested directory error: %v", err)
-	}
-	defer c.Close()
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatal("expected database file to be created in nested directory")
-	}
-}
-
-func TestSyncState(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
-	c, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-	defer c.Close()
-
-	ctx := context.Background()
-
-	// Initially empty.
-	state, err := c.GetSyncState(ctx, "markdown")
-	if err != nil {
-		t.Fatalf("GetSyncState() error: %v", err)
-	}
-	if state != "" {
-		t.Fatalf("expected empty state, got %q", state)
-	}
-
-	// Set state.
-	if err := c.SetSyncState(ctx, "markdown", "cursor-123"); err != nil {
-		t.Fatalf("SetSyncState() error: %v", err)
-	}
-
-	state, err = c.GetSyncState(ctx, "markdown")
-	if err != nil {
-		t.Fatalf("GetSyncState() error: %v", err)
-	}
-	if state != "cursor-123" {
-		t.Fatalf("expected %q, got %q", "cursor-123", state)
-	}
-
-	// Update state.
-	if err := c.SetSyncState(ctx, "markdown", "cursor-456"); err != nil {
-		t.Fatalf("SetSyncState() update error: %v", err)
-	}
-
-	state, err = c.GetSyncState(ctx, "markdown")
-	if err != nil {
-		t.Fatalf("GetSyncState() error: %v", err)
-	}
-	if state != "cursor-456" {
-		t.Fatalf("expected %q, got %q", "cursor-456", state)
-	}
-}
-
-func TestEnsureColumn_AddsMissingColumn(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	if _, err := db.Exec(`CREATE TABLE t (id TEXT PRIMARY KEY, name TEXT)`); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ensureColumn(db, "t", "confidence", "REAL NOT NULL DEFAULT 1.0"); err != nil {
-		t.Fatalf("first call: %v", err)
-	}
-	// Idempotent — second call is a no-op.
-	if err := ensureColumn(db, "t", "confidence", "REAL NOT NULL DEFAULT 1.0"); err != nil {
-		t.Fatalf("second call should be no-op: %v", err)
-	}
-
-	// Verify column exists and has the right default.
-	if _, err := db.Exec(`INSERT INTO t (id, name) VALUES ('x', 'hello')`); err != nil {
-		t.Fatal(err)
-	}
-	var c float64
-	if err := db.QueryRow(`SELECT confidence FROM t WHERE id = 'x'`).Scan(&c); err != nil {
-		t.Fatal(err)
-	}
-	if c != 1.0 {
-		t.Errorf("default confidence = %v, want 1.0", c)
-	}
-}
-
-func TestOpen_AddsConfidenceColumnsToLegacyDB(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "legacy.db")
-
-	// Build a "legacy" db with only the pre-confidence schema.
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyDDL := `
-		CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, attributes TEXT, source TEXT, created_at DATETIME, updated_at DATETIME);
-		CREATE TABLE relationships (id TEXT PRIMARY KEY, source_id TEXT, target_id TEXT, type TEXT NOT NULL, attributes TEXT, source TEXT, created_at DATETIME);
-		CREATE TABLE memories (id TEXT PRIMARY KEY, content TEXT NOT NULL, source TEXT, created_at DATETIME, updated_at DATETIME);
-	`
-	if _, err := db.Exec(legacyDDL); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO entities (id, type, name, source, created_at, updated_at) VALUES ('legacy1', 'person', 'Old Alice', 'legacy', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	// Open with the new code — should add columns without errors.
-	cx, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer cx.Close()
-
-	// Legacy row should now have confidence=1.0.
-	e, err := cx.GetEntity(context.Background(), "legacy1")
-	if err != nil {
-		t.Fatalf("GetEntity: %v", err)
-	}
-	if e.Confidence != 1.0 {
-		t.Errorf("legacy row confidence = %v, want 1.0", e.Confidence)
-	}
-}
-
-func TestSchema_MemoryEdgesTableExists(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
-
-	// The table must exist and accept a row referencing two memories.
-	m1 := &Memory{Content: "newer fact"}
-	m2 := &Memory{Content: "older fact"}
-	if err := c.PutMemory(ctx, m1); err != nil {
+	if err := c.SetSyncState(ctx, "a", "1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.PutMemory(ctx, m2); err != nil {
+	if err := c.SetSyncState(ctx, "b", "2"); err != nil {
 		t.Fatal(err)
 	}
-
-	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO memory_edges (id, source_id, target_id, type, created_at)
-		 VALUES ('e1', ?, ?, 'supersedes', datetime('now'))`,
-		m1.ID, m2.ID,
-	)
-	if err != nil {
-		t.Fatalf("insert memory edge: %v", err)
-	}
-
-	var n int
-	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_edges`).Scan(&n); err != nil {
-		t.Fatalf("count edges: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("expected 1 edge, got %d", n)
-	}
-}
-
-func TestSchema_MemoriesHaveLastDecayAt(t *testing.T) {
-	c := openTestDB(t)
-	ctx := context.Background()
-
-	m := &Memory{Content: "decayable fact"}
-	if err := c.PutMemory(ctx, m); err != nil {
+	if err := c.SetSyncState(ctx, "a", "3"); err != nil {
 		t.Fatal(err)
 	}
-
-	// The column must exist and default to NULL for a fresh memory.
-	var lastDecay sql.NullTime
-	err := c.db.QueryRowContext(ctx,
-		`SELECT last_decay_at FROM memories WHERE id = ?`, m.ID,
-	).Scan(&lastDecay)
-	if err != nil {
-		t.Fatalf("select last_decay_at: %v", err)
+	if s, _ := c.GetSyncState(ctx, "a"); s != "3" {
+		t.Errorf("a = %q", s)
 	}
-	if lastDecay.Valid {
-		t.Fatalf("expected NULL last_decay_at for a fresh memory, got %v", lastDecay.Time)
+	if s, _ := c.GetSyncState(ctx, "b"); s != "2" {
+		t.Errorf("b = %q", s)
 	}
 }

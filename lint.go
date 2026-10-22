@@ -19,33 +19,33 @@ func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, erro
 	var r LintReport
 	var err error
 
-	if r.EntityCount, err = countRows(ctx, c.db, "entities"); err != nil {
+	if r.EntityCount, err = countRows(ctx, c.db, c.userID, "entities"); err != nil {
 		return r, fmt.Errorf("cortex: lint: count entities: %w", err)
 	}
-	if r.RelationshipCount, err = countRows(ctx, c.db, "relationships"); err != nil {
+	if r.RelationshipCount, err = countRows(ctx, c.db, c.userID, "relationships"); err != nil {
 		return r, fmt.Errorf("cortex: lint: count relationships: %w", err)
 	}
-	if r.MemoryCount, err = countRows(ctx, c.db, "memories"); err != nil {
+	if r.MemoryCount, err = countRows(ctx, c.db, c.userID, "memories"); err != nil {
 		return r, fmt.Errorf("cortex: lint: count memories: %w", err)
 	}
 
-	if r.Orphans, err = findOrphans(ctx, c.db); err != nil {
+	if r.Orphans, err = findOrphans(ctx, c.db, c.userID); err != nil {
 		return r, fmt.Errorf("cortex: lint: orphans: %w", err)
 	}
-	if r.EntitiesNoMemories, err = findEntitiesNoMemories(ctx, c.db); err != nil {
+	if r.EntitiesNoMemories, err = findEntitiesNoMemories(ctx, c.db, c.userID); err != nil {
 		return r, fmt.Errorf("cortex: lint: entities-no-memories: %w", err)
 	}
-	if r.NearDuplicates, err = findNearDuplicates(ctx, c.db); err != nil {
+	if r.NearDuplicates, err = findNearDuplicates(ctx, c.db, c.userID); err != nil {
 		return r, fmt.Errorf("cortex: lint: near-duplicates: %w", err)
 	}
-	if r.DeadSources, err = findDeadSources(ctx, c.db); err != nil {
+	if r.DeadSources, err = findDeadSources(ctx, c.db, c.userID); err != nil {
 		return r, fmt.Errorf("cortex: lint: dead-sources: %w", err)
 	}
-	if r.UnlinkedMemories, err = findUnlinkedMemories(ctx, c.db); err != nil {
+	if r.UnlinkedMemories, err = findUnlinkedMemories(ctx, c.db, c.userID); err != nil {
 		return r, fmt.Errorf("cortex: lint: unlinked-memories: %w", err)
 	}
 	if cfg.lowConfidence {
-		if r.LowConfidenceMemories, err = findLowConfidenceMemories(ctx, c.db, cfg.lowConfidenceThreshold); err != nil {
+		if r.LowConfidenceMemories, err = findLowConfidenceMemories(ctx, c.db, c.userID, cfg.lowConfidenceThreshold); err != nil {
 			return r, fmt.Errorf("cortex: lint: low-confidence: %w", err)
 		}
 	}
@@ -53,19 +53,20 @@ func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, erro
 	return r, nil
 }
 
-func countRows(ctx context.Context, db *sql.DB, table string) (int, error) {
+func countRows(ctx context.Context, db dbConn, userID, table string) (int, error) {
 	var n int
 	// Table name is hard-coded by caller — safe to interpolate.
-	err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&n)
+	err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id = ? AND deleted_at IS NULL", table), userID).Scan(&n)
 	return n, err
 }
 
-func findOrphans(ctx context.Context, db *sql.DB) ([]EntityRef, error) {
+func findOrphans(ctx context.Context, db dbConn, userID string) ([]EntityRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT e.id, e.name, e.type FROM entities e
-		WHERE NOT EXISTS (SELECT 1 FROM relationships WHERE source_id = e.id OR target_id = e.id)
-		  AND NOT EXISTS (SELECT 1 FROM memory_entities WHERE entity_id = e.id)
-		ORDER BY e.type, e.name`)
+		WHERE e.user_id = ? AND e.deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM relationships WHERE user_id = e.user_id AND deleted_at IS NULL AND (source_id = e.id OR target_id = e.id))
+		  AND NOT EXISTS (SELECT 1 FROM memory_entities WHERE user_id = e.user_id AND entity_id = e.id)
+		ORDER BY e.type, e.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,12 +82,13 @@ func findOrphans(ctx context.Context, db *sql.DB) ([]EntityRef, error) {
 	return out, rows.Err()
 }
 
-func findEntitiesNoMemories(ctx context.Context, db *sql.DB) ([]EntityRef, error) {
+func findEntitiesNoMemories(ctx context.Context, db dbConn, userID string) ([]EntityRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT e.id, e.name, e.type FROM entities e
-		WHERE NOT EXISTS (SELECT 1 FROM memory_entities WHERE entity_id = e.id)
-		  AND EXISTS (SELECT 1 FROM relationships WHERE source_id = e.id OR target_id = e.id)
-		ORDER BY e.type, e.name`)
+		WHERE e.user_id = ? AND e.deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM memory_entities WHERE user_id = e.user_id AND entity_id = e.id)
+		  AND EXISTS (SELECT 1 FROM relationships WHERE user_id = e.user_id AND deleted_at IS NULL AND (source_id = e.id OR target_id = e.id))
+		ORDER BY e.type, e.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +104,7 @@ func findEntitiesNoMemories(ctx context.Context, db *sql.DB) ([]EntityRef, error
 	return out, rows.Err()
 }
 
-func findNearDuplicates(ctx context.Context, db *sql.DB) ([]DuplicatePair, error) {
+func findNearDuplicates(ctx context.Context, db dbConn, userID string) ([]DuplicatePair, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.id, a.name, a.type, b.id, b.name, b.type
 		FROM entities a
@@ -110,7 +112,9 @@ func findNearDuplicates(ctx context.Context, db *sql.DB) ([]DuplicatePair, error
 		  ON a.type = b.type
 		 AND LOWER(a.name) = LOWER(b.name)
 		 AND a.id < b.id
-		ORDER BY a.type, LOWER(a.name)`)
+		 AND b.user_id = a.user_id AND b.deleted_at IS NULL
+		WHERE a.user_id = ? AND a.deleted_at IS NULL
+		ORDER BY a.type, LOWER(a.name)`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -127,15 +131,15 @@ func findNearDuplicates(ctx context.Context, db *sql.DB) ([]DuplicatePair, error
 	return out, rows.Err()
 }
 
-func findDeadSources(ctx context.Context, db *sql.DB) ([]string, error) {
+func findDeadSources(ctx context.Context, db dbConn, userID string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT DISTINCT source FROM memories
-		WHERE source IS NOT NULL AND source != ''
+		WHERE user_id = ? AND deleted_at IS NULL AND source IS NOT NULL AND source != ''
 		  AND source NOT IN (
 			SELECT DISTINCT source FROM entities
-			WHERE source IS NOT NULL AND source != ''
+			WHERE user_id = ? AND deleted_at IS NULL AND source IS NOT NULL AND source != ''
 		  )
-		ORDER BY source`)
+		ORDER BY source`, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,11 +155,12 @@ func findDeadSources(ctx context.Context, db *sql.DB) ([]string, error) {
 	return out, rows.Err()
 }
 
-func findUnlinkedMemories(ctx context.Context, db *sql.DB) ([]MemoryRef, error) {
+func findUnlinkedMemories(ctx context.Context, db dbConn, userID string) ([]MemoryRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, content, source, confidence FROM memories m
-		WHERE NOT EXISTS (SELECT 1 FROM memory_entities WHERE memory_id = m.id)
-		ORDER BY created_at DESC`)
+		WHERE m.user_id = ? AND m.deleted_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM memory_entities WHERE user_id = m.user_id AND memory_id = m.id)
+		ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,11 +168,11 @@ func findUnlinkedMemories(ctx context.Context, db *sql.DB) ([]MemoryRef, error) 
 	return scanMemoryRefs(rows)
 }
 
-func findLowConfidenceMemories(ctx context.Context, db *sql.DB, threshold float64) ([]MemoryRef, error) {
+func findLowConfidenceMemories(ctx context.Context, db dbConn, userID string, threshold float64) ([]MemoryRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, content, source, confidence FROM memories
-		WHERE confidence < ?
-		ORDER BY confidence ASC`, threshold)
+		WHERE user_id = ? AND deleted_at IS NULL AND confidence < ?
+		ORDER BY confidence ASC`, userID, threshold)
 	if err != nil {
 		return nil, err
 	}

@@ -2,8 +2,13 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+
+	oai "github.com/sashabaranov/go-openai"
 )
 
 func TestEmbedIntegration(t *testing.T) {
@@ -39,7 +44,40 @@ func TestEmbedIntegration(t *testing.T) {
 
 func TestEmbedderDimensions(t *testing.T) {
 	embedder := NewEmbedder("dummy-key")
-	if d := embedder.Dimensions(); d != 1536 {
-		t.Errorf("expected 1536 dimensions, got %d", d)
+	if d := embedder.Dimensions(); d != 512 {
+		t.Errorf("expected 512 dimensions, got %d", d)
+	}
+}
+
+func embedRequestBody(t *testing.T, model string, opts ...EmbedderOption) map[string]any {
+	t.Helper()
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"x"}`))
+	}))
+	defer srv.Close()
+	all := append([]EmbedderOption{WithEmbedderBaseURL(srv.URL)}, opts...)
+	if model != "" {
+		all = append(all, WithEmbeddingModel(oai.EmbeddingModel(model), 512))
+	}
+	if _, err := NewEmbedder("k", all...).Embed(context.Background(), []string{"hi"}); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	return got
+}
+
+func TestEmbedderSendsDimensions(t *testing.T) {
+	body := embedRequestBody(t, "")
+	if d, ok := body["dimensions"].(float64); !ok || d != 512 {
+		t.Errorf("dimensions = %v, want 512 (body %v)", body["dimensions"], body)
+	}
+}
+
+func TestEmbedderNoDimensionsForOtherModels(t *testing.T) {
+	body := embedRequestBody(t, "nomic-embed-text")
+	if _, ok := body["dimensions"]; ok {
+		t.Errorf("dimensions should be absent for non text-embedding-3 models: %v", body)
 	}
 }

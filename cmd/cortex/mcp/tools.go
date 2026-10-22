@@ -15,15 +15,69 @@ import (
 // RegisterTools attaches the cortex tool set to an MCP server. Exposed so
 // the cortex CLI can wire it up before serving on stdio or HTTP.
 func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
+	RegisterToolsFor(s, cx, "")
+}
+
+// RegisterToolsFor attaches the tool set. Each call uses the handle the HTTP
+// layer put in the request context; fallback is used only when the context
+// carries none (stdio and the legacy single-user transport). publicURL
+// builds the "set up your AI provider" message.
+func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL string) {
+	h := handles{fallback: fallback, publicURL: publicURL}
+	// --- context ---
+	s.AddTool(
+		mcp.NewTool("context",
+			mcp.WithDescription("Call at the start of every conversation and before answering anything that depends on the user's preferences, how they would do things, or people and things they know. Returns who the user is plus relevant memories."),
+			mcp.WithString("question", mcp.Required(), mcp.Description("What the conversation is about or what you need to know")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
+			question, err := req.RequireString("question")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			out := contextResult{Memories: []cortex.Result{}, Entities: []cortex.Result{}}
+			if owner, ok := ownerID(ctx, cx); ok {
+				p, err := cx.Profile(ctx, owner)
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				out.Profile = contextProfile{Static: nz(p.Static), Dynamic: nz(p.Dynamic)}
+			} else {
+				out.Profile = contextProfile{Static: []string{}, Dynamic: []string{}}
+			}
+			rr, err := cx.RecallWithStrength(ctx, question, cortex.WithLimit(8))
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			out.Abstain = rr.Abstain
+			for _, r := range rr.Results {
+				if r.Type == "entity" {
+					out.Entities = append(out.Entities, r)
+				} else {
+					out.Memories = append(out.Memories, r)
+				}
+			}
+			return jsonResult(out)
+		},
+	)
+
 	// --- remember ---
 	s.AddTool(
 		mcp.NewTool("remember",
-			mcp.WithDescription("Save a fact to the user's personal knowledge graph (cortex). Call this whenever the user shares information about themselves, a person, a project, a decision, or a preference that would be useful in a future conversation. Entities and relationships are extracted automatically."),
+			mcp.WithDescription("Call whenever the conversation reveals something new about the user: a preference, a connection (person or organisation), a capability, background, or an identity fact. Don't store small talk or secrets."),
 			mcp.WithString("content", mcp.Required(), mcp.Description("The text content to remember")),
 			mcp.WithString("source", mcp.Description("Optional source label for the content")),
 			mcp.WithString("speaker", mcp.Description("Who asserted this (e.g. \"user\", \"assistant\", a document name). Optional provenance label.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			content, err := req.RequireString("content")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -54,6 +108,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithBoolean("rerank", mcp.Description("Diversity-rerank results (default false). Set true to spread out near-duplicate hits for browse/explore; leave off for best fact-recall accuracy.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			query, err := req.RequireString("query")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -92,11 +150,15 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- forget ---
 	s.AddTool(
 		mcp.NewTool("forget",
-			mcp.WithDescription("Remove knowledge from the graph by entity ID or source."),
+			mcp.WithDescription("Remove knowledge from the graph by entity ID or source. Deletion is recoverable for 30 days."),
 			mcp.WithString("entity_id", mcp.Description("Entity ID to forget")),
 			mcp.WithString("source", mcp.Description("Source label to forget")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			entityID := req.GetString("entity_id", "")
 			source := req.GetString("source", "")
 			if entityID == "" && source == "" {
@@ -106,7 +168,7 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			if err := cx.Forget(ctx, filter); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText("forgotten"), nil
+			return mcp.NewToolResultText("forgotten (recoverable for 30 days)"), nil
 		},
 	)
 
@@ -117,6 +179,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("id", mcp.Required(), mcp.Description("The entity ID")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			id, err := req.RequireString("id")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -138,6 +204,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("source", mcp.Description("Filter by source")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			filter := cortex.EntityFilter{
 				Type:     req.GetString("type", ""),
 				NameLike: req.GetString("name", ""),
@@ -159,6 +229,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("type", mcp.Description("Filter by relationship type")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			entityID, err := req.RequireString("entity_id")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -184,6 +258,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("edge_types", mcp.Description("Comma-separated edge types to follow")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			startID, err := req.RequireString("start_id")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -216,6 +294,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithNumber("limit", mcp.Description("Maximum number of results (default 10)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			query, err := req.RequireString("query")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -254,12 +336,16 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 	// --- merge ---
 	s.AddTool(
 		mcp.NewTool("merge",
-			mcp.WithDescription("Merge one entity into another, re-targeting all relationships, memory links, and chunks. Use to clean up duplicate entities surfaced by lint."),
+			mcp.WithDescription("Merge one entity into another, re-targeting all relationships, memory links, and chunks. Use to clean up duplicate entities surfaced by lint. The merge is recoverable for 30 days."),
 			mcp.WithString("keep_id", mcp.Required(), mcp.Description("Entity ID to keep")),
 			mcp.WithString("drop_id", mcp.Required(), mcp.Description("Entity ID to merge into keep and delete")),
 			mcp.WithBoolean("dry_run", mcp.Description("Simulate the merge and roll back; returns the stats without modifying the graph")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			keepID, err := req.RequireString("keep_id")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -278,7 +364,11 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return jsonResult(stats)
+			res, err := jsonResult(stats)
+			if err == nil && !res.IsError && !dryRun {
+				res.Content = append(res.Content, mcp.NewTextContent("The dropped entity is recoverable for 30 days; the merge can be undone."))
+			}
+			return res, err
 		},
 	)
 
@@ -291,6 +381,10 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("format", mcp.Description("Output format: json (default) or markdown"), mcp.Enum("json", "markdown")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			var opts []cortex.LintOption
 			thresholdSet := req.GetFloat("low_confidence_threshold", -1) >= 0
 			if thresholdSet {
@@ -325,16 +419,17 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 			mcp.WithString("entity_id", mcp.Description("Entity ID to profile. Omit for the owner entity.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cx, bad := h.get(ctx)
+			if bad != nil {
+				return bad, nil
+			}
 			entityID := req.GetString("entity_id", "")
 			if entityID == "" {
-				owners, err := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person", Source: "owner"})
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				if len(owners) == 0 {
+				owner, ok := ownerID(ctx, cx)
+				if !ok {
 					return mcp.NewToolResultError("no owner configured"), nil
 				}
-				entityID = owners[0].ID
+				entityID = owner
 			}
 			p, err := cx.Profile(ctx, entityID)
 			if err != nil {
@@ -345,10 +440,42 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 	)
 }
 
+type contextProfile struct {
+	Static  []string `json:"static"`
+	Dynamic []string `json:"dynamic"`
+}
+
+type contextResult struct {
+	Profile  contextProfile  `json:"profile"`
+	Memories []cortex.Result `json:"memories"`
+	Entities []cortex.Result `json:"entities"`
+	Abstain  bool            `json:"abstain"`
+}
+
+func nz(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 func jsonResult(v any) (*mcp.CallToolResult, error) {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("json marshal error: %v", err)), nil
 	}
 	return mcp.NewToolResultText(string(b)), nil
+}
+
+// ownerID is the user's owner entity: users.owner_entity_id, else (legacy
+// single-user databases) the first person entity with source "owner".
+func ownerID(ctx context.Context, cx *cortex.Cortex) (string, bool) {
+	if id, err := cx.OwnerEntityID(ctx); err == nil {
+		return id, true
+	}
+	owners, err := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person", Source: "owner"})
+	if err != nil || len(owners) == 0 {
+		return "", false
+	}
+	return owners[0].ID, true
 }

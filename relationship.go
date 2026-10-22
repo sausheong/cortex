@@ -11,6 +11,12 @@ import (
 // PutRelationship inserts a new relationship with a generated ULID.
 // Attributes are stored as JSON TEXT.
 func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
+	if err := requireEntity(ctx, c.db, c.userID, r.SourceID); err != nil {
+		return err
+	}
+	if err := requireEntity(ctx, c.db, c.userID, r.TargetID); err != nil {
+		return err
+	}
 	r.Confidence = coerceConfidence(r.Confidence)
 	r.ID = newID()
 	r.CreatedAt = time.Now().UTC()
@@ -21,9 +27,9 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 	}
 
 	_, err = c.db.ExecContext(ctx,
-		`INSERT INTO relationships (id, source_id, target_id, type, attributes, source, confidence, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, r.CreatedAt,
+		`INSERT INTO relationships (id, user_id, source_id, target_id, type, attributes, source, confidence, created_at, written_by_connection_id)
+		 VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)`,
+		r.ID, c.userID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, r.CreatedAt, c.nullConn(),
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert relationship: %w", err)
@@ -39,11 +45,14 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 	for _, f := range filters {
 		f(cfg)
 	}
+	if err := requireEntity(ctx, c.db, c.userID, entityID); err != nil {
+		return nil, err
+	}
 
 	query := `SELECT id, source_id, target_id, type, attributes, source, confidence, created_at
 		FROM relationships
-		WHERE (source_id = ? OR target_id = ?)`
-	args := []any{entityID, entityID}
+		WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ? OR target_id = ?)`
+	args := []any{c.userID, entityID, entityID}
 
 	if cfg.relType != "" {
 		query += " AND type = ?"

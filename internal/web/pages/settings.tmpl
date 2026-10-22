@@ -1,0 +1,47 @@
+{{define "title"}}AI provider{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>AI provider</h1>
+<p>cortex uses your own provider for extraction and embeddings. Keys are stored encrypted and shown masked.</p>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{if .Saved}}<p class="notice">Settings saved.</p>{{end}}
+{{if .MaintenanceError}}<p class="error" role="alert">Last nightly maintenance failed: {{.MaintenanceError}}. Check your provider settings.</p>{{end}}
+{{if .Job}}
+<section class="job" id="job" data-id="{{.Job.ID}}" data-status="{{.Job.Status}}">
+  <h2>Re-embedding</h2>
+  <p>Status: <span id="job-status">{{.Job.Status}}</span> (<span id="job-done">{{.Job.Done}}</span>/<span id="job-total">{{.Job.Total}}</span>)</p>
+  {{if .Job.Error}}<p class="error">{{.Job.Error}}</p>{{end}}
+</section>
+{{end}}
+{{if .Pending}}{{if not .Live}}
+<form method="post" action="/settings/reembed">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <p>Your embedding settings changed and existing memories have not been re-embedded yet.</p>
+  <button class="btn">Retry re-embedding</button>
+</form>
+{{end}}{{end}}
+<form method="post" action="/settings" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Chat provider
+    <select name="provider">
+      <option value="openai-compatible" {{if eq .S.Provider "openai-compatible"}}selected{{end}}>OpenAI-compatible</option>
+      <option value="anthropic" {{if eq .S.Provider "anthropic"}}selected{{end}}>Anthropic</option>
+    </select></label>
+  <label>Base URL <input name="base_url" value="{{.S.BaseURL}}" placeholder="https://api.openai.com/v1"></label>
+  <label>API key <input name="api_key" type="password" value="" placeholder="{{.S.APIKey}}"></label>
+  <label>Chat model <input name="chat_model" value="{{.S.ChatModel}}"></label>
+  <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
+  <label>Embedding dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric"></label>
+  <label>Embedding base URL (optional) <input name="embed_base_url" value="{{.S.EmbedBaseURL}}"></label>
+  <label>Embedding API key (optional) <input name="embed_api_key" type="password" value="" placeholder="{{.S.EmbedAPIKey}}"></label>
+  <button class="btn">Test &amp; save</button>
+</form>
+{{if .Live}}<script>
+(function(){var el=document.getElementById('job');if(!el)return;
+function tick(){fetch('/settings/job/'+el.dataset.id,{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){
+document.getElementById('job-status').textContent=j.status;document.getElementById('job-done').textContent=j.done;document.getElementById('job-total').textContent=j.total;
+if(j.status==='queued'||j.status==='running'){setTimeout(tick,2000)}else{location.reload()}}).catch(function(){setTimeout(tick,5000)})}
+setTimeout(tick,1500)})();
+</script>{{end}}
+{{end}}
+{{end}}

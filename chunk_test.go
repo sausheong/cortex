@@ -2,6 +2,8 @@ package cortex
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -177,5 +179,34 @@ func TestSearchKeywordNoResults(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestPutChunkHuge(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	// Many distinct lexemes, ~1M chars, so the tsvector would exceed 1MB if
+	// the generated column did not truncate the content.
+	var sb strings.Builder
+	sb.WriteString("zebracrossing ")
+	for i := 0; sb.Len() < 1000000; i++ {
+		fmt.Fprintf(&sb, "tok%dx ", i)
+	}
+	ch := &Chunk{Content: sb.String()}
+	if err := c.PutChunk(ctx, ch); err != nil {
+		t.Fatalf("PutChunk(1M chars) error: %v", err)
+	}
+	results, err := c.SearchKeyword(ctx, "zebracrossing", 10)
+	if err != nil {
+		t.Fatalf("SearchKeyword() error: %v", err)
+	}
+	found := false
+	for _, r := range results {
+		if r.ID == ch.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("huge chunk not searchable by early token (%d results)", len(results))
 	}
 }

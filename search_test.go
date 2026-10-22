@@ -3,17 +3,15 @@ package cortex
 import (
 	"context"
 	"math"
-	"path/filepath"
 	"testing"
+
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 func openTestDBWithEmbedder(t *testing.T) *Cortex {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
 	embedder := &testEmbedder{}
-	c, err := Open(dbPath, WithEmbedder(embedder))
+	c, err := Open(pgtest.DSN(t), WithEmbedder(embedder))
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}

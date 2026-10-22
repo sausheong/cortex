@@ -2,7 +2,6 @@ package cortex
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 )
 
@@ -135,210 +134,57 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	return nil
 }
 
-// Forget removes knowledge from the graph based on the provided filter.
-// Supports filtering by EntityID or Source. Uses a transaction to ensure
-// atomicity. Orphaned memories (with no remaining entity links) are cleaned up.
+// Forget removes knowledge from the graph based on the provided filter
+// (EntityID or Source). The removal is a recoverable soft delete: matching
+// entities, their relationships and chunks are marked deleted in one batch
+// (see ListDeleteBatches, RestoreBatch) and purged after 30 days. Memory
+// links are kept, so a memory whose only entities were forgotten is still
+// recalled.
 func (c *Cortex) Forget(ctx context.Context, f Filter) error {
+	if f.EntityID != "" {
+		_, err := c.softDeleteEntity(ctx, f.EntityID, "user", "forget")
+		return err
+	}
+	if f.Source == "" {
+		return fmt.Errorf("cortex: forget requires EntityID or Source filter")
+	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-
-	if f.EntityID != "" {
-		if err := c.forgetByEntity(ctx, tx, f.EntityID); err != nil {
-			return err
-		}
-	} else if f.Source != "" {
-		if err := c.forgetBySource(ctx, tx, f.Source); err != nil {
-			return err
-		}
-	} else {
-		return fmt.Errorf("cortex: forget requires EntityID or Source filter")
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("cortex: commit forget: %w", err)
-	}
-	return nil
-}
-
-// forgetByEntity removes all data associated with a single entity.
-func (c *Cortex) forgetByEntity(ctx context.Context, tx *sql.Tx, entityID string) error {
-	// 1. Delete embeddings for chunks linked to entity.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM embeddings WHERE ref_type = 'chunk' AND ref_id IN
-		 (SELECT id FROM chunks WHERE entity_id = ?)`, entityID,
-	); err != nil {
-		return fmt.Errorf("cortex: delete chunk embeddings: %w", err)
-	}
-
-	// 2. Delete FTS entries for chunks linked to entity.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM chunks_fts WHERE rowid IN
-		 (SELECT rowid FROM chunks WHERE entity_id = ?)`, entityID,
-	); err != nil {
-		return fmt.Errorf("cortex: delete chunk fts: %w", err)
-	}
-
-	// 3. Delete chunks linked to entity.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM chunks WHERE entity_id = ?`, entityID,
-	); err != nil {
-		return fmt.Errorf("cortex: delete chunks: %w", err)
-	}
-
-	// 4. Delete memory_entities links for entity.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM memory_entities WHERE entity_id = ?`, entityID,
-	); err != nil {
-		return fmt.Errorf("cortex: delete memory entity links: %w", err)
-	}
-
-	// 5. Delete orphaned memories (no remaining entity links) and their embeddings.
-	if err := c.deleteOrphanedMemories(ctx, tx); err != nil {
-		return err
-	}
-
-	// 6. Delete relationships involving entity.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM relationships WHERE source_id = ? OR target_id = ?`,
-		entityID, entityID,
-	); err != nil {
-		return fmt.Errorf("cortex: delete relationships: %w", err)
-	}
-
-	// 7. Delete the entity itself.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM entities WHERE id = ?`, entityID,
-	); err != nil {
-		return fmt.Errorf("cortex: delete entity: %w", err)
-	}
-
-	return nil
-}
-
-// forgetBySource removes all data associated with a given source.
-func (c *Cortex) forgetBySource(ctx context.Context, tx *sql.Tx, source string) error {
-	// Get all entity IDs for this source.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM entities WHERE source = ?`, source,
-	)
+		`SELECT id FROM entities WHERE user_id = ? AND source = ? AND deleted_at IS NULL`, c.userID, f.Source)
 	if err != nil {
 		return fmt.Errorf("cortex: query entities by source: %w", err)
 	}
-	var entityIDs []string
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return fmt.Errorf("cortex: scan entity id: %w", err)
 		}
-		entityIDs = append(entityIDs, id)
+		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("cortex: iterate entity ids: %w", err)
 	}
-
-	// For each entity: delete embeddings, chunks, memory links, relationships.
-	for _, entityID := range entityIDs {
-		// Delete chunk embeddings.
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM embeddings WHERE ref_type = 'chunk' AND ref_id IN
-			 (SELECT id FROM chunks WHERE entity_id = ?)`, entityID,
-		); err != nil {
-			return fmt.Errorf("cortex: delete chunk embeddings for source: %w", err)
-		}
-
-		// Delete chunk FTS entries.
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM chunks_fts WHERE rowid IN
-			 (SELECT rowid FROM chunks WHERE entity_id = ?)`, entityID,
-		); err != nil {
-			return fmt.Errorf("cortex: delete chunk fts for source: %w", err)
-		}
-
-		// Delete chunks.
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM chunks WHERE entity_id = ?`, entityID,
-		); err != nil {
-			return fmt.Errorf("cortex: delete chunks for source: %w", err)
-		}
-
-		// Delete memory entity links.
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM memory_entities WHERE entity_id = ?`, entityID,
-		); err != nil {
-			return fmt.Errorf("cortex: delete memory entity links for source: %w", err)
-		}
-
-		// Delete relationships.
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM relationships WHERE source_id = ? OR target_id = ?`,
-			entityID, entityID,
-		); err != nil {
-			return fmt.Errorf("cortex: delete relationships for source: %w", err)
-		}
+	if len(ids) == 0 {
+		return nil
 	}
-
-	// Delete entities by source.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM entities WHERE source = ?`, source,
-	); err != nil {
-		return fmt.Errorf("cortex: delete entities by source: %w", err)
-	}
-
-	// Delete orphaned memories and their embeddings.
-	if err := c.deleteOrphanedMemories(ctx, tx); err != nil {
+	batchID, err := newBatch(ctx, tx, c.userID, "forget")
+	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-// deleteOrphanedMemories removes memories that have no remaining entity links,
-// along with their embeddings.
-func (c *Cortex) deleteOrphanedMemories(ctx context.Context, tx *sql.Tx) error {
-	// Find orphaned memory IDs.
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM memories WHERE id NOT IN (SELECT DISTINCT memory_id FROM memory_entities)`,
-	)
-	if err != nil {
-		return fmt.Errorf("cortex: find orphaned memories: %w", err)
-	}
-	var orphanIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return fmt.Errorf("cortex: scan orphaned memory id: %w", err)
-		}
-		orphanIDs = append(orphanIDs, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("cortex: iterate orphaned memories: %w", err)
-	}
-
-	// Delete embeddings and memories for each orphan.
-	for _, id := range orphanIDs {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM embeddings WHERE ref_type = 'memory' AND ref_id = ?`, id,
-		); err != nil {
-			return fmt.Errorf("cortex: delete orphaned memory embedding: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM memories_fts WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)`, id,
-		); err != nil {
-			return fmt.Errorf("cortex: delete orphaned memory fts: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM memories WHERE id = ?`, id,
-		); err != nil {
-			return fmt.Errorf("cortex: delete orphaned memory: %w", err)
+	for _, id := range ids {
+		if err := c.softDeleteEntityTx(ctx, tx, batchID, "user", id); err != nil {
+			return err
 		}
 	}
-
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cortex: commit forget: %w", err)
+	}
 	return nil
 }

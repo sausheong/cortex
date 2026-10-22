@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,50 +18,32 @@ import (
 func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	e.Confidence = coerceConfidence(e.Confidence)
 
-	// Check for existing entity with same name + type.
-	var existingID string
-	err := c.db.QueryRowContext(ctx,
-		"SELECT id FROM entities WHERE name = ? AND type = ?",
-		e.Name, e.Type,
-	).Scan(&existingID)
-
-	attrsJSON, err2 := json.Marshal(e.Attributes)
-	if err2 != nil {
-		return fmt.Errorf("cortex: marshal attributes: %w", err2)
+	attrsJSON, err := json.Marshal(e.Attributes)
+	if err != nil {
+		return fmt.Errorf("cortex: marshal attributes: %w", err)
 	}
 
 	now := time.Now().UTC()
 
-	if err == nil {
-		// Entity exists — update.
-		_, err = c.db.ExecContext(ctx,
-			`UPDATE entities SET attributes = ?, source = ?, confidence = ?, updated_at = ? WHERE id = ?`,
-			string(attrsJSON), e.Source, e.Confidence, now, existingID,
-		)
-		if err != nil {
-			return fmt.Errorf("cortex: update entity: %w", err)
-		}
-		e.ID = existingID
-		e.UpdatedAt = now
-		return nil
-	}
-	if err != sql.ErrNoRows {
-		return fmt.Errorf("cortex: check existing entity: %w", err)
-	}
-
-	// New entity — insert.
-	e.ID = newID()
-	e.CreatedAt = now
-	e.UpdatedAt = now
-
-	_, err = c.db.ExecContext(ctx,
-		`INSERT INTO entities (id, type, name, attributes, source, confidence, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, e.CreatedAt, e.UpdatedAt,
-	)
+	// Single atomic upsert: concurrent writers with the same (name, type)
+	// converge on one row.
+	err = c.db.QueryRowContext(ctx,
+		`INSERT INTO entities (id, user_id, type, name, attributes, source, confidence, created_at, updated_at, written_by_connection_id)
+		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
+		 ON CONFLICT (user_id, name, type) WHERE deleted_at IS NULL DO UPDATE SET
+		   attributes = EXCLUDED.attributes,
+		   source = CASE WHEN entities.source = 'owner' THEN entities.source ELSE EXCLUDED.source END,
+		   confidence = EXCLUDED.confidence,
+		   updated_at = EXCLUDED.updated_at,
+		   written_by_connection_id = COALESCE(EXCLUDED.written_by_connection_id, entities.written_by_connection_id)
+		 RETURNING id, created_at`,
+		newID(), c.userID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, now, c.nullConn(),
+	).Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("cortex: insert entity: %w", err)
+		return fmt.Errorf("cortex: upsert entity: %w", err)
 	}
+	e.UpdatedAt = now
+	e.WrittenBy = c.connID
 	return nil
 }
 
@@ -69,11 +52,11 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
 	err := c.db.QueryRowContext(ctx,
-		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at
-		 FROM entities WHERE id = ?`, id,
-	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
+		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '')
+		 FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
+	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("cortex: entity %q not found", id)
+		return nil, errEntityNotFound()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get entity: %w", err)
@@ -90,16 +73,16 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 // FindEntities returns entities matching the given filter. All filter fields
 // are optional — an empty filter returns all entities.
 func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, error) {
-	query := `SELECT id, type, name, attributes, source, confidence, created_at, updated_at FROM entities`
-	var conditions []string
-	var args []any
+	query := `SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '') FROM entities`
+	conditions := []string{"user_id = ?", "deleted_at IS NULL"}
+	args := []any{c.userID}
 
 	if f.Type != "" {
 		conditions = append(conditions, "type = ?")
 		args = append(args, f.Type)
 	}
 	if f.NameLike != "" {
-		conditions = append(conditions, "name LIKE ?")
+		conditions = append(conditions, "name ILIKE ?")
 		args = append(args, f.NameLike)
 	}
 	if f.Source != "" {
@@ -107,9 +90,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 		args = append(args, f.Source)
 	}
 
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	query += " WHERE " + strings.Join(conditions, " AND ")
 
 	rows, err := c.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -121,7 +102,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 	for rows.Next() {
 		var e Entity
 		var attrsJSON sql.NullString
-		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy); err != nil {
 			return nil, fmt.Errorf("cortex: scan entity: %w", err)
 		}
 		if attrsJSON.Valid && attrsJSON.String != "" {
@@ -154,10 +135,15 @@ func (c *Cortex) MergeEntities(ctx context.Context, keepID, dropID string) (Merg
 		return stats, fmt.Errorf("cortex: begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	stats, err = mergeEntitiesTx(ctx, tx, keepID, dropID)
+	batchID, err := newBatch(ctx, tx, c.userID, "merge")
 	if err != nil {
 		return stats, err
 	}
+	stats, err = mergeEntitiesTx(ctx, tx, c.userID, keepID, dropID, mergeOpts{batchID: batchID, by: "user"})
+	if err != nil {
+		return stats, err
+	}
+	stats.BatchID = batchID
 	if err := tx.Commit(); err != nil {
 		return stats, fmt.Errorf("cortex: commit merge: %w", err)
 	}
@@ -177,25 +163,72 @@ func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string)
 		return stats, fmt.Errorf("cortex: begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	return mergeEntitiesTx(ctx, tx, keepID, dropID)
+	batchID, err := newBatch(ctx, tx, c.userID, "merge")
+	if err != nil {
+		return stats, err
+	}
+	return mergeEntitiesTx(ctx, tx, c.userID, keepID, dropID, mergeOpts{batchID: batchID, by: "user"})
+}
+
+// mergeOpts controls how mergeEntitiesTx records and finishes a merge.
+// With a batchID the merge is soft and reversible: every change is recorded
+// and the dropped entity is soft-deleted into that batch. With an empty
+// batchID (restore collisions) nothing is recorded, the dropped entity may
+// already be soft-deleted, and it is removed for good.
+type mergeOpts struct {
+	batchID string
+	by      string
+}
+
+// recordChanges snapshots the rows of table matching where into the batch's
+// change records, before the caller modifies or deletes them. extra is a JSON
+// object merged into each snapshot (e.g. the retarget destination).
+func recordChanges(ctx context.Context, tx *dbTx, mo mergeOpts, userID, table, op, extra, where string, args ...any) error {
+	if mo.batchID == "" {
+		return nil
+	}
+	all := append([]any{mo.batchID, userID, table, op, extra}, args...)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json)
+		 SELECT ?, ?, ?, ?, to_jsonb(t) || ?::jsonb FROM `+table+` t WHERE `+where, all...); err != nil {
+		return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+	}
+	return nil
 }
 
 // mergeEntitiesTx performs the merge against the provided transaction.
 // Caller is responsible for Commit or Rollback.
-func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (MergeStats, error) {
+func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID string, mo mergeOpts) (MergeStats, error) {
 	var stats MergeStats
+	soft := mo.batchID != ""
+	extraTo := `{"_to":` + strconv.Quote(keepID) + `}`
 
-	keep, err := getEntityTx(ctx, tx, keepID)
+	// Lock both rows (ordered by id to avoid deadlock) so concurrent upserts
+	// and inserts that reference either entity serialize with the merge.
+	lrows, err := tx.QueryContext(ctx,
+		`SELECT id FROM entities WHERE id IN (?, ?) AND user_id = ? ORDER BY id FOR UPDATE`, keepID, dropID, userID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: lock entities: %w", err)
+	}
+	for lrows.Next() {
+	}
+	if err := lrows.Err(); err != nil {
+		lrows.Close()
+		return stats, fmt.Errorf("cortex: lock entities: %w", err)
+	}
+	lrows.Close()
+
+	keep, err := getEntityTx(ctx, tx, userID, keepID, false)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return stats, fmt.Errorf("cortex: keep entity not found: %s", keepID)
+			return stats, notFound("cortex: keep entity not found")
 		}
 		return stats, fmt.Errorf("cortex: load keep entity: %w", err)
 	}
-	drop, err := getEntityTx(ctx, tx, dropID)
+	drop, err := getEntityTx(ctx, tx, userID, dropID, !soft)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return stats, fmt.Errorf("cortex: drop entity not found: %s", dropID)
+			return stats, notFound("cortex: drop entity not found")
 		}
 		return stats, fmt.Errorf("cortex: load drop entity: %w", err)
 	}
@@ -203,9 +236,17 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 		return stats, fmt.Errorf("cortex: cannot merge across types: %s (keep) vs %s (drop)", keep.Type, drop.Type)
 	}
 
+	// Snapshot the keeper so an undo can put its row back exactly.
+	if err := recordChanges(ctx, tx, mo, userID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keepID, userID); err != nil {
+		return stats, err
+	}
+
 	// Re-target chunks (no collision possible).
+	if err := recordChanges(ctx, tx, mo, userID, "chunks", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+		return stats, err
+	}
 	res, err := tx.ExecContext(ctx,
-		`UPDATE chunks SET entity_id = ? WHERE entity_id = ?`, keepID, dropID)
+		`UPDATE chunks SET entity_id = ? WHERE entity_id = ? AND user_id = ?`, keepID, dropID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: re-target chunks: %w", err)
 	}
@@ -214,19 +255,27 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 	}
 
 	// Re-target memory_entities, with dedup on (memory_id, entity_id) PK.
+	if err := recordChanges(ctx, tx, mo, userID, "memory_entities", "delete", "{}",
+		`t.entity_id = ? AND t.user_id = ? AND t.memory_id IN (SELECT memory_id FROM memory_entities WHERE entity_id = ? AND user_id = ?)`,
+		dropID, userID, keepID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
 		`DELETE FROM memory_entities
-		 WHERE entity_id = ?
-		   AND memory_id IN (SELECT memory_id FROM memory_entities WHERE entity_id = ?)`,
-		dropID, keepID)
+		 WHERE entity_id = ? AND user_id = ?
+		   AND memory_id IN (SELECT memory_id FROM memory_entities WHERE entity_id = ? AND user_id = ?)`,
+		dropID, userID, keepID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: dedup memory_entities: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		stats.DupesDropped += int(n)
 	}
+	if err := recordChanges(ctx, tx, mo, userID, "memory_entities", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
-		`UPDATE memory_entities SET entity_id = ? WHERE entity_id = ?`, keepID, dropID)
+		`UPDATE memory_entities SET entity_id = ? WHERE entity_id = ? AND user_id = ?`, keepID, dropID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: re-target memory_entities: %w", err)
 	}
@@ -235,24 +284,32 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 	}
 
 	// Re-target relationships source_id with dedup on (source, target, type).
+	if err := recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}",
+		`t.source_id = ? AND t.user_id = ? AND EXISTS (SELECT 1 FROM relationships k WHERE k.source_id = ? AND k.user_id = ? AND k.target_id = t.target_id AND k.type = t.type)`,
+		dropID, userID, keepID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
 		`DELETE FROM relationships
-		 WHERE source_id = ?
+		 WHERE source_id = ? AND user_id = ?
 		   AND EXISTS (
 			 SELECT 1 FROM relationships k
-			 WHERE k.source_id = ?
+			 WHERE k.source_id = ? AND k.user_id = ?
 			   AND k.target_id = relationships.target_id
 			   AND k.type      = relationships.type
 		   )`,
-		dropID, keepID)
+		dropID, userID, keepID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: dedup source rels: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		stats.DupesDropped += int(n)
 	}
+	if err := recordChanges(ctx, tx, mo, userID, "relationships", "retarget", extraTo, "t.source_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
-		`UPDATE relationships SET source_id = ? WHERE source_id = ?`, keepID, dropID)
+		`UPDATE relationships SET source_id = ? WHERE source_id = ? AND user_id = ?`, keepID, dropID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: re-target source rels: %w", err)
 	}
@@ -261,24 +318,32 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 	}
 
 	// Same for target_id.
+	if err := recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}",
+		`t.target_id = ? AND t.user_id = ? AND EXISTS (SELECT 1 FROM relationships k WHERE k.target_id = ? AND k.user_id = ? AND k.source_id = t.source_id AND k.type = t.type)`,
+		dropID, userID, keepID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
 		`DELETE FROM relationships
-		 WHERE target_id = ?
+		 WHERE target_id = ? AND user_id = ?
 		   AND EXISTS (
 			 SELECT 1 FROM relationships k
-			 WHERE k.target_id = ?
+			 WHERE k.target_id = ? AND k.user_id = ?
 			   AND k.source_id = relationships.source_id
 			   AND k.type      = relationships.type
 		   )`,
-		dropID, keepID)
+		dropID, userID, keepID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: dedup target rels: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		stats.DupesDropped += int(n)
 	}
+	if err := recordChanges(ctx, tx, mo, userID, "relationships", "retarget", extraTo, "t.target_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
-		`UPDATE relationships SET target_id = ? WHERE target_id = ?`, keepID, dropID)
+		`UPDATE relationships SET target_id = ? WHERE target_id = ? AND user_id = ?`, keepID, dropID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: re-target target rels: %w", err)
 	}
@@ -287,8 +352,11 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 	}
 
 	// Drop self-loops created by the merge.
+	if err := recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}", "t.source_id = ? AND t.target_id = ? AND t.user_id = ?", keepID, keepID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
-		`DELETE FROM relationships WHERE source_id = ? AND target_id = ?`, keepID, keepID)
+		`DELETE FROM relationships WHERE source_id = ? AND target_id = ? AND user_id = ?`, keepID, keepID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: drop self-loops: %w", err)
 	}
@@ -297,8 +365,11 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 	}
 
 	// Drop the stale entity embedding.
+	if err := recordChanges(ctx, tx, mo, userID, "embeddings", "delete", "{}", "t.ref_id = ? AND t.ref_type = 'entity' AND t.user_id = ?", dropID, userID); err != nil {
+		return stats, err
+	}
 	res, err = tx.ExecContext(ctx,
-		`DELETE FROM embeddings WHERE ref_id = ? AND ref_type = 'entity'`, dropID)
+		`DELETE FROM embeddings WHERE ref_id = ? AND ref_type = 'entity' AND user_id = ?`, dropID, userID)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: drop embedding: %w", err)
 	}
@@ -340,13 +411,19 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 		return stats, fmt.Errorf("cortex: marshal merged attributes: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?`,
-		string(attrsJSON), mergeTime, keepID); err != nil {
+		`UPDATE entities SET attributes = ?::jsonb, updated_at = ? WHERE id = ? AND user_id = ?`,
+		string(attrsJSON), mergeTime, keepID, userID); err != nil {
 		return stats, fmt.Errorf("cortex: update keep attributes: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM entities WHERE id = ?`, dropID); err != nil {
+	if soft {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entities SET deleted_at = ?, deleted_by = ?, delete_batch_id = ? WHERE id = ? AND user_id = ?`,
+			mergeTime, mo.by, mo.batchID, dropID, userID); err != nil {
+			return stats, fmt.Errorf("cortex: delete drop entity: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx,
+		`DELETE FROM entities WHERE id = ? AND user_id = ?`, dropID, userID); err != nil {
 		return stats, fmt.Errorf("cortex: delete drop entity: %w", err)
 	}
 
@@ -355,13 +432,13 @@ func mergeEntitiesTx(ctx context.Context, tx *sql.Tx, keepID, dropID string) (Me
 
 // getEntityTx loads an entity by ID using the supplied transaction.
 // Returns sql.ErrNoRows if not found.
-func getEntityTx(ctx context.Context, tx *sql.Tx, id string) (*Entity, error) {
+func getEntityTx(ctx context.Context, tx *dbTx, userID, id string, includeDeleted bool) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at
-		 FROM entities WHERE id = ?`, id,
-	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt)
+		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '')
+		 FROM entities WHERE id = ? AND user_id = ? AND (deleted_at IS NULL OR ?)`, id, userID, includeDeleted,
+	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy)
 	if err != nil {
 		return nil, err
 	}

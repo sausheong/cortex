@@ -19,19 +19,27 @@ import (
 	oaillm "github.com/sausheong/cortex/llm/openai"
 )
 
-var dbPath = "brain.db"
+// dbDSN is the Postgres connection URL: --db flag > CORTEX_DATABASE_URL env.
+// There is no default.
+var dbDSN string
+
+// requireDSN exits 1 with a clear message when no DSN was configured.
+func requireDSN() string {
+	if dbDSN == "" {
+		fmt.Fprintln(os.Stderr, "set CORTEX_DATABASE_URL or pass --db <postgres-url>")
+		os.Exit(1)
+	}
+	return dbDSN
+}
 
 func main() {
-	// Resolve database path: --db flag > CORTEX_DB env > default "brain.db".
-	if envDB := os.Getenv("CORTEX_DB"); envDB != "" {
-		dbPath = envDB
-	}
+	dbDSN = os.Getenv("CORTEX_DATABASE_URL")
 
 	// Strip --db flag from os.Args before command parsing.
 	var filtered []string
 	for i := 0; i < len(os.Args); i++ {
 		if os.Args[i] == "--db" && i+1 < len(os.Args) {
-			dbPath = os.Args[i+1]
+			dbDSN = os.Args[i+1]
 			i++ // skip the value
 		} else {
 			filtered = append(filtered, os.Args[i])
@@ -45,6 +53,20 @@ func main() {
 	}
 
 	cmd := os.Args[1]
+
+	ref, rest, err := stripUserFlag(os.Args[2:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if ref != "" {
+		if !userCommands[cmd] {
+			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync)\n", cmd)
+			os.Exit(1)
+		}
+		userRef = ref
+		os.Args = append(os.Args[:2:2], rest...)
+	}
 
 	switch cmd {
 	case "init":
@@ -81,8 +103,16 @@ func main() {
 		cmdMaintain()
 	case "profile":
 		cmdProfile()
+	case "import-sqlite":
+		cmdImportSQLite()
 	case "mcp":
 		cmdMCP()
+	case "serve":
+		cmdServe()
+	case "migrate":
+		cmdMigrate()
+	case "users":
+		cmdUsers()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -91,13 +121,18 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: cortex [--db <path>] <command> [arguments]
+	fmt.Fprintln(os.Stderr, `Usage: cortex [--db <postgres-url>] <command> [arguments]
 
 Global options:
-  --db <path>                    Path to brain.db (default: brain.db, or CORTEX_DB env var)
+  --db <postgres-url>            Postgres connection URL (or CORTEX_DATABASE_URL env var; no default)
+  --user <id|verified-email>     Act as that user with their own provider settings (needs CORTEX_SECRET_KEY);
+                                 accepted by maintain, recall, profile, import-sqlite and sync
 
 Commands:
-  init                           Create a new brain.db
+  serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
+  migrate [--timeout 30m]        Apply database migrations and report the versions
+  users list                     List users (ID, email, created, usage)
+  init                           Initialize the Postgres schema and set the owner
   remember <text>                Remember text
   recall <query> [--min-confidence <0-1>]
                                  Recall and print results
@@ -114,6 +149,8 @@ Commands:
   config --email <email>         Add an email address
   export [--vault <dir>] [--full] [--dry-run]
                                  Export the knowledge graph as an Obsidian-compatible markdown vault
+  import-sqlite <path> [--force] [--embed-only]
+                                 Import a v0.4 SQLite brain into Postgres, then embed rows lacking embeddings
   init-schema [<dir>] [--force]
                                  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
@@ -126,7 +163,8 @@ Commands:
                                  Apply age-based confidence decay and soft-retire memories below the floor (MODIFIES the graph; use --dry-run to preview)
   expire [--dry-run] [--out <file>]
                                  Soft-retire memories whose forget_after has passed (MODIFIES the graph; use --dry-run to preview)
-  maintain [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]
+  maintain                       With no --user: nightly pass over every live user with provider settings, then purge
+  maintain --user <id> [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]
                                  Periodic reconsolidation pass: reconcile, relate, decay, expire, then profile in one run (MODIFIES the graph; use --dry-run to preview)
   profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
                                  Show an entity's context digest (owner by default); --track/--untrack manage auto-refresh
@@ -135,6 +173,9 @@ Commands:
 }
 
 func openCortex() *cortex.Cortex {
+	if userRef != "" {
+		return openUserCortexOrExit(userRef)
+	}
 	provider := os.Getenv("LLM_PROVIDER") // "openai" (default) or "anthropic"
 	modelName := os.Getenv("LLM_MODEL")
 	embModel := os.Getenv("EMBEDDING_MODEL")
@@ -163,7 +204,7 @@ func openCortex() *cortex.Cortex {
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			opts = append(opts, cortex.WithExtractor(deterministic.New()))
-			cx, err := cortex.Open(dbPath, opts...)
+			cx, err := cortex.Open(requireDSN(), opts...)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 				os.Exit(1)
@@ -192,7 +233,7 @@ func openCortex() *cortex.Cortex {
 		cortex.WithExtractor(ext),
 	)
 
-	cx, err := cortex.Open(dbPath, opts...)
+	cx, err := cortex.Open(requireDSN(), opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 		os.Exit(1)
@@ -221,7 +262,7 @@ func configureEmbedder(embModel, embDimsStr string) cortex.Embedder {
 		embOpts = append(embOpts, oaillm.WithEmbedderBaseURL(baseURL))
 	}
 	if embModel != "" {
-		dims := 1536
+		dims := 512
 		if embDimsStr != "" {
 			if d, err := strconv.Atoi(embDimsStr); err == nil {
 				dims = d
@@ -234,13 +275,13 @@ func configureEmbedder(embModel, embDimsStr string) cortex.Embedder {
 }
 
 func cmdInit() {
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
+	cx, err := cortex.Open(requireDSN(), cortex.WithExtractor(deterministic.New()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating database: %v\n", err)
 		os.Exit(1)
 	}
 	defer cx.Close()
-	fmt.Println("Initialized brain.db")
+	fmt.Println("Initialized database")
 
 	// Prompt for owner identity.
 	reader := bufio.NewReader(os.Stdin)

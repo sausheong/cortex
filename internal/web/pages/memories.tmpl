@@ -1,0 +1,50 @@
+{{define "title"}}Memories{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Memories</h1>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{if .Restored}}<p class="notice">Restored.</p>{{end}}
+<form method="get" action="/memories">
+  <label>Search <input name="q" value="{{.Q}}"></label>
+  <label>Written by
+    <select name="by"><option value="">anyone</option>
+      {{range .Conns}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select></label>
+  <label>From <input name="from" type="date" value="{{.From}}"></label>
+  <label>To <input name="to" type="date" value="{{.To}}"></label>
+  <button class="btn">Filter</button>
+</form>
+<p class="note">{{.Total}} memories. <a href="/memories/deleted">Recently deleted</a></p>
+<form method="post" action="/memories/delete">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <ul class="memlist">
+  {{range .Memories}}
+    <li><label><input type="checkbox" name="ids" value="{{.ID}}" style="display:inline;width:auto"> {{.Content}}</label>
+    <span class="note">{{.CreatedAt.Format "2006-01-02"}}{{if .WrittenBy}} · {{index $.Data.ConnNames .WrittenBy}}{{end}}</span></li>
+  {{else}}<li class="note">No memories.</li>{{end}}
+  </ul>
+  <button class="btn">Delete selected</button>
+</form>
+<p>{{if .PrevPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.PrevPage}}">Previous</a>{{end}}
+{{if .NextPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.NextPage}}">Next</a>{{end}}</p>
+<h2>Bulk delete</h2>
+<form method="post" action="/memories/delete">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Written by
+    <select name="by"><option value="">-</option>
+      {{range .Conns}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+    </select></label>
+  <label>Older than (days) <input name="older_than" inputmode="numeric"></label>
+  <label>Containing text <input name="match"></label>
+  <button class="btn">Delete matching</button>
+</form>
+<h2>Delete everything</h2>
+<form method="post" action="/memories/delete">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="all" value="1">
+  <label>Type <b>delete my brain</b> to confirm <input name="confirm" autocomplete="off"></label>
+  <button class="btn">Delete all memories</button>
+</form>
+<p class="note">Deleted memories can be restored for 30 days.</p>
+{{end}}
+{{end}}

@@ -3,16 +3,16 @@ package cortex
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func openTestDB(t *testing.T) *Cortex {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	c, err := Open(dbPath)
+	c, err := Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
@@ -643,9 +643,9 @@ func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := cx.db.ExecContext(ctx,
-		`INSERT INTO embeddings (id, ref_id, ref_type, vector) VALUES (?, ?, 'entity', ?)`,
-		"emb_drop", drop.ID, []byte{0x00}); err != nil {
+	vec := make([]float32, 8)
+	vec[0] = 1
+	if err := cx.putEmbedding(ctx, drop.ID, "entity", vec); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
@@ -690,7 +690,6 @@ func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
 	}
 }
 
-
 // --- Dry-run ---
 
 func TestMergeEntitiesDryRun_NoChanges(t *testing.T) {
@@ -717,5 +716,104 @@ func TestMergeEntitiesDryRun_NoChanges(t *testing.T) {
 	// drop entity is STILL present.
 	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
 		t.Errorf("drop entity should still exist after dry-run: %v", err)
+	}
+}
+
+func TestFindEntitiesNameLikeCaseInsensitive(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	if err := c.PutEntity(ctx, &Entity{Type: "person", Name: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.FindEntities(ctx, EntityFilter{NameLike: "ali%"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d entities, want 1", len(got))
+	}
+}
+
+func TestPutEntityConcurrentNoDuplicates(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	const n = 20
+	ids := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			e := &Entity{Type: "person", Name: "Bob"}
+			errs[i] = c.PutEntity(ctx, e)
+			ids[i] = e.ID
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+		if ids[i] != ids[0] {
+			t.Fatalf("goroutine %d got id %q, want %q", i, ids[i], ids[0])
+		}
+	}
+	got, err := c.FindEntities(ctx, EntityFilter{Type: "person"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d entities, want 1", len(got))
+	}
+}
+
+func TestMergeEntities_LocksRows(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	keep := &Entity{Type: "person", Name: "LockKeep"}
+	drop := &Entity{Type: "person", Name: "LockDrop"}
+	if err := c.PutEntity(ctx, keep); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutEntity(ctx, drop); err != nil {
+		t.Fatal(err)
+	}
+	// A concurrent writer holds the keep row; the merge must wait for it.
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE entities SET attributes = '{"concurrent":"yes"}'::jsonb WHERE id = ?`, keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.MergeEntities(ctx, keep.ID, drop.ID)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("merge finished while keep row was locked (err=%v)", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("merge error: %v", err)
+		}
+		got, err := c.GetEntity(ctx, keep.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Attributes["concurrent"] != "yes" {
+			t.Errorf("concurrent attribute update lost: %v", got.Attributes)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("merge did not finish after lock released")
 	}
 }

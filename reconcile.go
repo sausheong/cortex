@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -130,7 +131,7 @@ func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (R
 
 // allEntityIDs returns every entity id in the graph.
 func (c *Cortex) allEntityIDs(ctx context.Context) ([]string, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT id FROM entities`)
+	rows, err := c.db.QueryContext(ctx, `SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL`, c.userID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list entity ids: %w", err)
 	}
@@ -171,10 +172,16 @@ func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileRepor
 
 	for _, p := range report.Proposed {
 		stale, err := c.getMemoryByID(ctx, p.StaleID)
+		if errors.Is(err, ErrNotFound) {
+			stale, err = nil, nil
+		}
 		if err != nil {
 			return out, err
 		}
 		newer, err := c.getMemoryByID(ctx, p.SupersededByID)
+		if errors.Is(err, ErrNotFound) {
+			newer, err = nil, nil
+		}
 		if err != nil {
 			return out, err
 		}

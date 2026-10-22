@@ -13,6 +13,12 @@ import (
 // CreatedAt are set; on a conflict no-op the row already in the table is kept
 // and its id may differ from e.ID.
 func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
+	if err := requireMemory(ctx, c.db, c.userID, e.SourceID); err != nil {
+		return err
+	}
+	if err := requireMemory(ctx, c.db, c.userID, e.TargetID); err != nil {
+		return err
+	}
 	if e.ID == "" {
 		e.ID = newID()
 	}
@@ -23,10 +29,10 @@ func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
 		source = e.Source
 	}
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO memory_edges (id, source_id, target_id, type, source, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (source_id, target_id, type) DO NOTHING`,
-		e.ID, e.SourceID, e.TargetID, e.Type, source, e.CreatedAt,
+		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
+		e.ID, c.userID, e.SourceID, e.TargetID, e.Type, source, e.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory edge: %w", err)
@@ -37,24 +43,30 @@ func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
 // GetMemoryEdges returns every edge where memoryID is the source or the
 // target — the memory's full edge neighborhood.
 func (c *Cortex) GetMemoryEdges(ctx context.Context, memoryID string) ([]MemoryEdge, error) {
+	if err := requireMemory(ctx, c.db, c.userID, memoryID); err != nil {
+		return nil, err
+	}
 	return c.queryMemoryEdges(ctx,
 		`SELECT id, source_id, target_id, type, source, created_at
 		 FROM memory_edges
-		 WHERE source_id = ? OR target_id = ?
+		 WHERE user_id = ? AND (source_id = ? OR target_id = ?)
 		 ORDER BY created_at`,
-		memoryID, memoryID,
+		c.userID, memoryID, memoryID,
 	)
 }
 
 // GetMemoryEdgesByType returns edges of the given type where memoryID is the
 // source or the target.
 func (c *Cortex) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType string) ([]MemoryEdge, error) {
+	if err := requireMemory(ctx, c.db, c.userID, memoryID); err != nil {
+		return nil, err
+	}
 	return c.queryMemoryEdges(ctx,
 		`SELECT id, source_id, target_id, type, source, created_at
 		 FROM memory_edges
-		 WHERE (source_id = ? OR target_id = ?) AND type = ?
+		 WHERE user_id = ? AND (source_id = ? OR target_id = ?) AND type = ?
 		 ORDER BY created_at`,
-		memoryID, memoryID, edgeType,
+		c.userID, memoryID, memoryID, edgeType,
 	)
 }
 

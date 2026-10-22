@@ -1,0 +1,23 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}} · cortex</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">cortex</a>
+  {{if .SignedIn}}<nav>
+    <a href="/memories">Memories</a>
+    <a href="/connections">Connections</a>
+    <a href="/settings">Settings</a>
+    <a href="/account">Account</a>
+    <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
+  </nav>{{end}}
+</header>
+<main>{{template "content" .}}</main>
+</body>
+</html>{{end}}
+{{template "layout" .}}

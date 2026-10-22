@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
 	"testing"
 	"time"
@@ -182,10 +183,10 @@ func TestForgetByEntityID(t *testing.T) {
 		t.Errorf("expected 0 relationships, got %d", len(rels))
 	}
 
-	// Verify memory is gone (orphaned since its only entity link was removed).
+	// Soft forget keeps memory links: the memory is still found.
 	mems, _ := c.SearchMemories(ctx, "Stripe", 10)
-	if len(mems) != 0 {
-		t.Errorf("expected 0 memories, got %d", len(mems))
+	if len(mems) != 1 {
+		t.Errorf("expected the memory to be kept, got %d", len(mems))
 	}
 
 	// Verify the other entity (Stripe) still exists.
@@ -195,52 +196,35 @@ func TestForgetByEntityID(t *testing.T) {
 	}
 }
 
-func TestForgetRemovesMemoryFTS(t *testing.T) {
+func TestForgetKeepsMemoryUntilPurged(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
-	// Seed an entity and a memory linked to it. Forgetting the entity orphans
-	// the memory, which must remove its memories_fts row too — not just the
-	// memories row. (Backfill on Open only INSERTs missing FTS rows; it never
-	// removes stale ones, so a reorder of the delete logic would silently
-	// orphan FTS rows. This test guards the delete ordering.)
 	e := &Entity{Type: "person", Name: "Ftsalice", Source: "test"}
 	if err := c.PutEntity(ctx, e); err != nil {
 		t.Fatalf("PutEntity: %v", err)
 	}
-	mem := &Memory{
-		Content:   "Ftsalice migrated billing to Stripe",
-		EntityIDs: []string{e.ID},
-		Source:    "test",
-	}
+	mem := &Memory{Content: "Ftsalice migrated billing to Stripe", EntityIDs: []string{e.ID}, Source: "test"}
 	if err := c.PutMemory(ctx, mem); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-
-	// Query the FTS table directly (not joined to memories), so a leaked FTS
-	// row is detected even after the memories row itself is deleted.
-	matchesFTS := func() bool {
-		var n int
-		if err := c.db.QueryRowContext(ctx,
-			`SELECT count(*) FROM memories_fts WHERE memories_fts MATCH ?`, "Stripe",
-		).Scan(&n); err != nil {
-			t.Fatalf("count memories_fts: %v", err)
-		}
-		return n > 0
-	}
-
-	// Before: the memory must be findable via the FTS index.
-	if !matchesFTS() {
-		t.Fatal("expected memory to match via memories_fts before Forget")
-	}
-
 	if err := c.Forget(ctx, Filter{EntityID: e.ID}); err != nil {
 		t.Fatalf("Forget: %v", err)
 	}
-
-	// After: the FTS row must be gone (no MATCH-joinable rows remain).
-	if matchesFTS() {
-		t.Fatal("expected memories_fts row to be removed after Forget; FTS still matches")
+	// The entity is gone but its memory (and links) stay findable.
+	if ms, _ := c.SearchMemories(ctx, "Stripe", 10); len(ms) != 1 {
+		t.Fatalf("memory should survive a soft forget, got %d", len(ms))
+	}
+	// Purging the entity removes its links but not the memory.
+	if _, err := c.db.ExecContext(ctx, `UPDATE entities SET deleted_at = now() - interval '31 days' WHERE id = ?`, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.PurgeDeleted(ctx, 30*24*time.Hour); err != nil {
+		t.Fatalf("PurgeDeleted: %v", err)
+	}
+	var n int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM memory_entities WHERE entity_id = ?`, e.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("links after purge = %d (err %v), want 0", n, err)
 	}
 }
 
@@ -298,10 +282,10 @@ func TestForgetBySource(t *testing.T) {
 		t.Errorf("expected Bob, got %s", got.Name)
 	}
 
-	// Alice's memory should be gone (orphaned).
+	// Soft forget keeps Alice's memory.
 	aliceMems, _ := c.SearchMemories(ctx, "Alice", 10)
-	if len(aliceMems) != 0 {
-		t.Errorf("expected 0 Alice memories, got %d", len(aliceMems))
+	if len(aliceMems) != 1 {
+		t.Errorf("expected Alice's memory to be kept, got %d", len(aliceMems))
 	}
 
 	// Bob's memory should remain.
@@ -322,9 +306,8 @@ func TestForgetRequiresFilter(t *testing.T) {
 }
 
 func TestRememberWithEmbedder(t *testing.T) {
-	c := openTestDB(t)
+	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
-	c.SetEmbedder(&testEmbedder{})
 	c.SetExtractor(&mockExtractor{
 		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
 			return &Extraction{
@@ -507,11 +490,13 @@ func (e *recordingEmbedder) Embed(_ context.Context, texts []string) ([][]float3
 func (e *recordingEmbedder) Dimensions() int { return 8 }
 
 func TestRemember_EmbedsFactAugmentedMemory(t *testing.T) {
-	c := openTestDB(t)
-	ctx := context.Background()
-
 	rec := &recordingEmbedder{}
-	c.SetEmbedder(rec)
+	c, err := Open(pgtest.DSN(t), WithEmbedder(rec))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{
 		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
 			return &Extraction{
@@ -563,8 +548,8 @@ func TestForget_DeletesMemoryEdges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Forget by entity deletes the entity, its memory links, and (when they
-	// become orphaned) the memories — and must leave no dangling edges.
+	// Soft forget keeps memories, links and edges (all recoverable); the edges
+	// go only when the memories are purged.
 	if err := c.Forget(ctx, Filter{EntityID: e.ID}); err != nil {
 		t.Fatalf("Forget: %v", err)
 	}
@@ -573,7 +558,7 @@ func TestForget_DeletesMemoryEdges(t *testing.T) {
 	if err := c.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_edges`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("expected 0 edges after forget, got %d (dangling edges)", n)
+	if n != 1 {
+		t.Fatalf("expected the edge to survive a soft forget, got %d", n)
 	}
 }

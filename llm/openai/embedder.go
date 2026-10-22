@@ -3,6 +3,8 @@ package openai
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 
 	oai "github.com/sashabaranov/go-openai"
 )
@@ -32,34 +34,47 @@ type Embedder struct {
 	model   oai.EmbeddingModel
 	dims    int
 	baseURL string
+
+	httpClient *http.Client
 }
 
-// NewEmbedder creates a new OpenAI Embedder. Defaults to text-embedding-3-small (1536 dims).
+// WithEmbedderHTTPClient makes the embedder use hc for every request.
+func WithEmbedderHTTPClient(hc *http.Client) EmbedderOption {
+	return func(e *Embedder) { e.httpClient = hc }
+}
+
+// NewEmbedder creates a new OpenAI Embedder. Defaults to text-embedding-3-small (512 dims).
 // Use WithEmbedderBaseURL to point at any OpenAI-compatible API.
 func NewEmbedder(apiKey string, opts ...EmbedderOption) *Embedder {
 	e := &Embedder{
 		model: oai.SmallEmbedding3,
-		dims:  1536,
+		dims:  512,
 	}
 	for _, o := range opts {
 		o(e)
 	}
+	cfg := oai.DefaultConfig(apiKey)
 	if e.baseURL != "" {
-		cfg := oai.DefaultConfig(apiKey)
 		cfg.BaseURL = e.baseURL
-		e.client = oai.NewClientWithConfig(cfg)
-	} else {
-		e.client = oai.NewClient(apiKey)
 	}
+	if e.httpClient != nil {
+		cfg.HTTPClient = e.httpClient
+	}
+	e.client = oai.NewClientWithConfig(cfg)
 	return e
 }
 
 // Embed generates embedding vectors for the given texts using OpenAI's API.
 func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	resp, err := e.client.CreateEmbeddings(ctx, oai.EmbeddingRequestStrings{
+	req := oai.EmbeddingRequestStrings{
 		Input: texts,
 		Model: e.model,
-	})
+	}
+	// Only text-embedding-3-* models accept the dimensions parameter.
+	if strings.HasPrefix(string(e.model), "text-embedding-3") {
+		req.Dimensions = e.dims
+	}
+	resp, err := e.client.CreateEmbeddings(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: create embeddings: %w", err)
 	}

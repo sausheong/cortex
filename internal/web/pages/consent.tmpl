@@ -1,0 +1,17 @@
+{{template "layout" .}}
+{{define "title"}}Authorize{{end}}
+{{define "content"}}
+<h1>{{.Data.ClientName}} wants to use your cortex</h1>
+<p class="note">Redirects to <strong>{{.Data.RedirectHost}}</strong>{{if .Data.CIMDHost}} &middot; app published by <strong>{{.Data.CIMDHost}}</strong>{{end}}{{if .Data.Unverified}} &middot; <strong>unverified</strong> app: it registered itself, so check that you trust the address above{{end}}.</p>
+<ul>
+  <li>Read your memories, people and preferences</li>
+  <li>Save new things it learns about you</li>
+  <li>Delete and merge memories (recoverable for 30 days)</li>
+</ul>
+<form method="post" action="/oauth/authorize">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="request_id" value="{{.Data.RequestID}}">
+  <button class="btn" name="decision" value="allow">Allow</button>
+  <button class="link" name="decision" value="deny">Deny</button>
+</form>
+{{end}}

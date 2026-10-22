@@ -11,7 +11,7 @@ import (
 )
 
 // Config holds runtime options for the MCP server. Token is used only when
-// Transport == "http"; when empty the /mcp endpoint is unauthenticated.
+// Transport == "http" and is required there.
 type Config struct {
 	Transport string // "stdio" (default) or "http"
 	Addr      string // host:port for http transport

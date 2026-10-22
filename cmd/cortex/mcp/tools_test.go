@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,20 +12,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-// newTestCortex returns a cortex backed by a hermetic SQLite database in
-// t.TempDir, using only the deterministic extractor (no LLM, no embedder).
-//
-// We deliberately avoid ":memory:" because modernc.org/sqlite uses a connection
-// pool, and a bare ":memory:" gives each pooled connection its own private
-// database. cortex.Recall fans sub-queries out to goroutines, so a chunk
-// written on one connection in Remember() is invisible to a goroutine that
-// lands on a different connection — causing flaky empty results.
+// newTestCortex returns a cortex backed by an isolated Postgres schema, using
+// only the deterministic extractor (no LLM, no embedder).
 func newTestCortex(t *testing.T) *cortex.Cortex {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "cortex.db")
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
+	cx, err := cortex.Open(pgtest.DSN(t), cortex.WithExtractor(deterministic.New()))
 	if err != nil {
 		t.Fatalf("cortex.Open: %v", err)
 	}
@@ -367,5 +360,77 @@ func TestLintTool_ThresholdImpliesLowConfidence(t *testing.T) {
 	}
 	if len(report.LowConfidenceMemories) == 0 {
 		t.Errorf("threshold should imply low_confidence=true; got empty LowConfidenceMemories")
+	}
+}
+
+func TestMCPForgetIsSoft(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	e := &cortex.Entity{Type: "person", Name: "Alice"}
+	if err := cx.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, cx)
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "forget"
+	req.Params.Arguments = map[string]any{"entity_id": e.ID}
+	resp, err := c.CallTool(ctx, req)
+	if err != nil || resp.IsError {
+		t.Fatalf("forget: %v %+v", err, resp)
+	}
+	if txt := textContent(t, resp); !strings.Contains(txt, "30 days") {
+		t.Errorf("forget text %q does not mention 30-day recovery", txt)
+	}
+	if _, err := cx.GetEntity(ctx, e.ID); err == nil {
+		t.Error("entity still visible")
+	}
+	bs, err := cx.ListDeleteBatches(ctx)
+	if err != nil || len(bs) != 1 || bs[0].Entities != 1 {
+		t.Fatalf("batches = %+v err=%v, want one batch holding the entity", bs, err)
+	}
+	if err := cx.RestoreBatch(ctx, bs[0].ID); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if _, err := cx.GetEntity(ctx, e.ID); err != nil {
+		t.Errorf("entity not recoverable: %v", err)
+	}
+}
+
+func TestMCPMergeIsSoft(t *testing.T) {
+	cx := newTestCortex(t)
+	ctx := context.Background()
+	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
+	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	for _, e := range []*cortex.Entity{keep, drop} {
+		if err := cx.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := newTestClient(t, cx)
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "merge"
+	req.Params.Arguments = map[string]any{"keep_id": keep.ID, "drop_id": drop.ID}
+	resp, err := c.CallTool(ctx, req)
+	if err != nil || resp.IsError {
+		t.Fatalf("merge: %v %+v", err, resp)
+	}
+	found := false
+	for _, ct := range resp.Content {
+		if tc, ok := mcp.AsTextContent(ct); ok && strings.Contains(tc.Text, "30 days") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("merge result does not mention 30-day recovery: %+v", resp.Content)
+	}
+	var stats cortex.MergeStats
+	if err := json.Unmarshal([]byte(textContent(t, resp)), &stats); err != nil || stats.BatchID == "" {
+		t.Fatalf("stats = %+v err=%v", stats, err)
+	}
+	if err := cx.RestoreBatch(ctx, stats.BatchID); err != nil {
+		t.Fatalf("restore merge: %v", err)
+	}
+	if _, err := cx.GetEntity(ctx, drop.ID); err != nil {
+		t.Errorf("dropped entity not recoverable: %v", err)
 	}
 }

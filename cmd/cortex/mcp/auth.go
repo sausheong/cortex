@@ -30,7 +30,7 @@ func bearerAuthMiddleware(next http.Handler, expected string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
 		const prefix = "Bearer "
-		if !strings.HasPrefix(h, prefix) ||
+		if expected == "" || !strings.HasPrefix(h, prefix) ||
 			subtle.ConstantTimeCompare([]byte(h[len(prefix):]), want) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)

@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"github.com/sausheong/cortex/internal/pgtest"
 	"testing"
 	"time"
 )
@@ -152,9 +153,8 @@ func TestRecallWithLimit(t *testing.T) {
 }
 
 func TestRecallVectorSearch(t *testing.T) {
-	c := openTestDB(t)
+	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
-	c.SetEmbedder(&testEmbedder{})
 
 	// Store two chunks and their embeddings.
 	ch1 := &Chunk{Content: "Go concurrency with goroutines and channels"}
@@ -825,9 +825,8 @@ func TestRecallWithStrength_AbstainMatchesCosineThreshold(t *testing.T) {
 // does not error the method: it logs and falls back to the RRF-top-score
 // strength signal so abstention still produces a usable (if degraded) answer.
 func TestRecallWithStrength_EmbedErrorFallsBack(t *testing.T) {
-	dir := t.TempDir()
 	var logged []string
-	c, err := Open(dir+"/t.db",
+	c, err := Open(pgtest.DSN(t),
 		WithEmbedder(&failingEmbedder{}),
 		WithLogger(func(format string, args ...any) {
 			logged = append(logged, format)
@@ -1099,9 +1098,8 @@ func (e errTestEmbed) Error() string { return string(e) }
 // vector recall path is surfaced via the configured logger instead of being
 // silently swallowed (which made an over-quota key look like "no results").
 func TestRecall_LogsEmbedderError(t *testing.T) {
-	dir := t.TempDir()
 	var logged []string
-	c, err := Open(dir+"/t.db",
+	c, err := Open(pgtest.DSN(t),
 		WithEmbedder(&failingEmbedder{}),
 		WithLogger(func(format string, args ...any) {
 			logged = append(logged, format)

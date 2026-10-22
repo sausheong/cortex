@@ -3,220 +3,111 @@ package cortex
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"net"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Cortex is the main knowledge graph store backed by SQLite.
+// Cortex is the main knowledge graph store backed by Postgres.
 type Cortex struct {
-	db  *sql.DB
-	cfg config
+	db     dbConn
+	cfg    config
+	userID string // the user this handle is bound to
+	// pinnedGen, when > 0, pins embedding writes to that generation.
+	pinnedGen int
+	// connID, when set, is stamped on every row this handle writes.
+	connID string
 }
 
-const schemaSQL = `
-PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
+// WithConnection returns a copy of the handle whose writes record connID as
+// written_by_connection_id.
+func (c *Cortex) WithConnection(connID string) *Cortex {
+	n := *c
+	n.connID = connID
+	return &n
+}
 
-CREATE TABLE IF NOT EXISTS entities (
-	id         TEXT PRIMARY KEY,
-	type       TEXT NOT NULL,
-	name       TEXT NOT NULL,
-	attributes TEXT,
-	source     TEXT,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-	updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
-);
+// nullConn returns the connection ID as a SQL value, NULL when unset.
+func (c *Cortex) nullConn() any {
+	if c.connID == "" {
+		return nil
+	}
+	return c.connID
+}
 
-CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
-CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
-CREATE INDEX IF NOT EXISTS idx_entities_source ON entities(source);
-
-CREATE TABLE IF NOT EXISTS relationships (
-	id         TEXT PRIMARY KEY,
-	source_id  TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-	target_id  TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-	type       TEXT NOT NULL,
-	attributes TEXT,
-	source     TEXT,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_relationships_source_id ON relationships(source_id);
-CREATE INDEX IF NOT EXISTS idx_relationships_target_id ON relationships(target_id);
-CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(type);
-
-CREATE TABLE IF NOT EXISTS chunks (
-	id         TEXT PRIMARY KEY,
-	entity_id  TEXT REFERENCES entities(id) ON DELETE SET NULL,
-	content    TEXT NOT NULL,
-	metadata   TEXT,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_entity_id ON chunks(entity_id);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-	content,
-	content_rowid='rowid'
-);
-
-CREATE TABLE IF NOT EXISTS memories (
-	id         TEXT PRIMARY KEY,
-	content    TEXT NOT NULL,
-	source     TEXT,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-	updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-	content,
-	content_rowid='rowid'
-);
-
-CREATE TABLE IF NOT EXISTS memory_entities (
-	memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-	entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-	PRIMARY KEY (memory_id, entity_id)
-);
-
-CREATE TABLE IF NOT EXISTS memory_edges (
-	id         TEXT PRIMARY KEY,
-	source_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-	target_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-	type       TEXT NOT NULL,
-	source     TEXT,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-	UNIQUE (source_id, target_id, type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
-CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
-
-CREATE TABLE IF NOT EXISTS embeddings (
-	id         TEXT PRIMARY KEY,
-	ref_id     TEXT NOT NULL,
-	ref_type   TEXT NOT NULL,
-	vector     BLOB NOT NULL,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_embeddings_ref ON embeddings(ref_id, ref_type);
-
-CREATE TABLE IF NOT EXISTS sync_state (
-	connector TEXT PRIMARY KEY,
-	state     TEXT NOT NULL,
-	updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
-);
-`
-
-// ensureColumn adds column to table if it does not already exist.
-// Idempotent — safe to call on every Open. Used in lieu of a migrations
-// framework for single-column additions. ddl is the column definition
-// (everything after the column name in ALTER TABLE), e.g.
-// "REAL NOT NULL DEFAULT 1.0".
-func ensureColumn(db *sql.DB, table, column, ddl string) error {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+// Open connects to the Postgres database at dsn and applies pending migrations.
+// Options are applied before schema setup.
+func Open(dsn string, opts ...Option) (*Cortex, error) {
+	if dsn == "" {
+		return nil, fmt.Errorf("cortex: no database URL (set CORTEX_DATABASE_URL or pass --db)")
+	}
+	dsn = withConnectTimeout(dsn)
+	pc, err := pgconn.ParseConfig(dsn)
 	if err != nil {
-		return fmt.Errorf("cortex: pragma_table_info(%s): %w", table, err)
+		return nil, fmt.Errorf("cortex: invalid database URL: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return err
-		}
-		if name == column {
-			return nil // already present
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)
-	if _, err := db.Exec(stmt); err != nil {
-		return fmt.Errorf("cortex: %s: %w", stmt, err)
-	}
-	return nil
-}
+	hostPort := net.JoinHostPort(pc.Host, strconv.Itoa(int(pc.Port)))
 
-// Open creates or opens a Cortex knowledge graph stored at the given path.
-func Open(path string, opts ...Option) (*Cortex, error) {
-	// Ensure parent directory exists.
-	dir := filepath.Dir(path)
-	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("cortex: create directory: %w", err)
-		}
-	}
-
-	db, err := sql.Open("sqlite", path)
+	sdb, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: open database: %w", err)
 	}
-
-	// Apply schema.
-	if _, err := db.Exec(schemaSQL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cortex: apply schema: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sdb.PingContext(ctx); err != nil {
+		sdb.Close()
+		return nil, fmt.Errorf("cortex: can't reach Postgres at %s: %w", hostPort, err)
 	}
 
-	for _, t := range []string{"entities", "relationships", "memories"} {
-		if err := ensureColumn(db, t, "confidence", "REAL NOT NULL DEFAULT 1.0"); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("cortex: migrate %s.confidence: %w", t, err)
-		}
-	}
-
-	for _, col := range []string{"valid_at", "invalid_at", "expired_at"} {
-		if err := ensureColumn(db, "memories", col, "DATETIME"); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("cortex: migrate memories.%s: %w", col, err)
-		}
-	}
-
-	if err := ensureColumn(db, "memories", "speaker", "TEXT"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cortex: migrate memories.speaker: %w", err)
-	}
-
-	if err := ensureColumn(db, "memories", "static", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cortex: migrate memories.static: %w", err)
-	}
-
-	if err := ensureColumn(db, "memories", "last_decay_at", "DATETIME"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cortex: migrate memories.last_decay_at: %w", err)
-	}
-
-	if err := ensureColumn(db, "memories", "forget_after", "DATETIME"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cortex: migrate memories.forget_after: %w", err)
-	}
-
-	// Backfill memories_fts for databases created before the FTS table existed.
-	if _, err := db.Exec(
-		`INSERT INTO memories_fts (rowid, content)
-		 SELECT m.rowid, m.content FROM memories m
-		 WHERE m.rowid NOT IN (SELECT rowid FROM memories_fts)`,
-	); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("cortex: backfill memories_fts: %w", err)
-	}
-
-	c := &Cortex{db: db}
+	c := &Cortex{db: dbConn{sdb}, userID: BootstrapUserID}
 	for _, o := range opts {
 		o(&c.cfg)
+	}
+	mt := c.cfg.migrationTimeout
+	if mt <= 0 {
+		mt = 60 * time.Second
+	}
+	mctx, mcancel := context.WithTimeout(context.Background(), mt)
+	defer mcancel()
+	if err := c.migrate(mctx); err != nil {
+		sdb.Close()
+		return nil, err
+	}
+	if err := c.ensureVectorSchema(mctx); err != nil {
+		sdb.Close()
+		return nil, err
 	}
 	return c, nil
 }
 
+// withConnectTimeout adds connect_timeout=5 to dsn when it has none.
+func withConnectTimeout(dsn string) string {
+	if strings.Contains(dsn, "connect_timeout") {
+		return dsn
+	}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return dsn
+		}
+		q := u.Query()
+		q.Set("connect_timeout", "5")
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	return dsn + " connect_timeout=5"
+}
+
 // Close closes the underlying database connection.
 func (c *Cortex) Close() error {
-	if c.db != nil {
+	if c.db.DB != nil {
 		return c.db.Close()
 	}
 	return nil
@@ -235,7 +126,7 @@ func (c *Cortex) SetEmbedder(e Embedder) { c.cfg.embedder = e }
 func (c *Cortex) GetSyncState(ctx context.Context, connector string) (string, error) {
 	var state string
 	err := c.db.QueryRowContext(ctx,
-		"SELECT state FROM sync_state WHERE connector = ?", connector,
+		"SELECT state FROM sync_state WHERE user_id = ? AND connector = ?", c.userID, connector,
 	).Scan(&state)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -249,13 +140,15 @@ func (c *Cortex) GetSyncState(ctx context.Context, connector string) (string, er
 // SetSyncState upserts the sync state for a connector.
 func (c *Cortex) SetSyncState(ctx context.Context, connector, state string) error {
 	_, err := c.db.ExecContext(ctx,
-		`INSERT INTO sync_state (connector, state, updated_at)
-		 VALUES (?, ?, datetime('now'))
-		 ON CONFLICT(connector) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
-		connector, state,
+		`INSERT INTO sync_state (user_id, connector, state, updated_at)
+		 VALUES (?, ?, ?, now())
+		 ON CONFLICT(user_id, connector) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+		c.userID, connector, state,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: set sync state: %w", err)
 	}
 	return nil
 }
+
+func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }

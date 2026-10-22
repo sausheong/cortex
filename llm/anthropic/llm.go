@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -72,6 +73,13 @@ type LLM struct {
 	model     anthropic.Model
 	baseURL   string
 	maxTokens int64
+
+	httpClient *http.Client
+}
+
+// WithHTTPClient makes the LLM use hc for every request.
+func WithHTTPClient(hc *http.Client) LLMOption {
+	return func(l *LLM) { l.httpClient = hc }
 }
 
 // NewLLM creates a new Anthropic LLM provider. Defaults to Claude Sonnet 4.5.
@@ -90,6 +98,9 @@ func NewLLM(apiKey string, opts ...LLMOption) *LLM {
 	}
 	if l.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(l.baseURL))
+	}
+	if l.httpClient != nil {
+		clientOpts = append(clientOpts, option.WithHTTPClient(l.httpClient))
 	}
 	l.client = anthropic.NewClient(clientOpts...)
 
