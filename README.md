@@ -15,7 +15,7 @@ Ingest
        -> Entities: Alice (person), Stripe (org), distributed systems (concept)
        -> Relationships: Alice --works_at--> Stripe
        -> Memories: "Alice is joining Stripe next month" (confidence: 0.9)
-    -> Store in unified graph (SQLite)
+    -> Store in unified graph (Postgres + pgvector)
     -> Embed for semantic search
 
 Query
@@ -51,7 +51,7 @@ Every cycle through ingest/query adds knowledge. The agent enriches a person pag
 - **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report. `cortex reconcile` detects newer memories that supersede older contradicting ones and soft-invalidates the stale ones (dry-run by default)
 - **Entity profiles** — `cortex profile` returns a cached two-part digest of an entity's memories: a `static` half (stable identity and preferences) and a `dynamic` half (recent context). Distilled into bullets by the LLM when configured, raw memory texts otherwise. Rebuilt when stale (24h TTL or a change in memory count). The owner always has a profile; other entities are opt-in via `--track`
 - **Two interfaces** — CLI and MCP server (stdio or streamable HTTP)
-- **Single binary, single file** — embedded SQLite with pure Go driver, no external database, no CGo
+- **Postgres storage** — one Postgres 17 + pgvector database (HNSW vector indexes, `tsvector` keyword search); a single server can be shared by the CLI and the MCP server. See [docs/deploy.md](docs/deploy.md)
 - **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
 
 ## Table of Contents
@@ -114,7 +114,7 @@ This gives you the core library, all connectors, and all provider implementation
 cortex init
 ```
 
-This creates `brain.db` in the current directory — a single SQLite file containing the entire knowledge graph, vector embeddings, FTS5 search indexes, and sync state. Everything lives in this one file.
+This connects to the Postgres database named by `CORTEX_DATABASE_URL` (or `--db <dsn>`), applies the schema migrations, and creates the owner entity. Set it first, for example `export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@host:5432/cortex'`. To provision a server (droplet or Raspberry Pi), see [docs/deploy.md](docs/deploy.md). To bring over a v0.4 SQLite brain, run `cortex import-sqlite <brain.db>`.
 
 During initialization, cortex will prompt for your identity:
 - **Name** (required)
@@ -186,10 +186,10 @@ Example output from `cortex recall "who works at Stripe"`:
 Usage: cortex [--db <path>] <command> [arguments]
 
 Global options:
-  --db <path>                    Path to brain.db (default: brain.db, or CORTEX_DB env var)
+  --db <dsn>                     Postgres DSN (no default; or CORTEX_DATABASE_URL env var)
 
 Commands:
-  init                           Create brain.db and set up owner identity
+  init                           Set up owner identity in the database
   remember <text>                Ingest text, extract entities/relationships/memories
   recall <query>                 Natural language query with multi-strategy search
   sync <dir>                     Sync text files from a directory (incremental, auto-detects format)
@@ -254,7 +254,7 @@ Re-targets every reference to the drop entity onto the keep entity: relationship
 
 Attributes from the drop entity are unioned into the keep entity. **Keep wins** on duplicate keys — its existing attribute values are preserved. A `merged_from` record (containing the drop entity's name, type, source, and full attribute snapshot at merge time) is appended to the keep entity's attributes for provenance. Multiple merges into the same entity append to the same `merged_from` array.
 
-The whole operation runs in a single SQLite transaction. On any error, all changes are rolled back. `--dry-run` runs the same algorithm and reports identical stats, but always rolls back — useful for previewing a merge before committing to it.
+The whole operation runs in a single database transaction. On any error, all changes are rolled back. `--dry-run` runs the same algorithm and reports identical stats, but always rolls back — useful for previewing a merge before committing to it.
 
 ```bash
 $ cortex merge ent_01HKEEP ent_01HDROP --dry-run
@@ -368,7 +368,7 @@ Add to `~/.claude/server.json`:
       "args": ["mcp"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
-        "CORTEX_DB": "/path/to/brain.db"
+        "CORTEX_DATABASE_URL": "postgres://cortex:PASSWORD@host:5432/cortex"
       }
     }
   }
@@ -386,7 +386,7 @@ Add to your MCP server configuration:
     "args": ["mcp"],
     "env": {
       "OPENAI_API_KEY": "sk-...",
-      "CORTEX_DB": "/path/to/brain.db"
+      "CORTEX_DATABASE_URL": "postgres://cortex:PASSWORD@host:5432/cortex"
     }
   }
 }
@@ -463,7 +463,7 @@ func main() {
     ext := hybrid.New(deterministic.New(), llmext.New(llm))
 
     // Open the knowledge graph
-    c, _ := cortex.Open("brain.db",
+    c, _ := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
         cortex.WithLLM(llm),
         cortex.WithEmbedder(emb),
         cortex.WithExtractor(ext),
@@ -534,7 +534,7 @@ func main() {
 ### Minimal Setup (No OpenAI)
 
 ```go
-c, _ := cortex.Open("brain.db",
+c, _ := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
     cortex.WithExtractor(deterministic.New()),
 )
 defer c.Close()
@@ -578,9 +578,9 @@ c.Remember(ctx, "---\ntype: person\nname: Alice\n---\nAlice works at [[Stripe]].
                     └──────────────┼───────────────┘
                                    │
                           ┌────────▼─────────┐
-                          │  SQLite (brain.db)│
-                          │  Single file,    │
-                          │  WAL mode        │
+                          │ Postgres+pgvector │
+                          │  HNSW + tsvector │
+                          │  (one server)    │
                           └────────┬─────────┘
                                    │
                     ┌──────────────┼──────────────┐
@@ -789,10 +789,10 @@ When you call `Remember`, cortex runs a hybrid extraction pipeline:
 **Step 3 — Store and embed**:
 - Entities are upserted (merged by name + type — no duplicates)
 - Relationships are created between resolved entities
-- Raw text is stored as chunks and indexed for FTS5 + vector search
+- Raw text is stored as chunks and indexed for full-text + vector search
 - Memories are stored with entity links
 
-The LLM extractor now requests a `confidence` field on every extracted item, and a `static` flag on every memory (durable identity fact vs. episodic). Existing brain.db files migrate transparently on next `Open` — old rows get `confidence=1.0` and `static=false`.
+The LLM extractor now requests a `confidence` field on every extracted item, and a `static` flag on every memory (durable identity fact vs. episodic). Schema migrations apply automatically on `Open`; older rows default to `confidence=1.0` and `static=false`.
 
 ### Custom Extractors
 
@@ -934,26 +934,26 @@ Use this in your agent's post-response hook to build the compounding knowledge l
 
 ## Storage
 
-Cortex uses embedded SQLite via [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) — a pure Go implementation with no CGo dependency. Everything lives in a single `brain.db` file.
+Cortex stores everything in Postgres 17 with the [pgvector](https://github.com/pgvector/pgvector) extension (>= 0.8.0). Schema is created by embedded, versioned migrations on `Open`. See [docs/deploy.md](docs/deploy.md) for server setup and backups. The last SQLite release is `v0.4.0`; `cortex import-sqlite` migrates a v0.4 brain.
 
 ### Schema
 
 | Table | Purpose |
 |-------|---------|
-| `entities` | Graph nodes — type, name, JSON attributes, source, timestamps |
+| `entities` | Graph nodes — type, name, JSON attributes, source, timestamps (unique on name + type) |
 | `relationships` | Directed typed edges between entities with JSON attributes |
-| `chunks` | Text fragments linked to entities with JSON metadata |
-| `chunks_fts` | FTS5 virtual table for full-text keyword search |
-| `memories` | Distilled facts extracted by the LLM |
+| `chunks` | Text fragments linked to entities with JSON metadata; generated `tsvector` column for keyword search |
+| `memories` | Distilled facts extracted by the LLM; generated `tsvector` column for keyword search |
 | `memory_entities` | Junction table linking memories to related entities |
-| `embeddings` | Vector embeddings stored as BLOBs (float32 arrays) |
+| `embeddings` | `halfvec(N)` vectors with one partial HNSW index per `ref_type` |
 | `sync_state` | Per-connector sync state (timestamps, cursors, history IDs) |
+| `schema_migrations`, `cortex_meta` | Applied migrations; embedding dimension |
 
 ### Design Choices
 
-- **WAL mode** — enables concurrent reads while writing; important when the MCP server handles queries during ingestion
-- **FTS5** — SQLite's full-text search extension for fast keyword matching
-- **Brute-force cosine similarity** — vector embeddings stored as BLOBs, similarity computed in Go. Performant for personal-scale data (<100K vectors). Can be swapped for [sqlite-vec](https://github.com/asg017/sqlite-vec) when mature Go bindings are available.
+- **Shared server** — the CLI and the MCP server can use one database concurrently
+- **Full-text search** — Postgres `tsvector` (`english` config), keyword queries OR-joined per token
+- **HNSW vector search** — `halfvec` cosine indexes via pgvector, with iterative scan for filtered queries
 - **ULIDs** — time-sortable, globally unique, URL-safe identifiers for all entities
 - **Open-ended types** — entity types and relationship types are plain strings, not enums. New connectors introduce new types without schema changes.
 
@@ -1019,7 +1019,7 @@ llm := anthropicllm.NewLLM("key",
 emb := oaillm.NewEmbedder("sk-...")
 ext := hybrid.New(deterministic.New(), llmext.New(llm))
 
-c, _ := cortex.Open("brain.db",
+c, _ := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
     cortex.WithLLM(llm),
     cortex.WithEmbedder(emb),
     cortex.WithExtractor(ext),
@@ -1067,13 +1067,13 @@ You can mix providers freely — for example, Anthropic for extraction, OpenAI f
 | `EMBEDDING_API_KEY` | falls back to `OPENAI_API_KEY` | API key for the embedding provider |
 | `EMBEDDING_BASE_URL` | falls back to `OPENAI_BASE_URL` | Base URL for the embedding provider |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
-| `EMBEDDING_DIMS` | `1536` | Embedding vector dimensions |
+| `EMBEDDING_DIMS` | `512` | Embedding vector dimensions (sent to OpenAI via the `dimensions` parameter; fixed once the database is initialised) |
 
 **Server:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORTEX_DB` | `brain.db` | Database file path (CLI, MCP) |
+| `CORTEX_DATABASE_URL` | _(required)_ | Postgres DSN (CLI, MCP). Replaces `CORTEX_DB` |
 | `CORTEX_TRANSPORT` | `stdio` | MCP transport: `stdio` or `http` |
 | `CORTEX_ADDR` | `127.0.0.1:8080` | Listen address when transport is `http` |
 | `CORTEX_AUTH_TOKEN` | _(unset)_ | Bearer token required for HTTP transport on non-loopback binds |
@@ -1132,7 +1132,7 @@ cortex maintain --dry-run
 Run nightly at 03:17 (off the hour to avoid the thundering herd):
 
 ```cron
-17 3 * * *  CORTEX_DB=/path/to/brain.db /usr/local/bin/cortex maintain --out /path/to/last-maintain.md
+17 3 * * *  CORTEX_DATABASE_URL=postgres://cortex:PASSWORD@host:5432/cortex /usr/local/bin/cortex maintain --out /path/to/last-maintain.md
 ```
 
 ### launchd (macOS)
@@ -1151,7 +1151,7 @@ Create `~/Library/LaunchAgents/ai.cortex.maintain.plist`:
     <string>maintain</string>
   </array>
   <key>EnvironmentVariables</key>
-  <dict><key>CORTEX_DB</key><string>/path/to/brain.db</string></dict>
+  <dict><key>CORTEX_DATABASE_URL</key><string>postgres://cortex:PASSWORD@host:5432/cortex</string></dict>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>17</integer></dict>
 </dict>

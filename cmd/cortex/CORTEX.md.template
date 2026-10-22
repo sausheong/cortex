@@ -10,7 +10,7 @@ This file tells AI agents how to use [cortex](https://github.com/sausheong/corte
 
 ## What cortex is
 
-Cortex is a personal knowledge graph stored in SQLite. It holds typed entities (people, organizations, concepts, events, documents), typed relationships between them, and short memory statements about them. Everything you, the agent, have learned about this project's domain is in there.
+Cortex is a personal knowledge graph stored in Postgres. It holds typed entities (people, organizations, concepts, events, documents), typed relationships between them, and short memory statements about them. Everything you, the agent, have learned about this project's domain is in there.
 
 Treat cortex as your long-term memory. Read from it before answering questions. Write to it when something worth keeping is said.
 
