@@ -146,7 +146,11 @@ func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, userID st
 				return rep, fmt.Errorf("count source %s: %w", t, err)
 			}
 		}
-		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM "+t+" WHERE user_id = $1", userID).Scan(&d); err != nil {
+		q := "SELECT count(*) FROM " + t + " WHERE user_id = $1"
+		if t == "entities" {
+			q += ownerExclusion
+		}
+		if err := dst.QueryRowContext(ctx, q, userID).Scan(&d); err != nil {
 			return rep, fmt.Errorf("count target %s: %w", t, err)
 		}
 		rep.Counts[t] = [2]int{s, d}
@@ -161,10 +165,14 @@ func Import(ctx context.Context, sqlitePath string, cx *cortex.Cortex, userID st
 	return rep, err
 }
 
+// ownerExclusion leaves the user's own person entity (created with the
+// account) out of the "target is empty" check and the target count.
+const ownerExclusion = ` AND id IS DISTINCT FROM (SELECT owner_entity_id FROM users WHERE id = $1)`
+
 func copyAll(ctx context.Context, src, dst *sql.DB, userID string, force bool) error {
 	if !force {
 		var n int
-		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM entities WHERE user_id = $1", userID).Scan(&n); err != nil {
+		if err := dst.QueryRowContext(ctx, "SELECT count(*) FROM entities WHERE user_id = $1"+ownerExclusion, userID).Scan(&n); err != nil {
 			return fmt.Errorf("check target: %w", err)
 		}
 		if n > 0 {

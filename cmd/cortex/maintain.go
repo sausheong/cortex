@@ -2,18 +2,64 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
+	"sort"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/jobs"
 )
+
+// runNightly is `cortex maintain` with no --user: phase 1 (per-user
+// maintenance) then phase 2 (purge) over all users. A phase 1 failure for a
+// user is recorded and reported, and makes the run exit non-zero only after
+// the purge has run.
+func runNightly(ctx context.Context, dsn string, env map[string]string, opts []cortex.MaintainOption, w io.Writer) error {
+	root, err := cortex.Open(dsn)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	st, err := accountStore(db, env)
+	if err != nil {
+		return err
+	}
+	pool := jobs.NewPool(1, nil).WithDB(db) // only used to queue rows for the serve process
+	rep, err := jobs.Nightly(ctx, root, st, jobs.NightlyOptions{Enqueue: pool.Enqueue, MaintainOpts: opts})
+	fmt.Fprintf(w, "maintained %d, skipped %d, failed %d; users purged %d\n", rep.Maintained, rep.Skipped, rep.Failed, rep.UsersPurged)
+	ids := make([]string, 0, len(rep.Errors))
+	for id := range rep.Errors {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Fprintf(w, "  %s: %s\n", id, rep.Errors[id])
+	}
+	if err != nil {
+		return fmt.Errorf("purge: %w", err)
+	}
+	if rep.Failed > 0 {
+		return fmt.Errorf("%d user(s) failed maintenance", rep.Failed)
+	}
+	return nil
+}
 
 func cmdMaintain() {
 	var opts []cortex.MaintainOption
 	var decayOpts []cortex.DecayOption
 	out := ""
+	dryRun := false
 	usage := "usage: cortex maintain [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]\n" +
 		"  Runs the reconsolidation pass: reconcile contradictions, build\n" +
 		"  derives/extends edges, decay confidence and soft-retire stale\n" +
@@ -32,6 +78,7 @@ func cmdMaintain() {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--dry-run":
+			dryRun = true
 			opts = append(opts, cortex.WithMaintainDryRun())
 		case "--no-reconcile":
 			opts = append(opts, cortex.WithoutReconcile())
@@ -77,6 +124,20 @@ func cmdMaintain() {
 	}
 	if len(decayOpts) > 0 {
 		opts = append(opts, cortex.WithMaintainDecayOptions(decayOpts...))
+	}
+
+	if userRef == "" {
+		if out != "" || dryRun {
+			fmt.Fprintln(os.Stderr, "--dry-run and --out need --user (the nightly pass covers every user)")
+			os.Exit(1)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := runNightly(ctx, requireDSN(), environMap(), opts, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "maintain: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	cx := openCortex()

@@ -16,10 +16,11 @@ build:
 
 TEST_DB_URL := postgres://postgres:postgres@localhost:55432/cortex_test?sslmode=disable
 
-# Shellcheck the deploy scripts and smoke-test setup-server.sh --app-host in an Ubuntu container.
+# Shellcheck the deploy scripts; smoke-test setup-server.sh --app-host and deploy/rollback in Ubuntu containers.
 test-deploy:
 	shellcheck scripts/*.sh
 	scripts/test-setup-server.sh
+	scripts/test-deploy-app.sh
 
 # Start (or reuse) a throwaway pgvector Postgres for the DB-backed tests.
 test-db:

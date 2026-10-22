@@ -45,7 +45,12 @@ check "OPENAI_API_KEY skeleton" grep -q "^OPENAI_API_KEY=\$" /etc/cortex/cortex.
 check "cortex user is nologin system user" bash -c "getent passwd cortex | grep -q nologin"
 
 U=/etc/systemd/system
-check "service ExecStart" grep -qx "ExecStart=/usr/local/bin/cortex mcp --transport http --addr 127.0.0.1:8080" $U/cortex.service
+check "service ExecStart runs serve" grep -qx "ExecStart=/usr/local/bin/cortex serve --addr 127.0.0.1:8080" $U/cortex.service
+SECRET="$(envval CORTEX_SECRET_KEY)"
+check "secret key is 64 hex" bash -c "[[ $SECRET =~ ^[0-9a-f]{64}$ ]]"
+check "public url set" test "$(envval CORTEX_PUBLIC_URL)" = "https://$HOST"
+check "bootstrap email set" test "$(envval CORTEX_BOOTSTRAP_EMAIL)" = sausheong@gmail.com
+check "no .prev on a fresh install" test ! -e $U/cortex.service.prev
 check "service env file" grep -qx "EnvironmentFile=/etc/cortex/cortex.env" $U/cortex.service
 check "service user" grep -qx "User=cortex" $U/cortex.service
 check "service Restart" grep -qx "Restart=on-failure" $U/cortex.service
@@ -64,6 +69,8 @@ sed -i "/^OPENAI_API_KEY=\$/d" /etc/cortex/cortex.env
 check "token preserved" test "$(envval CORTEX_AUTH_TOKEN)" = "$TOKEN"
 check "DSN preserved" test "$(envval CORTEX_DATABASE_URL)" = "$DSN"
 check "user value preserved" test "$(envval OPENAI_API_KEY)" = sk-test
+check "secret key preserved" test "$(envval CORTEX_SECRET_KEY)" = "$SECRET"
+check "single secret key line" test "$(grep -c "^CORTEX_SECRET_KEY=" /etc/cortex/cortex.env)" = 1
 check "single token line" test "$(grep -c "^CORTEX_AUTH_TOKEN=" /etc/cortex/cortex.env)" = 1
 check "env still mode 600" test "$(stat -c %a /etc/cortex/cortex.env)" = 600
 check "no duplicate hba block" test "$(grep -c "BEGIN cortex-managed" $CONF/pg_hba.conf)" = 1
@@ -91,6 +98,31 @@ check "legacy: new DSN written" test -n "$DSN2"
 check "legacy: new DSN works" psql -qAt "$DSN2" -c "select 1"
 check "legacy: token preserved" test "$(envval CORTEX_AUTH_TOKEN)" = "$TOKEN"
 check "legacy: api key preserved" test "$(envval OPENAI_API_KEY)" = sk-test
+
+# --- upgrading a legacy unit: previous unit saved, cortex.service NOT restarted
+SHIM=/tmp/shim; mkdir -p $SHIM /run/systemd/system
+cat > $SHIM/systemctl <<"EOS"
+#!/bin/sh
+echo "$*" >> /tmp/systemctl.log
+case "$1 $2" in
+  "restart postgresql@17-main"|"restart postgresql") pg_ctlcluster 17 main restart ;;
+  "reload postgresql@17-main"|"reload postgresql") pg_ctlcluster 17 main reload ;;
+  "list-unit-files "*) exit 1 ;;
+esac
+exit 0
+EOS
+chmod +x $SHIM/systemctl
+printf "[Service]\nExecStart=/usr/local/bin/cortex mcp --transport http --addr 127.0.0.1:8080\n" > $U/cortex.service
+install -m 0755 /dev/null /usr/local/bin/cortex
+: > /tmp/systemctl.log
+PATH=$SHIM:$PATH /scripts/setup-server.sh --app-host $HOST --email ops@example.com --no-cron >/tmp/run4.log 2>&1
+check "unit now runs serve" grep -qx "ExecStart=/usr/local/bin/cortex serve --addr 127.0.0.1:8080" $U/cortex.service
+check "previous unit saved as .prev" grep -q "mcp --transport http" $U/cortex.service.prev
+check "units enabled via systemd" grep -q "^enable cortex.service" /tmp/systemctl.log
+check "cortex.service not restarted" bash -c "! grep -Eq \"^(restart|start|stop) cortex.service\" /tmp/systemctl.log"
+check "secret key still preserved" test "$(envval CORTEX_SECRET_KEY)" = "$SECRET"
+PATH=$SHIM:$PATH /scripts/setup-server.sh --app-host $HOST --email ops@example.com --no-cron >/tmp/run5.log 2>&1
+check ".prev kept across an identical re-run" grep -q "mcp --transport http" $U/cortex.service.prev
 
 echo "ALL $pass CHECKS PASSED"
 '

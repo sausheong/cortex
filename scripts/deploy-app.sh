@@ -7,16 +7,24 @@
 #   --fqdn HOST    public host name (default: the host part of <ssh-target>)
 #   --show-token   also print CORTEX_AUTH_TOKEN (otherwise only says where it is)
 #
-# Steps: detect the server arch, cross-compile (GOOS=linux, CGO_ENABLED=0), install
-# /usr/local/bin/cortex atomically, copy secrets/settings found in your environment
-# into /etc/cortex/cortex.env (values travel over ssh stdin, never argv or output),
-# restart the service and check https://<fqdn>/healthz.
-# Environment: SSH_OPTS (extra ssh/scp options, e.g. "-o BatchMode=yes").
+# Steps: detect the server arch, cross-compile (GOOS=linux, CGO_ENABLED=0), upload the
+# binary, copy secrets/settings found in your environment (and the repo .env, if any)
+# into /etc/cortex/cortex.env (values travel over ssh stdin, never argv or output).
+# Then the single restart: stop the service -> final pg_dump -Fc to
+# /root/cortex/pre-multiuser.dump (abort if it fails) -> keep the installed binary as
+# cortex.prev -> install the new binary -> `cortex migrate --timeout 30m` -> daemon-reload
+# and start -> poll https://<fqdn>/healthz. A failed migrate or health check exits
+# non-zero (a failed migrate never starts the new binary) and prints the rollback
+# command (scripts/rollback-app.sh).
+# Environment: SSH_OPTS (extra ssh/scp options, e.g. "-o BatchMode=yes"),
+# DUMP_PATH (remote dump file, default /root/cortex/pre-multiuser.dump).
 set -euo pipefail
 
 # Variables copied from the local environment into the server env file when set.
 FORWARD_VARS=(OPENAI_API_KEY OPENAI_BASE_URL
-  LLM_PROVIDER LLM_MODEL EMBEDDING_API_KEY EMBEDDING_BASE_URL EMBEDDING_MODEL EMBEDDING_DIMS)
+  LLM_PROVIDER LLM_MODEL EMBEDDING_API_KEY EMBEDDING_BASE_URL EMBEDDING_MODEL EMBEDDING_DIMS
+  GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET CORTEX_BOOTSTRAP_EMAIL)
+DUMP_PATH="${DUMP_PATH:-/root/cortex/pre-multiuser.dump}"
 
 FQDN=""
 SHOW_TOKEN=0
@@ -25,7 +33,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --fqdn) FQDN="${2:?--fqdn needs a value}"; shift 2 ;;
     --show-token) SHOW_TOKEN=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     -*) echo "unknown argument: $1" >&2; exit 2 ;;
     *) [ -z "$TARGET" ] || { echo "only one ssh target allowed" >&2; exit 2; }; TARGET="$1"; shift ;;
   esac
@@ -40,6 +48,14 @@ if ! printf '%s' "$FQDN" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$' 
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The repo .env (git-ignored) may hold the Google and provider settings. It is sourced,
+# never printed.
+if [ -f "$REPO_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/.env"
+  set +a
+fi
 # shellcheck disable=SC2206
 SSH_EXTRA=(${SSH_OPTS:-})
 # shellcheck disable=SC2029
@@ -59,9 +75,9 @@ echo "==> building cortex (linux/${GOARCH}, CGO_ENABLED=0)"
 (cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" \
   go build -trimpath -ldflags "-s -w" -o "$BUILD_DIR/cortex" ./cmd/cortex/)
 
-echo "==> installing /usr/local/bin/cortex"
+echo "==> uploading the binary (not installed yet)"
 scp ${SSH_EXTRA[@]+"${SSH_EXTRA[@]}"} -q "$BUILD_DIR/cortex" "${TARGET}:/usr/local/bin/cortex.new"
-rssh 'chmod 0755 /usr/local/bin/cortex.new && mv -f /usr/local/bin/cortex.new /usr/local/bin/cortex'
+rssh 'chmod 0755 /usr/local/bin/cortex.new'
 
 echo "==> updating /etc/cortex/cortex.env"
 # Remote side reads KEY=VALUE lines on stdin; only allow-listed keys are written.
@@ -75,7 +91,7 @@ n=0
 while IFS= read -r line; do
   key="${line%%=*}"; val="${line#*=}"
   case "$key" in
-    OPENAI_API_KEY|OPENAI_BASE_URL|ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|LLM_PROVIDER|LLM_MODEL|EMBEDDING_API_KEY|EMBEDDING_BASE_URL|EMBEDDING_MODEL|EMBEDDING_DIMS) ;;
+    OPENAI_API_KEY|OPENAI_BASE_URL|ANTHROPIC_API_KEY|ANTHROPIC_BASE_URL|LLM_PROVIDER|LLM_MODEL|EMBEDDING_API_KEY|EMBEDDING_BASE_URL|EMBEDDING_MODEL|EMBEDDING_DIMS|GOOGLE_OAUTH_CLIENT_ID|GOOGLE_OAUTH_CLIENT_SECRET|CORTEX_BOOTSTRAP_EMAIL) ;;
     *) continue ;;
   esac
   grep -v "^${key}=" "$tmp" > "$tmp.n" || true
@@ -105,9 +121,53 @@ else
 fi
 printf '%s' "$PAYLOAD" | rssh "bash -c $(printf '%q' "$REMOTE")"
 
-echo "==> restarting cortex.service"
-rssh 'systemctl daemon-reload && systemctl restart cortex.service && sleep 2 && systemctl is-active cortex.service' >/dev/null \
-  || { echo "cortex.service is not running; on the server: journalctl -u cortex -n 50" >&2; exit 1; }
+ROLLBACK_HINT="scripts/rollback-app.sh --fqdn ${FQDN} --dump ${DUMP_PATH} ${TARGET}"
+
+echo "==> stopping cortex.service, taking the final pre-upgrade dump"
+read -r -d '' REMOTE_CUTOVER <<'CUTOVER_SCRIPT' || true
+set -eu
+DUMP_PATH="$1"
+set -a; . /etc/cortex/cortex.env; set +a
+systemctl stop cortex.service 2>/dev/null || true
+install -d -m 0700 "$(dirname "$DUMP_PATH")"
+if ! pg_dump -Fc -f "$DUMP_PATH.tmp" "$CORTEX_DATABASE_URL"; then
+  rm -f "$DUMP_PATH.tmp"
+  echo "DUMP_FAILED" >&2
+  exit 3
+fi
+mv -f "$DUMP_PATH.tmp" "$DUMP_PATH"
+chmod 0600 "$DUMP_PATH"
+echo "    dump: $DUMP_PATH"
+if [ -f /usr/local/bin/cortex ]; then
+  cp -p /usr/local/bin/cortex /usr/local/bin/cortex.prev
+fi
+mv -f /usr/local/bin/cortex.new /usr/local/bin/cortex
+echo "    installed /usr/local/bin/cortex (previous kept as cortex.prev)"
+CUTOVER_SCRIPT
+rc=0
+rssh "bash -c $(printf '%q' "$REMOTE_CUTOVER") cutover $(printf '%q' "$DUMP_PATH")" || rc=$?
+if [ "$rc" -eq 3 ]; then
+  echo "pg_dump failed: nothing was changed except stopping the service." >&2
+  echo "Start it again with: ssh ${TARGET} systemctl start cortex.service" >&2
+  exit 1
+elif [ "$rc" -ne 0 ]; then
+  echo "cutover failed (exit ${rc}). Roll back with: ${ROLLBACK_HINT}" >&2
+  exit 1
+fi
+
+echo "==> cortex migrate --timeout 30m"
+if ! rssh 'set -a; . /etc/cortex/cortex.env; set +a; /usr/local/bin/cortex migrate --timeout 30m'; then
+  echo "migrate failed; the new binary was NOT started (cortex.service stays stopped)." >&2
+  echo "Roll back with: ${ROLLBACK_HINT}" >&2
+  exit 1
+fi
+
+echo "==> starting cortex.service"
+if ! rssh 'systemctl daemon-reload && systemctl start cortex.service && sleep 2 && systemctl is-active cortex.service' >/dev/null; then
+  echo "cortex.service is not running; on the server: journalctl -u cortex -n 50" >&2
+  echo "Roll back with: ${ROLLBACK_HINT}" >&2
+  exit 1
+fi
 
 echo "==> checking https://${FQDN}/healthz"
 HEALTH=""
@@ -117,6 +177,7 @@ for _ in $(seq 1 30); do
 done
 if [ -z "$HEALTH" ]; then
   echo "healthz did not answer. Check DNS for ${FQDN}, 'journalctl -u caddy' and 'journalctl -u cortex' on the server." >&2
+  echo "Roll back with: ${ROLLBACK_HINT}" >&2
   exit 1
 fi
 echo "    $HEALTH"

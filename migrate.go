@@ -104,3 +104,21 @@ func (c *Cortex) migrateUpTo(ctx context.Context, max int) error {
 	}
 	return tx.Commit()
 }
+
+// AppliedMigrations returns the versions recorded in schema_migrations, ascending.
+func (c *Cortex) AppliedMigrations(ctx context.Context) ([]int, error) {
+	rows, err := c.db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: read schema_migrations: %w", err)
+	}
+	defer rows.Close()
+	var out []int
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}

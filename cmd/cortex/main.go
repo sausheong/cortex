@@ -54,6 +54,20 @@ func main() {
 
 	cmd := os.Args[1]
 
+	ref, rest, err := stripUserFlag(os.Args[2:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if ref != "" {
+		if !userCommands[cmd] {
+			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync)\n", cmd)
+			os.Exit(1)
+		}
+		userRef = ref
+		os.Args = append(os.Args[:2:2], rest...)
+	}
+
 	switch cmd {
 	case "init":
 		cmdInit()
@@ -95,6 +109,10 @@ func main() {
 		cmdMCP()
 	case "serve":
 		cmdServe()
+	case "migrate":
+		cmdMigrate()
+	case "users":
+		cmdUsers()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		printUsage()
@@ -107,9 +125,13 @@ func printUsage() {
 
 Global options:
   --db <postgres-url>            Postgres connection URL (or CORTEX_DATABASE_URL env var; no default)
+  --user <id|verified-email>     Act as that user with their own provider settings (needs CORTEX_SECRET_KEY);
+                                 accepted by maintain, recall, profile, import-sqlite and sync
 
 Commands:
   serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
+  migrate [--timeout 30m]        Apply database migrations and report the versions
+  users list                     List users (ID, email, created, usage)
   init                           Initialize the Postgres schema and set the owner
   remember <text>                Remember text
   recall <query> [--min-confidence <0-1>]
@@ -141,7 +163,8 @@ Commands:
                                  Apply age-based confidence decay and soft-retire memories below the floor (MODIFIES the graph; use --dry-run to preview)
   expire [--dry-run] [--out <file>]
                                  Soft-retire memories whose forget_after has passed (MODIFIES the graph; use --dry-run to preview)
-  maintain [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]
+  maintain                       With no --user: nightly pass over every live user with provider settings, then purge
+  maintain --user <id> [--dry-run] [--no-reconcile] [--no-relate] [--no-decay] [--half-life <dur>] [--floor <0-1>] [--out <file>]
                                  Periodic reconsolidation pass: reconcile, relate, decay, expire, then profile in one run (MODIFIES the graph; use --dry-run to preview)
   profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
                                  Show an entity's context digest (owner by default); --track/--untrack manage auto-refresh
@@ -150,6 +173,9 @@ Commands:
 }
 
 func openCortex() *cortex.Cortex {
+	if userRef != "" {
+		return openUserCortexOrExit(userRef)
+	}
 	provider := os.Getenv("LLM_PROVIDER") // "openai" (default) or "anthropic"
 	modelName := os.Getenv("LLM_MODEL")
 	embModel := os.Getenv("EMBEDDING_MODEL")

@@ -26,6 +26,8 @@ type settingsView struct {
 	Job     *jobView
 	Live    bool // Job is queued or running
 	Pending bool // desired embedder differs from the active one
+	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
+	MaintenanceError string
 }
 
 func (s *server) latestReembed(ctx context.Context, userID string) (*jobView, error) {
@@ -83,6 +85,10 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 	}
 	if j != nil && (j.Live || j.Status == "failed") {
 		v.Job, v.Live = j, j.Live
+	}
+	var me sql.NullString
+	if err := s.st.DB.QueryRowContext(ctx, `SELECT last_maintenance_error FROM users WHERE id = $1`, u.UserID).Scan(&me); err == nil {
+		v.MaintenanceError = me.String
 	}
 	if v.Pending, err = s.embedPending(ctx, u.UserID); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

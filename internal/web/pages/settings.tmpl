@@ -5,6 +5,7 @@
 <p>cortex uses your own provider for extraction and embeddings. Keys are stored encrypted and shown masked.</p>
 {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 {{if .Saved}}<p class="notice">Settings saved.</p>{{end}}
+{{if .MaintenanceError}}<p class="error" role="alert">Last nightly maintenance failed: {{.MaintenanceError}}. Check your provider settings.</p>{{end}}
 {{if .Job}}
 <section class="job" id="job" data-id="{{.Job.ID}}" data-status="{{.Job.Status}}">
   <h2>Re-embedding</h2>

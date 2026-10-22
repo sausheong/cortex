@@ -111,6 +111,45 @@ func (p *Pool) Start(ctx context.Context) {
 		p.wg.Add(1)
 		go p.worker(ctx)
 	}
+	if p.db != nil {
+		p.wg.Add(1)
+		go p.sweep(ctx)
+	}
+}
+
+// sweepEvery is how often the pool picks up jobs queued by other processes
+// (for example the nightly `cortex maintain` retrying a re-embed).
+const sweepEvery = 30 * time.Second
+
+func (p *Pool) sweep(ctx context.Context) {
+	defer p.wg.Done()
+	t := time.NewTicker(sweepEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		rows, err := p.db.QueryContext(ctx, `SELECT id, user_id, kind FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 100`)
+		if err != nil {
+			continue
+		}
+		var pending []Job
+		for rows.Next() {
+			var j Job
+			if rows.Scan(&j.ID, &j.UserID, &j.Kind) == nil {
+				pending = append(pending, j)
+			}
+		}
+		rows.Close()
+		for _, j := range pending {
+			select {
+			case p.queue <- j:
+			default:
+			}
+		}
+	}
 }
 
 // Stop cancels running jobs and waits for the workers to exit.
@@ -156,7 +195,14 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 			p.setStatus(j, "skipped", "")
 			return
 		}
-		p.db.ExecContext(ctx, `UPDATE jobs SET status='running', updated_at=now() WHERE id=$1`, j.ID)
+		// Claim atomically: a job may be in the channel and swept twice.
+		res, err := p.db.ExecContext(ctx,
+			`UPDATE jobs SET status='running', updated_at=now() WHERE id=$1 AND status='queued'`, j.ID)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n == 0 {
+				return
+			}
+		}
 	}
 	if err := p.run(ctx, j); err != nil {
 		if ctx.Err() != nil {

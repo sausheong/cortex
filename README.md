@@ -418,7 +418,7 @@ Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Fla
 
 ### MCP over HTTPS (hosted)
 
-To reach your memory from anywhere (Claude Code on several machines, phones, hosted agents), run cortex and Postgres on one small server. `scripts/setup-server.sh --app-host cortex.example.com` installs Postgres (localhost only), a `cortex` systemd service on `127.0.0.1:8080`, a nightly `cortex maintain` timer and Caddy, which terminates HTTPS with its own Let's Encrypt certificate. `scripts/deploy-app.sh root@cortex.example.com` then builds and ships the binary and your `OPENAI_API_KEY` (and any `LLM_*`/`EMBEDDING_*` settings). Port 5432 is never exposed; `/mcp` always requires `Authorization: Bearer <CORTEX_AUTH_TOKEN>`.
+To reach your memory from anywhere (Claude Code on several machines, phones, hosted agents), run cortex and Postgres on one small server. `scripts/setup-server.sh --app-host cortex.example.com` installs Postgres (localhost only), a `cortex serve` systemd service on `127.0.0.1:8080` (web, Google sign-in, OAuth and MCP for several users), a nightly per-user `cortex maintain` timer and Caddy, which terminates HTTPS with its own Let's Encrypt certificate. `scripts/deploy-app.sh root@cortex.example.com` then builds and ships the binary and your settings, taking a final database dump and running `cortex migrate` before the single restart; `scripts/rollback-app.sh` undoes an upgrade. Port 5432 is never exposed; `/mcp` always requires `Authorization: Bearer <CORTEX_AUTH_TOKEN>`.
 
 ```bash
 claude mcp add --transport http cortex https://cortex.example.com/mcp \

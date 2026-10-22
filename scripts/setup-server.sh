@@ -9,8 +9,10 @@
 #   --app-host FQDN      Run cortex on this same host behind HTTPS. Postgres stays on
 #                        localhost (port 5432 is never exposed). Sets up a 'cortex'
 #                        system user, /etc/cortex/cortex.env (database URL, auth token
-#                        generated once and preserved), systemd units for
-#                        `cortex mcp --transport http --addr 127.0.0.1:8080` and a
+#                        generated once and preserved, plus CORTEX_SECRET_KEY,
+#                        CORTEX_PUBLIC_URL and CORTEX_BOOTSTRAP_EMAIL), systemd units for
+#                        `cortex serve --addr 127.0.0.1:8080` (written, never restarted
+#                        here; the old unit is kept as cortex.service.prev) and a
 #                        nightly `cortex maintain` timer, Caddy (own Let's Encrypt cert,
 #                        reverse proxy on 443) and ufw allowing only 22, 80 and 443.
 #                        DNS for FQDN must already point here. Install the binary
@@ -347,13 +349,24 @@ setup_app_host() {
     env_set CORTEX_AUTH_TOKEN "$token"
     echo "generated CORTEX_AUTH_TOKEN (stored in ${ENV_FILE})"
   fi
+  if [ -z "$(env_get CORTEX_SECRET_KEY)" ]; then
+    # 32 random bytes, hex. Generated once and preserved: it encrypts every user's
+    # provider key, so losing it makes them unreadable. Back it up off the box.
+    env_set CORTEX_SECRET_KEY "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    echo "generated CORTEX_SECRET_KEY (stored in ${ENV_FILE}; back it up off this machine)"
+  fi
+  env_set CORTEX_PUBLIC_URL "https://${APP_HOST}"
+  env_add_if_missing CORTEX_BOOTSTRAP_EMAIL "sausheong@gmail.com"
   env_add_if_missing OPENAI_API_KEY ""
   env_add_if_missing CORTEX_ADDR "127.0.0.1:${APP_PORT}"
 
-  # systemd units
-  cat > "$unit_dir/cortex.service" <<UNIT
+  # systemd units. The previous service unit is saved once as cortex.service.prev
+  # (rollback-app.sh restores it); nothing here restarts cortex.service.
+  local new_unit
+  new_unit="$(mktemp)"
+  cat > "$new_unit" <<UNIT
 [Unit]
-Description=cortex MCP server (streamable HTTP, behind Caddy)
+Description=cortex multi-user service (web, OAuth and MCP, behind Caddy)
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -362,7 +375,7 @@ Type=simple
 User=cortex
 Group=cortex
 EnvironmentFile=${ENV_FILE}
-ExecStart=${CORTEX_BIN} mcp --transport http --addr 127.0.0.1:${APP_PORT}
+ExecStart=${CORTEX_BIN} serve --addr 127.0.0.1:${APP_PORT}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -373,6 +386,11 @@ ProtectHome=true
 [Install]
 WantedBy=multi-user.target
 UNIT
+  if [ -f "$unit_dir/cortex.service" ] && ! cmp -s "$new_unit" "$unit_dir/cortex.service"; then
+    cp -p "$unit_dir/cortex.service" "$unit_dir/cortex.service.prev"
+  fi
+  install -m 0644 "$new_unit" "$unit_dir/cortex.service"
+  rm -f "$new_unit"
   cat > "$unit_dir/cortex-maintain.service" <<UNIT
 [Unit]
 Description=cortex nightly maintenance
@@ -443,9 +461,8 @@ CADDY
     systemctl enable caddy >/dev/null 2>&1 || true
     systemctl restart caddy || echo "warning: caddy failed to start; check 'journalctl -u caddy' (DNS for ${APP_HOST} must point here and port 80 must be reachable)" >&2
     systemctl start cortex-maintain.timer
-    if [ -x "$CORTEX_BIN" ]; then
-      systemctl restart cortex.service
-    else
+    # cortex.service is NOT restarted here: scripts/deploy-app.sh does the single restart.
+    if [ ! -x "$CORTEX_BIN" ]; then
       echo "note: ${CORTEX_BIN} not installed yet; run scripts/deploy-app.sh from your workstation" >&2
     fi
   else

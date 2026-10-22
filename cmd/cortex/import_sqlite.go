@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 
+	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/sqliteimport"
 )
 
@@ -47,8 +49,15 @@ func cmdImportSQLite() {
 	}
 	cx := openCortex()
 	defer cx.Close()
+	if err := runImportSQLite(context.Background(), cx, opts, os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	rep, err := sqliteimport.Import(context.Background(), opts.Path, cx, cx.UserID(), sqliteimport.Options{
+// runImportSQLite imports into the handle's own user (cx.UserID()).
+func runImportSQLite(ctx context.Context, cx *cortex.Cortex, opts importSQLiteOptions, out, errw io.Writer) error {
+	rep, err := sqliteimport.Import(ctx, opts.Path, cx, cx.UserID(), sqliteimport.Options{
 		Force: opts.Force, EmbedOnly: opts.EmbedOnly,
 	})
 	mismatch := false
@@ -58,22 +67,21 @@ func cmdImportSQLite() {
 	}
 	sort.Strings(names)
 	if len(names) > 0 {
-		fmt.Printf("%-18s %8s %8s\n", "table", "source", "target")
+		fmt.Fprintf(out, "%-18s %8s %8s\n", "table", "source", "target")
 	}
 	for _, n := range names {
 		p := rep.Counts[n]
-		fmt.Printf("%-18s %8d %8d\n", n, p[0], p[1])
+		fmt.Fprintf(out, "%-18s %8d %8d\n", n, p[0], p[1])
 		if p[0] != p[1] {
 			mismatch = true
 		}
 	}
-	fmt.Printf("embedded: %d\n", rep.Embedded)
+	fmt.Fprintf(out, "embedded: %d\n", rep.Embedded)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	if mismatch {
-		fmt.Fprintln(os.Stderr, "error: source and target counts differ")
-		os.Exit(1)
+		return fmt.Errorf("source and target counts differ")
 	}
+	return nil
 }

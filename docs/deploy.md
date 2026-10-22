@@ -37,16 +37,16 @@ It:
 Postgres and cortex share one host. Clients (Claude Code, Cursor, scripts) talk only to cortex over HTTPS; nothing talks to Postgres from outside, so networks that interfere with port 5432 do not matter.
 
 ```
-client --HTTPS 443--> Caddy --> cortex mcp (127.0.0.1:8080) --> Postgres (localhost:5432)
+client --HTTPS 443--> Caddy --> cortex serve (127.0.0.1:8080) --> Postgres (localhost:5432)
 ```
 
 What the script sets up:
 
 - **Postgres**: `listen_addresses='localhost'`, no TLS, scram-sha-256, `pg_hba.conf` with only the localhost rules. Port 5432 is closed in `ufw` (an old rule is removed).
-- **User and secrets**: system user `cortex` (no login shell), and `/etc/cortex/cortex.env` (root-owned, mode 0600) holding `CORTEX_DATABASE_URL` (local connection as role `cortex`), `OPENAI_API_KEY` (empty until `deploy-app.sh` fills it), `CORTEX_ADDR`, and `CORTEX_AUTH_TOKEN` (32 random bytes as hex). Existing values are kept on re-runs, so the token never changes unless you change it. If the role exists but the file has no database URL (for example when converting an older install) the role password is reset and the new URL is stored.
-- **systemd**: `cortex.service` runs `cortex mcp --transport http --addr 127.0.0.1:8080` as user `cortex` with that env file (`Restart=on-failure`). `cortex-maintain.timer` runs `cortex maintain` (via `cortex-maintain.service`) every day at 03:15 SGT (19:15 UTC) as the same user. Where systemd is absent (containers) the units are written and a warning is printed.
+- **User and secrets**: system user `cortex` (no login shell), and `/etc/cortex/cortex.env` (root-owned, mode 0600) holding `CORTEX_DATABASE_URL` (local connection as role `cortex`), `OPENAI_API_KEY` (empty until `deploy-app.sh` fills it), `CORTEX_ADDR`, `CORTEX_PUBLIC_URL` (`https://<fqdn>`), `CORTEX_BOOTSTRAP_EMAIL` (default `sausheong@gmail.com`), `CORTEX_SECRET_KEY` (32 random bytes as hex, generated once; it encrypts every user's provider key) and `CORTEX_AUTH_TOKEN` (32 random bytes as hex; it becomes the bootstrap user's agent token "claude-code (tunnel)"). Existing values are kept on re-runs, so the token never changes unless you change it. If the role exists but the file has no database URL (for example when converting an older install) the role password is reset and the new URL is stored.
+- **systemd**: `cortex.service` runs `cortex serve --addr 127.0.0.1:8080` as user `cortex` with that env file (`Restart=on-failure`). The previous unit is saved once as `cortex.service.prev` for rollback, and the script never restarts `cortex.service` (`deploy-app.sh` does the single restart). `cortex-maintain.timer` runs a plain `cortex maintain` (via `cortex-maintain.service`) every day at 03:15 SGT (19:15 UTC) as the same user: per-user maintenance, then the purge (see below). Where systemd is absent (containers) the units are written and a warning is printed.
 - **Caddy** (official apt repo): obtains and renews its own Let's Encrypt certificate for the FQDN, serves 443 (and 80 for ACME and redirect) and reverse-proxies to `127.0.0.1:8080` with response buffering disabled (streamable HTTP).
-- **Auth**: cortex always requires `Authorization: Bearer <token>` on `/mcp` when `CORTEX_AUTH_TOKEN` is set, even on a loopback bind. `/healthz` is unauthenticated.
+- **Auth**: `/mcp` always requires a bearer token (an OAuth access token or an agent token, including the old `CORTEX_AUTH_TOKEN`), even on a loopback bind. `/healthz` is unauthenticated.
 - **ufw**: `limit 22`, `allow 80`, `allow 443`, default deny incoming.
 - **certbot**: if an earlier public-Postgres setup left a certbot certificate, its renewal config is renamed to `*.conf.cortex-disabled`, the Postgres deploy hook and the copied Postgres key are removed, and `certbot.timer` is disabled (certbot standalone would fight Caddy for port 80). The certbot package itself is left installed.
 
@@ -59,9 +59,76 @@ export OPENAI_API_KEY=sk-...          # plus LLM_* / EMBEDDING_* if you use them
 ./scripts/deploy-app.sh root@cortex.example.com
 ```
 
-`deploy-app.sh` detects the server architecture over ssh, cross-compiles cortex (`GOOS=linux CGO_ENABLED=0`), copies it to `/usr/local/bin/cortex` atomically, writes `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL` and `EMBEDDING_DIMS` from your environment into `/etc/cortex/cortex.env` (sent over ssh stdin, never echoed), restarts the service, checks `https://<fqdn>/healthz` and that an unauthenticated `/mcp` request gets 401, then prints the MCP URL. The token is not printed; it says where it is. Use `--show-token` to print it, or `ssh root@host grep CORTEX_AUTH_TOKEN /etc/cortex/cortex.env`. Pass `--fqdn` when the ssh target is an IP address.
+`deploy-app.sh` detects the server architecture over ssh, cross-compiles cortex (`GOOS=linux CGO_ENABLED=0`) and uploads it without installing it. It writes `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMS`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `CORTEX_BOOTSTRAP_EMAIL` from your environment (and from the repo `.env`, if present) into `/etc/cortex/cortex.env` (sent over ssh stdin, never echoed). Then it does the single restart, in this order:
+
+1. stop `cortex.service`;
+2. final `pg_dump -Fc` to `/root/cortex/pre-multiuser.dump` (taken after the stop, so a rollback loses no writes; the script aborts if the dump fails);
+3. keep the installed binary as `/usr/local/bin/cortex.prev`;
+4. install the new binary and run `cortex migrate --timeout 30m`;
+5. `systemctl daemon-reload`, start the service, poll `https://<fqdn>/healthz`, and check that an unauthenticated `/mcp` request gets 401.
+
+A failed migrate never starts the new binary; a failed start or health check also exits non-zero. Both print the rollback command. The token is not printed; it says where it is. Use `--show-token` to print it. Pass `--fqdn` when the ssh target is an IP address.
 
 Re-running `setup-server.sh --app-host ...` is safe on a live host (it also converts an older public-TLS install). Re-running `deploy-app.sh` upgrades the binary.
+
+#### Rollout and rollback runbook
+
+Rollout (the first multi-user upgrade, repeated in Task 15 of the plan):
+
+1. Rehearse on a copy of the production data first (restore a recent backup into a scratch database and run `cortex migrate`).
+2. Create the Google OAuth client (below) and put `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in the repo `.env`.
+3. `scripts/setup-server.sh --app-host cortex.sausheong.dev` on the droplet. It adds `CORTEX_SECRET_KEY`, writes the new unit and saves the old one as `cortex.service.prev`. Back up `CORTEX_SECRET_KEY` off the box now.
+4. `scripts/deploy-app.sh root@cortex.sausheong.dev`.
+5. Sign in at `https://cortex.sausheong.dev` with the bootstrap Google account; it binds the existing brain. Check that Claude Code still works unchanged with the old token.
+
+Rollback (if migrate, the start or the health check fails, or the result is wrong):
+
+```bash
+./scripts/rollback-app.sh --fqdn cortex.sausheong.dev root@cortex.sausheong.dev
+```
+
+It stops the service, restores `cortex.prev` and `cortex.service.prev`, runs `pg_restore --clean --if-exists` from the dump (default `/root/cortex/pre-multiuser.dump`, change with `--dump PATH`), reloads systemd, starts the service and polls `/healthz`. It refuses to change anything unless the previous binary, the previous unit and the dump all exist. Anything written after the dump is lost.
+
+#### Google sign-in
+
+Create an OAuth client (Google Cloud console, APIs and Services, Credentials, OAuth client ID, type "Web application"). Set the authorized redirect URI to exactly `https://cortex.sausheong.dev/auth/google/callback`. Put the client ID and secret in `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, and ship them with `deploy-app.sh`. Sign-up is open to any Google account. Only a sign-in with `CORTEX_BOOTSTRAP_EMAIL` and `email_verified=true` binds the pre-existing brain.
+
+#### Connecting assistants
+
+- **ChatGPT**: Plugins, then +, then Add custom MCP server, URL `https://cortex.sausheong.dev/mcp`, authentication OAuth. Sign in with Google and approve the consent screen.
+- **claude.ai**: Settings, Connectors, add a custom connector with the URL `https://cortex.sausheong.dev/mcp`, then sign in and approve.
+- **Your own agents** (Claude Code and others): create a named agent token on the Connections page and send `Authorization: Bearer <token>`.
+
+Suggested custom instruction for the assistant: "You have a memory tool called cortex. At the start of a conversation call `context` to load what you know about me. When I tell you something worth keeping, store it with `remember`. Before answering questions about my life, projects or preferences, call `recall`."
+
+#### Provider URL policy and `CORTEX_ALLOW_PRIVATE_PROVIDERS`
+
+Users bring their own AI provider. Chat and embedding base URLs must be public `https`; the dial-time check rejects loopback, private, link-local (including `169.254.169.254`), CGNAT and unique-local addresses, redirects are not followed and environment proxies are ignored. `CORTEX_ALLOW_PRIVATE_PROVIDERS=1` in `/etc/cortex/cortex.env` lifts the address and `https` restrictions for local providers such as Ollama. It is for the operator only: it is read once at `cortex serve` start and cannot be set from the web. It never applies to OAuth client metadata fetches.
+
+#### Nightly maintenance, purge and admin commands
+
+`cortex maintain` (no `--user`) runs two independent phases:
+
+1. **Maintenance** for every live user with valid provider settings: reconcile, relate, decay, expire and profile with that user's own providers, then refresh the storage figures. A user's error is stored in `users.last_maintenance_error` (shown on their settings page) and the run continues. If a user's desired embedder differs from the active one and no re-embed is queued or running, a `reembed` job is queued (the service picks it up within 30 seconds).
+2. **Purge**, for all users including deleted and settings-less ones: rows soft-deleted more than 30 days ago, accounts deleted more than 30 days ago (hard delete with all rows), expired unauthorized DCR clients, authorize requests, codes, login attempts and sessions.
+
+The command exits non-zero if any user failed, after the purge has run. Admin commands:
+
+```bash
+cortex users list                                  # ID, email (verified flag), created, usage
+cortex maintain --user <id|verified-email> [--dry-run]
+cortex recall   --user <id|verified-email> "query"
+cortex profile  --user <id|verified-email>
+cortex sync     --user <id|verified-email> <dir>
+cortex import-sqlite --user <id|verified-email> brain.db
+cortex migrate [--timeout 30m]                     # apply migrations, print versions and elapsed time
+```
+
+`--user` takes a user ID or a verified email only. An email that matches several accounts, or only an unverified account, is refused with the matching IDs listed. With `--user` the command uses that user's own saved provider settings, so it needs `CORTEX_SECRET_KEY` in the environment; the operator's `OPENAI_API_KEY` is never used for another user.
+
+#### Backing up `CORTEX_SECRET_KEY`
+
+`CORTEX_SECRET_KEY` encrypts every user's provider key. Without it the stored keys cannot be read and users must re-enter them. Copy it off the box (a password manager is fine) when it is first generated. Database backups do not contain it.
 
 ### Private network mode (`--listen-ip`)
 
