@@ -52,9 +52,18 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 		report.EntitiesScanned++
 		report.MemoriesScanned += len(mems)
 
-		pairs, err := rec.DetectConflicts(ctx, mems)
+		pairs, err := retryLLM(ctx, func() ([]ConflictPair, error) { return rec.DetectConflicts(ctx, mems) })
 		if err != nil {
-			return ReconcileReport{}, fmt.Errorf("cortex: detect conflicts for entity %s: %w", eid, err)
+			if ctx.Err() != nil {
+				return ReconcileReport{}, fmt.Errorf("cortex: detect conflicts for entity %s: %w", eid, err)
+			}
+			// A provider failure for one entity must not abort the run.
+			report.EntitiesSkipped++
+			addReportError(&report.Errors, "detect conflicts for entity %s: %v", eid, err)
+			if c.cfg.logf != nil {
+				c.cfg.logf("cortex: reconcile: skipping entity %s: %v", eid, err)
+			}
+			continue
 		}
 
 		byID := make(map[string]Memory, len(mems))

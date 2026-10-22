@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/sausheong/cortex"
@@ -127,7 +128,8 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 		o.beforeMaintain(ctx, userID, cx)
 	}
 	o.maybeEnqueueReembed(ctx, st, userID)
-	if _, err := cx.Maintain(ctx, o.MaintainOpts...); err != nil {
+	rep, err := cx.Maintain(ctx, o.MaintainOpts...)
+	if err != nil {
 		msg := "maintenance failed: " + accounts.ProviderError(err).Error()
 		record(msg)
 		return errors.New(msg)
@@ -135,6 +137,12 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 	if _, err := cx.RefreshUsage(ctx); err != nil {
 		record("maintenance failed: usage refresh")
 		return errors.New("maintenance failed: usage refresh")
+	}
+	if n := rep.SkippedItems(); n > 0 {
+		// Degraded, not failed: the run completed and skipped items are
+		// retried by the next run.
+		record(fmt.Sprintf("maintenance completed; %d item(s) skipped after provider errors", n))
+		return nil
 	}
 	record("")
 	return nil

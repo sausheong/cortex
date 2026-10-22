@@ -49,9 +49,17 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 		report.EntitiesScanned++
 		report.MemoriesScanned += len(mems)
 
-		rels, err := det.DetectRelations(ctx, mems)
+		rels, err := retryLLM(ctx, func() ([]MemoryRelation, error) { return det.DetectRelations(ctx, mems) })
 		if err != nil {
-			return RelationReport{}, fmt.Errorf("cortex: detect relations for entity %s: %w", eid, err)
+			if ctx.Err() != nil {
+				return RelationReport{}, fmt.Errorf("cortex: detect relations for entity %s: %w", eid, err)
+			}
+			report.EntitiesSkipped++
+			addReportError(&report.Errors, "detect relations for entity %s: %v", eid, err)
+			if c.cfg.logf != nil {
+				c.cfg.logf("cortex: relate: skipping entity %s: %v", eid, err)
+			}
+			continue
 		}
 
 		inSet := make(map[string]Memory, len(mems))

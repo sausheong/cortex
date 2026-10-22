@@ -67,18 +67,20 @@ func SafeClient(allowPrivate bool, maxBody int64) *http.Client {
 			return nil
 		}
 	}
+	// ResponseHeaderTimeout stays long: a non-streaming chat completion on a
+	// large prompt only sends headers once generation is finished.
 	tr := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           d.DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
+		ResponseHeaderTimeout: 120 * time.Second,
 		MaxIdleConns:          10,
 		IdleConnTimeout:       30 * time.Second,
 	}
 	return &http.Client{
 		Transport:     &capTransport{base: tr, max: maxBody, requireHTTPS: !allowPrivate},
-		Timeout:       120 * time.Second,
+		Timeout:       180 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }

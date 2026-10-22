@@ -30,6 +30,12 @@ func RenderReconcileMarkdownMode(r ReconcileReport, applied bool) string {
 
 	fmt.Fprintf(&b, "Entities scanned: %d\n", r.EntitiesScanned)
 	fmt.Fprintf(&b, "Memories scanned: %d\n", r.MemoriesScanned)
+	if r.EntitiesSkipped > 0 {
+		fmt.Fprintf(&b, "Entities skipped (LLM errors): %d\n", r.EntitiesSkipped)
+		for _, e := range r.Errors {
+			fmt.Fprintf(&b, "  - %s\n", e)
+		}
+	}
 	if applied {
 		fmt.Fprintf(&b, "Applied: %d\n", len(r.Proposed))
 		fmt.Fprintf(&b, "Skipped (re-validation): %d\n\n", len(r.Rejected))

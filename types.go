@@ -269,6 +269,10 @@ type RelationReport struct {
 	Rejected        []RejectedRelation `json:"rejected"`
 	Skipped         bool               `json:"skipped"`
 	SkipReason      string             `json:"skip_reason,omitempty"`
+	// EntitiesSkipped counts entities whose LLM call failed (after retries)
+	// and were skipped; Errors holds the first few error strings.
+	EntitiesSkipped int      `json:"entities_skipped,omitempty"`
+	Errors          []string `json:"errors,omitempty"`
 }
 
 // RelateOption configures a BuildMemoryEdges run.
@@ -496,6 +500,10 @@ type ReconcileReport struct {
 	Rejected        []RejectedPair `json:"rejected"`
 	Skipped         bool           `json:"skipped"` // true when no Reconciler-capable LLM is configured
 	SkipReason      string         `json:"skip_reason,omitempty"`
+	// EntitiesSkipped counts entities whose LLM call failed (after retries)
+	// and were skipped; Errors holds the first few error strings.
+	EntitiesSkipped int      `json:"entities_skipped,omitempty"`
+	Errors          []string `json:"errors,omitempty"`
 }
 
 // ReconcileOption configures a Reconcile run.
@@ -623,6 +631,23 @@ type MaintainReport struct {
 	Profile   *ProfileReport   `json:"profile,omitempty"`
 }
 
+// SkippedItems counts the items (entities, profiles) the passes skipped
+// because of provider errors, so a caller can tell a clean run from a
+// degraded one.
+func (r MaintainReport) SkippedItems() int {
+	n := 0
+	if r.Reconcile != nil {
+		n += r.Reconcile.EntitiesSkipped
+	}
+	if r.Relate != nil {
+		n += r.Relate.EntitiesSkipped
+	}
+	if r.Profile != nil {
+		n += r.Profile.Undistilled
+	}
+	return n
+}
+
 type MaintainOption func(*maintainConfig)
 
 type maintainConfig struct {
@@ -682,6 +707,10 @@ type ProfileReport struct {
 	Scanned int      `json:"scanned"`
 	Rebuilt int      `json:"rebuilt"`
 	Skipped []string `json:"skipped,omitempty"` // entity IDs whose build failed
+	// Undistilled counts profiles built from raw memories because the LLM
+	// distill failed (after retries); Errors holds the first few error strings.
+	Undistilled int      `json:"undistilled,omitempty"`
+	Errors      []string `json:"errors,omitempty"`
 }
 
 // Profile tuning defaults.
@@ -689,7 +718,7 @@ const (
 	ProfileDefaultTTL       = 24 * time.Hour
 	ProfileDefaultRecentK   = 7
 	ProfileDefaultWindow    = 30 * 24 * time.Hour
-	ProfileDefaultStaticCap = 15
+	ProfileDefaultStaticCap = 60 // max static candidates handed to the distiller
 )
 
 type ProfileOption func(*profileConfig)
@@ -728,7 +757,7 @@ func WithProfileWindow(d time.Duration) ProfileOption {
 }
 
 // WithProfileStaticCap caps how many memories feed the static section
-// (default 15).
+// (default 60).
 func WithProfileStaticCap(n int) ProfileOption {
 	return func(c *profileConfig) { c.staticCap = n }
 }

@@ -18,6 +18,12 @@ func RenderRelationMarkdown(r RelationReport) string {
 
 	fmt.Fprintf(&b, "Entities scanned: %d\n", r.EntitiesScanned)
 	fmt.Fprintf(&b, "Memories scanned: %d\n", r.MemoriesScanned)
+	if r.EntitiesSkipped > 0 {
+		fmt.Fprintf(&b, "Entities skipped (LLM errors): %d\n", r.EntitiesSkipped)
+		for _, e := range r.Errors {
+			fmt.Fprintf(&b, "  - %s\n", e)
+		}
+	}
 	fmt.Fprintf(&b, "Proposed relations: %d\n", len(r.Proposed))
 	fmt.Fprintf(&b, "Rejected (gate): %d\n\n", len(r.Rejected))
 
