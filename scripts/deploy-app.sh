@@ -7,6 +7,8 @@
 #   --fqdn HOST    public host name (default: the host part of <ssh-target>)
 #   --show-token   also print CORTEX_AUTH_TOKEN (otherwise only says where it is)
 #
+# Preflight (before the cutover): the host must have cortex.service.prev, CORTEX_SECRET_KEY,
+# CORTEX_PUBLIC_URL (and OPENAI_API_KEY when CORTEX_AUTH_TOKEN is set); else re-run setup-server.sh.
 # Steps: detect the server arch, cross-compile (GOOS=linux, CGO_ENABLED=0), upload the
 # binary, copy secrets/settings found in your environment (and the repo .env, if any)
 # into /etc/cortex/cortex.env (values travel over ssh stdin, never argv or output).
@@ -33,7 +35,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --fqdn) FQDN="${2:?--fqdn needs a value}"; shift 2 ;;
     --show-token) SHOW_TOKEN=1; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     -*) echo "unknown argument: $1" >&2; exit 2 ;;
     *) [ -z "$TARGET" ] || { echo "only one ssh target allowed" >&2; exit 2; }; TARGET="$1"; shift ;;
   esac
@@ -120,6 +122,28 @@ else
   echo "    sending: ${SENT[*]}"
 fi
 printf '%s' "$PAYLOAD" | rssh "bash -c $(printf '%q' "$REMOTE")"
+
+echo "==> preflight: rollback unit and required settings"
+read -r -d '' REMOTE_PREFLIGHT <<'PREFLIGHT_SCRIPT' || true
+set -eu
+ENV_FILE=/etc/cortex/cortex.env
+miss=""
+[ -f /etc/systemd/system/cortex.service.prev ] || miss="$miss cortex.service.prev"
+for k in CORTEX_SECRET_KEY CORTEX_PUBLIC_URL; do
+  grep -q "^${k}=." "$ENV_FILE" || miss="$miss $k"
+done
+if grep -q '^CORTEX_AUTH_TOKEN=.' "$ENV_FILE" && ! grep -q '^OPENAI_API_KEY=.' "$ENV_FILE" && [ "${HAVE_OPENAI:-0}" != 1 ]; then
+  miss="$miss OPENAI_API_KEY"
+fi
+if [ -n "$miss" ]; then
+  echo "missing on server:$miss" >&2
+  exit 5
+fi
+PREFLIGHT_SCRIPT
+if ! rssh "HAVE_OPENAI=$([ -n "${OPENAI_API_KEY:-}" ] && echo 1 || echo 0) bash -c $(printf '%q' "$REMOTE_PREFLIGHT")"; then
+  echo "preflight failed: the service was not touched. Re-run 'setup-server.sh --app-host <fqdn>' on the server (writes the service unit, CORTEX_SECRET_KEY and CORTEX_PUBLIC_URL), then retry." >&2
+  exit 1
+fi
 
 ROLLBACK_HINT="scripts/rollback-app.sh --fqdn ${FQDN} --dump ${DUMP_PATH} ${TARGET}"
 

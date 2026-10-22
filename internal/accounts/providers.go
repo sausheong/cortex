@@ -87,7 +87,7 @@ func Providers(chat, embed *Settings, hc *http.Client) (cortex.LLM, cortex.Embed
 	}
 
 	ekey := e.EmbedAPIKey
-	if ekey == "" {
+	if ekey == "" && e.Provider != ProviderAnthropic {
 		ekey = e.APIKey
 	}
 	if ekey == "" {

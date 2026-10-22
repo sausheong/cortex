@@ -50,11 +50,21 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 		return nil, fmt.Errorf("cortex: set iterative_scan: %w", err)
 	}
 	lit := vectorLiteral(queryVec)
+	// Soft-deleted rows keep their embeddings (restore needs them), so the live
+	// check must be part of the query: otherwise they crowd out live hits in the
+	// top-K. Only memory and chunk refs are soft-deletable.
+	live := ""
+	switch refType {
+	case "memory":
+		live = ` AND EXISTS (SELECT 1 FROM memories m WHERE m.id = embeddings.ref_id AND m.user_id = embeddings.user_id AND m.deleted_at IS NULL)`
+	case "chunk":
+		live = ` AND EXISTS (SELECT 1 FROM chunks k WHERE k.id = embeddings.ref_id AND k.user_id = embeddings.user_id AND k.deleted_at IS NULL)`
+	}
 	rows, err := tx.QueryContext(ctx,
 		fmt.Sprintf(`SELECT ref_id, 1 - (embedding::halfvec(%d) <=> ?::halfvec) AS sim
 		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d
-		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?)
-		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, dims),
+		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?)%s
+		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, live, dims),
 		lit, c.userID, refType, c.userID, lit, limit,
 	)
 	if err != nil {

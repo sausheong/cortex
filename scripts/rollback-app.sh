@@ -56,7 +56,10 @@ mv -f /usr/local/bin/cortex.restore /usr/local/bin/cortex
 cp -p /etc/systemd/system/cortex.service.prev /etc/systemd/system/cortex.service.restore
 mv -f /etc/systemd/system/cortex.service.restore /etc/systemd/system/cortex.service
 echo "    restored the previous binary and service unit"
-pg_restore --clean --if-exists --no-owner -d "$CORTEX_DATABASE_URL" "$DUMP"
+# The dump predates migrations 002/003, so --clean would leave their tables behind
+# and a later migrate would fail. Reset the schema, then restore into it.
+psql -v ON_ERROR_STOP=1 -q -d "$CORTEX_DATABASE_URL" -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+pg_restore --no-owner --exit-on-error -d "$CORTEX_DATABASE_URL" "$DUMP"
 echo "    restored the database from $DUMP"
 systemctl daemon-reload
 systemctl start cortex.service

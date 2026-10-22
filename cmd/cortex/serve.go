@@ -92,7 +92,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 			if err != nil {
 				return err
 			}
-			return jobs.ReEmbed(ctx, root.ForUser(j.UserID), st, emb, func(done, total int) { pool.Progress(ctx, j.ID, done, total) })
+			return jobs.ReEmbedWith(ctx, root.ForUser(j.UserID), st, emb, set, func(done, total int) { pool.Progress(ctx, j.ID, done, total) })
 		default:
 			return fmt.Errorf("unknown job kind %q", j.Kind)
 		}

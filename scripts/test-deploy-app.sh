@@ -54,13 +54,17 @@ cat > $SHIM/pg_restore <<"EOS"
 #!/bin/bash
 echo "pg_restore $*" >> /tmp/calls.log
 EOS
+cat > $SHIM/psql <<"EOS"
+#!/bin/bash
+echo "psql $*" >> /tmp/calls.log
+EOS
 chmod +x $SHIM/*
 export PATH=$SHIM:$PATH
 
 reset_server() {
   rm -rf /etc/cortex /root/cortex /usr/local/bin/cortex* /etc/systemd/system/cortex.service* /tmp/calls.log /tmp/migrate.log
   mkdir -p /etc/cortex /etc/systemd/system /usr/local/bin
-  printf "CORTEX_DATABASE_URL=postgres://u:p@localhost/cortex\nCORTEX_AUTH_TOKEN=tok\n" > /etc/cortex/cortex.env
+  printf "CORTEX_DATABASE_URL=postgres://u:p@localhost/cortex\nCORTEX_AUTH_TOKEN=tok\nCORTEX_SECRET_KEY=sk\nCORTEX_PUBLIC_URL=https://cortex.test\nOPENAI_API_KEY=oa\n" > /etc/cortex/cortex.env
   printf "#!/bin/sh\necho old\n" > /usr/local/bin/cortex; chmod +x /usr/local/bin/cortex
   echo "ExecStart=/usr/local/bin/cortex serve" > /etc/systemd/system/cortex.service
   echo "ExecStart=/usr/local/bin/cortex mcp --transport http" > /etc/systemd/system/cortex.service.prev
@@ -96,7 +100,8 @@ printf "ExecStart=/usr/local/bin/cortex serve --addr x\n" > /etc/systemd/system/
 ok "rollback succeeds"
 check "rollback restored old binary" bash -c "[ \"\$(/usr/local/bin/cortex)\" = old ]"
 check "rollback restored old unit" grep -q "mcp --transport http" /etc/systemd/system/cortex.service
-check "rollback pg_restore --clean --if-exists from the dump" grep -Eq "pg_restore --clean --if-exists .*/root/cortex/pre-multiuser.dump" /tmp/calls.log
+check "rollback resets the schema before restoring" test "$(line_of "psql .*DROP SCHEMA public CASCADE")" -lt "$(line_of "pg_restore")"
+check "rollback pg_restore from the dump" grep -Eq "pg_restore .*/root/cortex/pre-multiuser.dump" /tmp/calls.log
 check "rollback stop, reload, start" test "$(line_of "systemctl stop")" -lt "$(line_of "systemctl daemon-reload")" -a "$(line_of "systemctl daemon-reload")" -lt "$(line_of "systemctl start cortex.service")"
 
 # --- rollback refuses when something is missing and changes nothing
@@ -117,6 +122,17 @@ if FAKE_DUMP_FAIL=1 /scripts/deploy-app.sh --fqdn cortex.test root@cortex.test >
 check "old binary untouched after dump failure" bash -c "[ \"\$(/usr/local/bin/cortex)\" = old ]"
 check "no migrate after dump failure" test ! -e /tmp/migrate.log
 check "no cortex.prev after dump failure" test ! -e /usr/local/bin/cortex.prev
+
+# --- preflight: missing rollback unit / secrets abort before the cutover
+reset_server
+rm -f /etc/systemd/system/cortex.service.prev
+if /scripts/deploy-app.sh --fqdn cortex.test root@cortex.test >/tmp/out6.log 2>&1; then fail "preflight rejects missing cortex.service.prev"; else ok "preflight rejects missing cortex.service.prev"; fi
+check "preflight names the missing unit" grep -q "cortex.service.prev" /tmp/out6.log
+check "service not stopped by failed preflight" bash -c "! grep -q stop /tmp/calls.log"
+reset_server
+sed -i "/^CORTEX_SECRET_KEY=/d" /etc/cortex/cortex.env
+if /scripts/deploy-app.sh --fqdn cortex.test root@cortex.test >/tmp/out7.log 2>&1; then fail "preflight rejects missing secret key"; else ok "preflight rejects missing secret key"; fi
+check "preflight names CORTEX_SECRET_KEY" grep -q "CORTEX_SECRET_KEY" /tmp/out7.log
 
 echo "ALL $pass CHECKS PASSED"
 '

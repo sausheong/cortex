@@ -126,6 +126,9 @@ func (s Settings) Validate(allowPrivate bool) error {
 	if !allowedDims[s.EmbedDims] {
 		return fmt.Errorf("embedding dimensions %d not allowed", s.EmbedDims)
 	}
+	if s.Provider == ProviderAnthropic && s.EmbedAPIKey == "" {
+		return errors.New("the anthropic provider needs a separate embedding API key")
+	}
 	return nil
 }
 
@@ -228,7 +231,7 @@ type activeEmbed struct {
 
 func (st *Store) sealActive(s Settings) (string, error) {
 	key := s.EmbedAPIKey
-	if key == "" {
+	if key == "" && s.Provider != ProviderAnthropic {
 		key = s.APIKey
 	}
 	b, _ := json.Marshal(activeEmbed{URL: s.EffectiveEmbedURL(), Key: key, Model: s.EmbedModel, Dims: s.EmbedDims})
@@ -252,9 +255,6 @@ func (st *Store) openActive(sealed string) (*activeEmbed, error) {
 // re-embedding; otherwise needsReembed is true and it is left untouched.
 func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (needsReembed bool, err error) {
 	s = s.WithDefaults()
-	if err := s.Validate(st.AllowPrivate); err != nil {
-		return false, err
-	}
 	tx, err := st.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -277,6 +277,9 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (ne
 		if s.EmbedAPIKey == "" {
 			s.EmbedAPIKey = prev.EmbedAPIKey
 		}
+	}
+	if err := s.Validate(st.AllowPrivate); err != nil {
+		return false, err
 	}
 	keySealed, err := st.seal(s.APIKey)
 	if err != nil {
@@ -339,7 +342,13 @@ func (st *Store) PromoteActiveEmbedTx(ctx context.Context, tx *sql.Tx, userID st
 	if err != nil {
 		return err
 	}
-	sealed, err := st.sealActive(*s)
+	return st.PromoteActiveEmbedSettingsTx(ctx, tx, userID, *s)
+}
+
+// PromoteActiveEmbedSettingsTx makes exactly s the active embedder settings,
+// regardless of what the user's desired settings are now.
+func (st *Store) PromoteActiveEmbedSettingsTx(ctx context.Context, tx *sql.Tx, userID string, s Settings) error {
+	sealed, err := st.sealActive(s)
 	if err != nil {
 		return err
 	}
@@ -361,7 +370,7 @@ func (st *Store) GetActiveEmbed(ctx context.Context, userID string) (*Settings, 
 			return nil, err
 		}
 		key := s.EmbedAPIKey
-		if key == "" {
+		if key == "" && s.Provider != ProviderAnthropic {
 			key = s.APIKey
 		}
 		return &Settings{Provider: ProviderOpenAI, BaseURL: s.EffectiveEmbedURL(), APIKey: key, EmbedModel: s.EmbedModel,

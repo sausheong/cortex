@@ -573,3 +573,32 @@ func TestSoftDeleteByConnection(t *testing.T) {
 		t.Error("restore failed")
 	}
 }
+
+func TestVectorSearchSkipsSoftDeletedBeforeLimit(t *testing.T) {
+	ctx := context.Background()
+	c := openSD(t)
+	var dead []string
+	for _, txt := range []string{"alpha hiking trip", "alpha hiking trail", "alpha hiking boots"} {
+		m := &Memory{Content: txt, Source: "s"}
+		if err := c.PutMemory(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		sdEmbed(t, c, m.ID, "memory", m.Content)
+		dead = append(dead, m.ID)
+	}
+	live := &Memory{Content: "completely unrelated zzz qqq", Source: "s"}
+	if err := c.PutMemory(ctx, live); err != nil {
+		t.Fatal(err)
+	}
+	sdEmbed(t, c, live.ID, "memory", live.Content)
+	if _, n, err := c.SoftDeleteMemories(ctx, DeleteFilter{IDs: dead}, "user"); err != nil || n != 3 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	got, err := c.SearchMemoryVector(ctx, "alpha hiking trip", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != live.ID {
+		t.Fatalf("got %v, want the live memory despite 3 nearer deleted ones", got)
+	}
+}

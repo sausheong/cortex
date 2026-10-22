@@ -36,6 +36,13 @@ func embedItems(ctx context.Context, target cortex.Embedder, items []cortex.Embe
 // have the new generation are skipped. On any failure the old generation
 // stays active.
 func ReEmbed(ctx context.Context, cx *cortex.Cortex, st *accounts.Store, target cortex.Embedder, report func(done, total int)) error {
+	return ReEmbedWith(ctx, cx, st, target, nil, report)
+}
+
+// ReEmbedWith is ReEmbed, but when set is non-nil the flip promotes exactly
+// those settings (the ones target was built from) instead of re-reading the
+// user's current desired settings, which may have changed during the job.
+func ReEmbedWith(ctx context.Context, cx *cortex.Cortex, st *accounts.Store, target cortex.Embedder, set *accounts.Settings, report func(done, total int)) error {
 	if report == nil {
 		report = func(int, int) {}
 	}
@@ -112,6 +119,9 @@ func ReEmbed(ctx context.Context, cx *cortex.Cortex, st *accounts.Store, target 
 			return nil
 		}
 		inTx := func(tx *sql.Tx) error {
+			if set != nil {
+				return st.PromoteActiveEmbedSettingsTx(ctx, tx, cx.UserID(), *set)
+			}
 			return st.PromoteActiveEmbedTx(ctx, tx, cx.UserID())
 		}
 		err := cx.FlipGeneration(ctx, newGen, embedTail, inTx)

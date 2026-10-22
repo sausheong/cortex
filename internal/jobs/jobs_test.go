@@ -683,3 +683,35 @@ func TestIsolationReEmbed(t *testing.T) {
 		t.Fatalf("a generation = %d", g)
 	}
 }
+
+func TestReEmbedWithPromotesBuiltSettings(t *testing.T) {
+	e := newEnv(t)
+	ctx := t.Context()
+	uid := e.user(t, "snap")
+	oldE, newE := &stub{dims: 256}, &stub{dims: 512}
+	cx := e.handle(uid, oldE, 0)
+	addChunk(t, cx, oldE, "zebra crossing")
+	built := accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "sk-secret-3f9a", ChatModel: "m", EmbedModel: "model-b", EmbedDims: 512}
+	// The user changes the desired settings while the job runs.
+	newE.after = func(call int64) {
+		other := built
+		other.EmbedModel = "model-c"
+		other.EmbedDims = 768
+		if _, err := e.st.PutSettings(ctx, uid, other); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, err := e.st.PutSettings(ctx, uid, built); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReEmbedWith(ctx, cx, e.st, newE, &built, nil); err != nil {
+		t.Fatal(err)
+	}
+	a, err := e.st.GetActiveEmbed(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.EmbedModel != "model-b" || a.EmbedDims != 512 {
+		t.Fatalf("active = %s/%d, want model-b/512", a.EmbedModel, a.EmbedDims)
+	}
+}

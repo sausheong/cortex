@@ -102,3 +102,17 @@ func TestLimiterBlocksAfterBurst(t *testing.T) {
 }
 
 var _ = http.StatusOK
+
+func TestAnthropicRequiresEmbedKeyAndNeverFallsBack(t *testing.T) {
+	s := Settings{Provider: ProviderAnthropic, APIKey: "chat-key"}
+	if err := s.Validate(false); err == nil {
+		t.Error("anthropic without an embed key accepted")
+	}
+	if _, _, _, err := Providers(&s, &s, nil); err == nil {
+		t.Error("Providers used the chat key as embed key")
+	}
+	s.EmbedAPIKey = "ek"
+	if err := s.Validate(false); err != nil {
+		t.Errorf("with embed key: %v", err)
+	}
+}
