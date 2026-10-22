@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/eval"
 )
@@ -25,7 +26,7 @@ func cmdGenerate(ctx context.Context) {
 	out := fs.String("out", "evalset.json", "output JSON path")
 	fs.Parse(os.Args[2:])
 
-	db, err := sql.Open("sqlite", dbPath())
+	db, err := sql.Open("pgx", dbDSN())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "open db: %v\n", err)
 		os.Exit(1)
@@ -122,10 +123,10 @@ func sampleMemories(ctx context.Context, db *sql.DB, n int) []sampledMem {
 		`SELECT id, content, COALESCE(source,'') FROM memories
 		 WHERE (expired_at IS NULL AND invalid_at IS NULL)
 		   AND LENGTH(content) BETWEEN 20 AND 400
-		 ORDER BY RANDOM() LIMIT ?`,
+		 ORDER BY random() LIMIT $1`,
 		`SELECT id, content, COALESCE(source,'') FROM memories
 		 WHERE LENGTH(content) BETWEEN 20 AND 400
-		 ORDER BY RANDOM() LIMIT ?`,
+		 ORDER BY random() LIMIT $1`,
 	}
 	for _, q := range queries {
 		rows, err := db.QueryContext(ctx, q, n)

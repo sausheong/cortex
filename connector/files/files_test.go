@@ -9,11 +9,12 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 func TestSyncMarkdownFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	md1 := `---
 name: Alice
@@ -78,7 +79,7 @@ Bob manages the engineering team.
 
 func TestSyncCSVFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	csv := `name,role,company
 Alice,Engineer,Stripe
@@ -112,7 +113,7 @@ Bob,Manager,Google
 
 func TestSyncYAMLFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	yaml := `people:
   - name: Carol
@@ -149,7 +150,7 @@ func TestSyncYAMLFiles(t *testing.T) {
 
 func TestSyncJSONFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	jsonContent := `{"employees": [{"name": "Eve", "role": "Designer"}, {"name": "Frank", "role": "Developer"}]}`
 	if err := os.WriteFile(filepath.Join(dir, "staff.json"), []byte(jsonContent), 0o644); err != nil {
@@ -179,7 +180,7 @@ func TestSyncJSONFiles(t *testing.T) {
 
 func TestSyncSkipsUnsupportedFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	// Write a binary-like file with unsupported extension.
 	if err := os.WriteFile(filepath.Join(dir, "image.png"), []byte("fake png data"), 0o644); err != nil {
@@ -223,7 +224,7 @@ func TestSyncSkipsUnsupportedFiles(t *testing.T) {
 
 func TestSyncIsIncremental(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	md := `---
 name: Charlie
@@ -274,7 +275,7 @@ Charlie is a developer.
 
 func TestSyncMixedFileTypes(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dbPath := pgtest.DSN(t)
 
 	md := `---
 name: Grace

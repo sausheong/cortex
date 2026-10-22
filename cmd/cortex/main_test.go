@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -153,5 +156,31 @@ func TestParseRememberArgs_UnknownBecomesText(t *testing.T) {
 	}
 	if speaker != "" || source != "" {
 		t.Errorf("speaker/source should be empty, got %q/%q", speaker, source)
+	}
+}
+
+// TestMainRequiresDSN re-executes the test binary as the cortex CLI with no
+// DSN configured and expects exit 1 plus a clear message.
+func TestMainRequiresDSN(t *testing.T) {
+	if os.Getenv("CORTEX_TEST_RUN_MAIN") == "1" {
+		os.Args = []string{"cortex", "recall", "hello"}
+		main()
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestMainRequiresDSN$")
+	env := []string{"CORTEX_TEST_RUN_MAIN=1"}
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "CORTEX_DATABASE_URL=") {
+			env = append(env, e)
+		}
+	}
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	ee, ok := err.(*exec.ExitError)
+	if !ok || ee.ExitCode() != 1 {
+		t.Fatalf("want exit code 1, got err=%v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "set CORTEX_DATABASE_URL or pass --db <postgres-url>") {
+		t.Errorf("missing message; output:\n%s", out)
 	}
 }

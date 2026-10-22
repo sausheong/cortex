@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	oai "github.com/sashabaranov/go-openai"
 )
@@ -34,12 +35,12 @@ type Embedder struct {
 	baseURL string
 }
 
-// NewEmbedder creates a new OpenAI Embedder. Defaults to text-embedding-3-small (1536 dims).
+// NewEmbedder creates a new OpenAI Embedder. Defaults to text-embedding-3-small (512 dims).
 // Use WithEmbedderBaseURL to point at any OpenAI-compatible API.
 func NewEmbedder(apiKey string, opts ...EmbedderOption) *Embedder {
 	e := &Embedder{
 		model: oai.SmallEmbedding3,
-		dims:  1536,
+		dims:  512,
 	}
 	for _, o := range opts {
 		o(e)
@@ -56,10 +57,15 @@ func NewEmbedder(apiKey string, opts ...EmbedderOption) *Embedder {
 
 // Embed generates embedding vectors for the given texts using OpenAI's API.
 func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	resp, err := e.client.CreateEmbeddings(ctx, oai.EmbeddingRequestStrings{
+	req := oai.EmbeddingRequestStrings{
 		Input: texts,
 		Model: e.model,
-	})
+	}
+	// Only text-embedding-3-* models accept the dimensions parameter.
+	if strings.HasPrefix(string(e.model), "text-embedding-3") {
+		req.Dimensions = e.dims
+	}
+	resp, err := e.client.CreateEmbeddings(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: create embeddings: %w", err)
 	}

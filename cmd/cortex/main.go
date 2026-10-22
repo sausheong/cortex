@@ -19,19 +19,27 @@ import (
 	oaillm "github.com/sausheong/cortex/llm/openai"
 )
 
-var dbPath = "brain.db"
+// dbDSN is the Postgres connection URL: --db flag > CORTEX_DATABASE_URL env.
+// There is no default.
+var dbDSN string
+
+// requireDSN exits 1 with a clear message when no DSN was configured.
+func requireDSN() string {
+	if dbDSN == "" {
+		fmt.Fprintln(os.Stderr, "set CORTEX_DATABASE_URL or pass --db <postgres-url>")
+		os.Exit(1)
+	}
+	return dbDSN
+}
 
 func main() {
-	// Resolve database path: --db flag > CORTEX_DB env > default "brain.db".
-	if envDB := os.Getenv("CORTEX_DB"); envDB != "" {
-		dbPath = envDB
-	}
+	dbDSN = os.Getenv("CORTEX_DATABASE_URL")
 
 	// Strip --db flag from os.Args before command parsing.
 	var filtered []string
 	for i := 0; i < len(os.Args); i++ {
 		if os.Args[i] == "--db" && i+1 < len(os.Args) {
-			dbPath = os.Args[i+1]
+			dbDSN = os.Args[i+1]
 			i++ // skip the value
 		} else {
 			filtered = append(filtered, os.Args[i])
@@ -91,13 +99,13 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: cortex [--db <path>] <command> [arguments]
+	fmt.Fprintln(os.Stderr, `Usage: cortex [--db <postgres-url>] <command> [arguments]
 
 Global options:
-  --db <path>                    Path to brain.db (default: brain.db, or CORTEX_DB env var)
+  --db <postgres-url>            Postgres connection URL (or CORTEX_DATABASE_URL env var; no default)
 
 Commands:
-  init                           Create a new brain.db
+  init                           Initialize the Postgres schema and set the owner
   remember <text>                Remember text
   recall <query> [--min-confidence <0-1>]
                                  Recall and print results
@@ -163,7 +171,7 @@ func openCortex() *cortex.Cortex {
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			opts = append(opts, cortex.WithExtractor(deterministic.New()))
-			cx, err := cortex.Open(dbPath, opts...)
+			cx, err := cortex.Open(requireDSN(), opts...)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 				os.Exit(1)
@@ -192,7 +200,7 @@ func openCortex() *cortex.Cortex {
 		cortex.WithExtractor(ext),
 	)
 
-	cx, err := cortex.Open(dbPath, opts...)
+	cx, err := cortex.Open(requireDSN(), opts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 		os.Exit(1)
@@ -221,7 +229,7 @@ func configureEmbedder(embModel, embDimsStr string) cortex.Embedder {
 		embOpts = append(embOpts, oaillm.WithEmbedderBaseURL(baseURL))
 	}
 	if embModel != "" {
-		dims := 1536
+		dims := 512
 		if embDimsStr != "" {
 			if d, err := strconv.Atoi(embDimsStr); err == nil {
 				dims = d
@@ -234,13 +242,13 @@ func configureEmbedder(embModel, embDimsStr string) cortex.Embedder {
 }
 
 func cmdInit() {
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
+	cx, err := cortex.Open(requireDSN(), cortex.WithExtractor(deterministic.New()))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating database: %v\n", err)
 		os.Exit(1)
 	}
 	defer cx.Close()
-	fmt.Println("Initialized brain.db")
+	fmt.Println("Initialized database")
 
 	// Prompt for owner identity.
 	reader := bufio.NewReader(os.Stdin)

@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,20 +12,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-// newTestCortex returns a cortex backed by a hermetic SQLite database in
-// t.TempDir, using only the deterministic extractor (no LLM, no embedder).
-//
-// We deliberately avoid ":memory:" because modernc.org/sqlite uses a connection
-// pool, and a bare ":memory:" gives each pooled connection its own private
-// database. cortex.Recall fans sub-queries out to goroutines, so a chunk
-// written on one connection in Remember() is invisible to a goroutine that
-// lands on a different connection — causing flaky empty results.
+// newTestCortex returns a cortex backed by an isolated Postgres schema, using
+// only the deterministic extractor (no LLM, no embedder).
 func newTestCortex(t *testing.T) *cortex.Cortex {
 	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "cortex.db")
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
+	cx, err := cortex.Open(pgtest.DSN(t), cortex.WithExtractor(deterministic.New()))
 	if err != nil {
 		t.Fatalf("cortex.Open: %v", err)
 	}

@@ -12,12 +12,18 @@ import (
 	oai "github.com/sashabaranov/go-openai"
 )
 
-// dbPath resolves the database path from CORTEX_DB (no default — the
-// benchmark must run against a real, named graph).
-func dbPath() string {
-	p := os.Getenv("CORTEX_DB")
+// dbDSN resolves the Postgres URL from CORTEX_DATABASE_URL (no default — the
+// benchmark must run against a real, named graph). A --db flag, if present in
+// os.Args, takes precedence.
+func dbDSN() string {
+	p := os.Getenv("CORTEX_DATABASE_URL")
+	for i := 1; i+1 < len(os.Args); i++ {
+		if os.Args[i] == "--db" {
+			p = os.Args[i+1]
+		}
+	}
 	if p == "" {
-		fmt.Fprintln(os.Stderr, "CORTEX_DB is required (path to the cortex database to benchmark)")
+		fmt.Fprintln(os.Stderr, "set CORTEX_DATABASE_URL or pass --db <postgres-url>")
 		os.Exit(1)
 	}
 	return p
@@ -25,7 +31,7 @@ func dbPath() string {
 
 // newEmbedder builds the embedder exactly as the main cortex binary does, so
 // query embeddings match the stored ones. Defaults to text-embedding-3-small
-// (1536 dims). Honors EMBEDDING_MODEL/EMBEDDING_DIMS/EMBEDDING_API_KEY/
+// (512 dims). Honors EMBEDDING_MODEL/EMBEDDING_DIMS/EMBEDDING_API_KEY/
 // EMBEDDING_BASE_URL with OPENAI_* fallbacks.
 func newEmbedder() cortex.Embedder {
 	apiKey := os.Getenv("EMBEDDING_API_KEY")
@@ -45,7 +51,7 @@ func newEmbedder() cortex.Embedder {
 		embOpts = append(embOpts, oaillm.WithEmbedderBaseURL(baseURL))
 	}
 	if embModel := os.Getenv("EMBEDDING_MODEL"); embModel != "" {
-		dims := 1536
+		dims := 512
 		if s := os.Getenv("EMBEDDING_DIMS"); s != "" {
 			if d, err := strconv.Atoi(s); err == nil {
 				dims = d
@@ -101,7 +107,7 @@ func newLLM() cortex.LLM {
 // A logger is installed so embedder failures (e.g. an over-quota key) surface
 // loudly instead of silently zeroing the vector path.
 func openForRun() *cortex.Cortex {
-	cx, err := cortex.Open(dbPath(),
+	cx, err := cortex.Open(dbDSN(),
 		cortex.WithEmbedder(newEmbedder()),
 		cortex.WithLogger(func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "[cortex] "+format+"\n", args...)

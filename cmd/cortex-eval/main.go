@@ -11,10 +11,10 @@
 //	    Score the eval set under each ablation config and print a comparison
 //	    table.
 //
-// Configuration mirrors the main cortex binary: CORTEX_DB for the database,
+// Configuration mirrors the main cortex binary: CORTEX_DATABASE_URL for the database,
 // OPENAI_API_KEY / EMBEDDING_* / LLM_* for providers. The embedder MUST match
 // the one that produced the stored embeddings (default text-embedding-3-small,
-// 1536 dims) or vector recall will be meaningless.
+// 512 dims) or vector recall will be meaningless.
 package main
 
 import (
@@ -46,6 +46,6 @@ func usage() {
   cortex-eval generate --n <count> --out <evalset.json> [--abstain <count>] [--abstain-hard <count>]
   cortex-eval run --set <evalset.json> [--limit <k>] [--out <results.json>]
 
-env: CORTEX_DB (required), OPENAI_API_KEY / EMBEDDING_MODEL / EMBEDDING_DIMS,
+env: CORTEX_DATABASE_URL (required), OPENAI_API_KEY / EMBEDDING_MODEL / EMBEDDING_DIMS,
      LLM_PROVIDER / LLM_MODEL (generate needs an LLM to write questions)`)
 }
