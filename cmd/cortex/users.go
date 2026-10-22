@@ -42,18 +42,33 @@ func listUsers(ctx context.Context, root *cortex.Cortex, w io.Writer) error {
 }
 
 func cmdUsers() {
-	if len(os.Args) < 3 || os.Args[2] != "list" {
-		fmt.Fprintln(os.Stderr, "usage: cortex users list")
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: cortex users list | cortex users set-provider --user <id|verified-email> [flags]")
 		os.Exit(1)
 	}
-	root, err := cortex.Open(requireDSN())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer root.Close()
-	if err := listUsers(context.Background(), root, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	switch os.Args[2] {
+	case "list":
+		if userRef != "" {
+			fmt.Fprintln(os.Stderr, "usage: cortex users list")
+			os.Exit(1)
+		}
+		root, err := cortex.Open(requireDSN())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		defer root.Close()
+		if err := listUsers(context.Background(), root, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "set-provider":
+		if err := cmdSetProvider(userRef, os.Args[3:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "usage: cortex users list | cortex users set-provider --user <id|verified-email> [flags]")
 		os.Exit(1)
 	}
 }

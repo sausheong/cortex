@@ -61,7 +61,7 @@ func main() {
 	}
 	if ref != "" {
 		if !userCommands[cmd] {
-			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync)\n", cmd)
+			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync, users set-provider)\n", cmd)
 			os.Exit(1)
 		}
 		userRef = ref
@@ -132,6 +132,10 @@ Commands:
   serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
   migrate [--timeout 30m]        Apply database migrations and report the versions
   users list                     List users (ID, email, created, usage)
+  users set-provider --user <id|verified-email> [--provider openai-compatible|anthropic] [--base-url URL]
+                     [--chat-model M] [--embed-model M] [--embed-dims N] [--embed-base-url URL] [--skip-test]
+                                 Set a user's AI provider settings. API key from stdin (line 1; line 2 = embed key)
+                                 or CORTEX_PROVIDER_API_KEY / CORTEX_PROVIDER_EMBED_API_KEY; never argv
   init                           Initialize the Postgres schema and set the owner
   remember <text>                Remember text
   recall <query> [--min-confidence <0-1>]
