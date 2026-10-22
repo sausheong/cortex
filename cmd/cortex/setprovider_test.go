@@ -57,7 +57,7 @@ func TestSetProviderRightUserOnlyKeyNotLeaked(t *testing.T) {
 	srv := fakeProvider(t, false)
 	var out bytes.Buffer
 	args := []string{"--base-url", srv.URL + "/v1", "--chat-model", "gpt-x"}
-	if err := runSetProvider(ctx, &out, st, root, "a@x.test", args, strings.NewReader(spKey+"\n"), map[string]string{}, srv.Client()); err != nil {
+	if err := runSetProvider(ctx, &out, st, root, "a@x.test", args, strings.NewReader(spKey+"\n"), map[string]string{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetSettings(ctx, a.ID)
@@ -72,7 +72,7 @@ func TestSetProviderRightUserOnlyKeyNotLeaked(t *testing.T) {
 	}
 	// env key, keeps others unchanged
 	out.Reset()
-	if err := runSetProvider(ctx, &out, st, root, a.ID, []string{"--chat-model", "gpt-y"}, nil, map[string]string{"CORTEX_PROVIDER_API_KEY": "sk-env-9999"}, srv.Client()); err != nil {
+	if err := runSetProvider(ctx, &out, st, root, a.ID, []string{"--chat-model", "gpt-y"}, nil, map[string]string{"CORTEX_PROVIDER_API_KEY": "sk-env-9999"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.GetSettings(ctx, a.ID)
@@ -88,7 +88,7 @@ func TestSetProviderAmbiguousEmailRefused(t *testing.T) {
 	a, _ := root.CreateUser(ctx, "s1", "dup@x.test", "A", true)
 	b, _ := root.CreateUser(ctx, "s2", "dup@x.test", "B", true)
 	srv := fakeProvider(t, false)
-	err := runSetProvider(ctx, &bytes.Buffer{}, st, root, "dup@x.test", []string{"--base-url", srv.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, srv.Client())
+	err := runSetProvider(ctx, &bytes.Buffer{}, st, root, "dup@x.test", []string{"--base-url", srv.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, nil)
 	if err == nil || !strings.Contains(err.Error(), a.ID) || !strings.Contains(err.Error(), b.ID) {
 		t.Fatalf("want ambiguity error: %v", err)
 	}
@@ -105,12 +105,12 @@ func TestSetProviderTestFailureLeavesSettingsUnchanged(t *testing.T) {
 	ctx := t.Context()
 	u, _ := root.CreateUser(ctx, "s1", "u@x.test", "U", true)
 	good := fakeProvider(t, false)
-	if err := runSetProvider(ctx, &bytes.Buffer{}, st, root, u.ID, []string{"--base-url", good.URL + "/v1"}, strings.NewReader("sk-old"), map[string]string{}, good.Client()); err != nil {
+	if err := runSetProvider(ctx, &bytes.Buffer{}, st, root, u.ID, []string{"--base-url", good.URL + "/v1"}, strings.NewReader("sk-old"), map[string]string{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	bad := fakeProvider(t, true)
 	var out bytes.Buffer
-	err := runSetProvider(ctx, &out, st, root, u.ID, []string{"--base-url", bad.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, bad.Client())
+	err := runSetProvider(ctx, &out, st, root, u.ID, []string{"--base-url", bad.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, nil)
 	if err == nil || strings.Contains(err.Error()+out.String(), spKey) {
 		t.Fatalf("want failure without key: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestSetProviderTestFailureLeavesSettingsUnchanged(t *testing.T) {
 		t.Fatalf("settings changed: %+v", got)
 	}
 	// --skip-test bypasses the test
-	if err := runSetProvider(ctx, &out, st, root, u.ID, []string{"--skip-test", "--base-url", bad.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, bad.Client()); err != nil {
+	if err := runSetProvider(ctx, &out, st, root, u.ID, []string{"--skip-test", "--base-url", bad.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.GetSettings(ctx, u.ID)
