@@ -233,6 +233,33 @@ select pg_size_pretty(pg_database_size('cortex'));
 
 Compare the index total with `shared_buffers` plus free page cache (`free -m`), and `df -h` for disk. After resizing, re-run `setup-server.sh` to recompute the memory settings.
 
+### Benchmark: 2 users x 100K vectors on 512 MB (recorded 2026-10-22)
+
+Run locally (not on the droplet) in a `pgvector/pgvector:pg17` container limited to `--memory=512m --memory-swap=2560m --cpus=1`, with the settings `setup-server.sh` computes for 512 MB RAM (`shared_buffers=128MB`, `effective_cache_size=307MB`, `maintenance_work_mem=64MB`, `work_mem=4MB`, `max_connections=20`). Test: `bench_test.go` (`go test -tags bench -run TestBenchTwoUsers`). Data: 2 users x 100K random normalised 512-dim halfvec memory embeddings (generation 1), index `emb_hnsw_memory_512` built through `EnsureVectorIndex`. 200 queries per measurement. Random vectors have no cluster structure, so this is a hard case for HNSW. The Docker VM's CPU is not the droplet's, so treat absolute timings as indicative.
+
+| Measurement | p50 | p95 |
+|---|---|---|
+| `searchVectorRaw` (memory, top 10), user A alone | 2.2 ms | 2.9 ms |
+| same, A with B loaded | 4.1 ms | 18.6 ms |
+| same, B with A loaded | 4.0 ms | 6.4 ms |
+| same, A with B, index rebuilt over 200K | 3.3 ms | 4.7 ms |
+| `SearchMemoryVector` top 20 (with row hydration), A with B / B with A | 10.3 / 15.0 ms | 11.6 / 29.2 ms |
+| `Recall` (stub LLM and embedder, default four-way plan), A alone | 16.5 ms | 21.3 ms |
+| `Recall`, A with B / B with A | 20.3 / 34.8 ms | 33.7 / 53.7 ms |
+| `Recall`, A with B, index rebuilt | 19.4 ms | 34.7 ms |
+
+Targets held: vector p95 < 200 ms and recall p95 < 500 ms (excluding LLM and embedding API time), with no OOM kill. There was one 230 ms single-query outlier in `Recall` (max, not p95).
+
+Build and memory, the real cost on this size:
+
+- Index build for 100K rows: 3 min 17 s. Index size 130 MB (260 MB for 200K).
+- Adding user B's 100K rows into the existing index (incremental inserts): 6 min 30 s.
+- Cold rebuild over 200K rows: 11 min 56 s. The index (130 MB per 100K) exceeds `maintenance_work_mem` (64 MB), so pgvector builds the graph on disk-spilling pages. Run `ensure-index` jobs off-peak and expect minutes, not seconds.
+- cgroup memory sat at the 512 MB limit during and after builds (peak 512 MB), but almost all of it was reclaimable page cache (`file_cache` about 480 MB, anon 6 to 32 MB). Postgres process RSS summed 265 to 473 MB (includes shared buffers counted per process). Swap use stayed at 0 to 13 MB. No OOM kill.
+- Queries are fast because the 260 MB index mostly fits in page cache on this host; on a droplet with other processes (cortex app, Caddy) cache pressure will be higher, so first queries after a cold start can be slower.
+
+Conclusion: 512 MB + 2 GB swap passes the targets at 2 x 100K, but index builds are slow (minutes) and run at the memory limit. Resize to 1 GB or more before loading much beyond 200K vectors in total, or if builds must be quick.
+
 ## Pinning downstream projects
 
 `v0.4.0` is the last SQLite release. Projects that depend on cortex and are not ready for Postgres should pin it:
