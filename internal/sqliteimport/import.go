@@ -232,7 +232,7 @@ func copyTable(ctx context.Context, src *sql.DB, tx *sql.Tx, ts tableSpec) error
 
 	// Rows are sent copyBatchRows at a time in one multi-row INSERT: the
 	// target is usually across a network, and one round trip per row made a
-	// 30K-row brain take most of an hour over Tailscale.
+	// 30K-row brain take most of an hour over the internet.
 	var args []any
 	var ids []string
 	flush := func() error {

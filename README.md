@@ -114,7 +114,7 @@ This gives you the core library, all connectors, and all provider implementation
 cortex init
 ```
 
-This connects to the Postgres database named by `CORTEX_DATABASE_URL` (or `--db <dsn>`), applies the schema migrations, and creates the owner entity. Set it first, for example `export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@host:5432/cortex'`. To provision a server (droplet or Raspberry Pi), see [docs/deploy.md](docs/deploy.md). To bring over a v0.4 SQLite brain, run `cortex import-sqlite <brain.db>`.
+This connects to the Postgres database named by `CORTEX_DATABASE_URL` (or `--db <dsn>`), applies the schema migrations, and creates the owner entity. Set it first, for example `export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@host:5432/cortex'`. To provision a server (droplet or Raspberry Pi), see [docs/deploy.md](docs/deploy.md); a public server uses TLS only, so use `?sslmode=verify-full` in the DSN. To bring over a v0.4 SQLite brain, run `cortex import-sqlite <brain.db>`.
 
 During initialization, cortex will prompt for your identity:
 - **Name** (required)
