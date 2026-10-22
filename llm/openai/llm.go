@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -64,9 +65,15 @@ func WithBaseURL(url string) LLMOption {
 // LLM implements the cortex.LLM interface using OpenAI's API.
 // Works with any OpenAI-compatible API by setting a custom base URL.
 type LLM struct {
-	client  *oai.Client
-	model   string
-	baseURL string
+	client     *oai.Client
+	model      string
+	baseURL    string
+	httpClient *http.Client
+}
+
+// WithHTTPClient makes the LLM use hc for every request.
+func WithHTTPClient(hc *http.Client) LLMOption {
+	return func(l *LLM) { l.httpClient = hc }
 }
 
 // NewLLM creates a new OpenAI LLM provider. Use WithBaseURL to point at
@@ -78,13 +85,14 @@ func NewLLM(apiKey string, opts ...LLMOption) *LLM {
 	for _, o := range opts {
 		o(l)
 	}
+	cfg := oai.DefaultConfig(apiKey)
 	if l.baseURL != "" {
-		cfg := oai.DefaultConfig(apiKey)
 		cfg.BaseURL = l.baseURL
-		l.client = oai.NewClientWithConfig(cfg)
-	} else {
-		l.client = oai.NewClient(apiKey)
 	}
+	if l.httpClient != nil {
+		cfg.HTTPClient = l.httpClient
+	}
+	l.client = oai.NewClientWithConfig(cfg)
 	return l
 }
 
