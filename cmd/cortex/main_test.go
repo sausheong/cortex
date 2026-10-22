@@ -184,3 +184,13 @@ func TestMainRequiresDSN(t *testing.T) {
 		t.Errorf("missing message; output:\n%s", out)
 	}
 }
+
+func TestParseImportSQLiteArgs(t *testing.T) {
+	o, err := parseImportSQLiteArgs([]string{"x.db", "--force", "--embed-only"})
+	if err != nil || o.Path != "x.db" || !o.Force || !o.EmbedOnly {
+		t.Fatalf("%+v %v", o, err)
+	}
+	if _, err := parseImportSQLiteArgs(nil); err == nil {
+		t.Fatal("expected usage error")
+	}
+}

@@ -89,6 +89,8 @@ func main() {
 		cmdMaintain()
 	case "profile":
 		cmdProfile()
+	case "import-sqlite":
+		cmdImportSQLite()
 	case "mcp":
 		cmdMCP()
 	default:
@@ -122,6 +124,8 @@ Commands:
   config --email <email>         Add an email address
   export [--vault <dir>] [--full] [--dry-run]
                                  Export the knowledge graph as an Obsidian-compatible markdown vault
+  import-sqlite <path> [--force] [--embed-only]
+                                 Import a v0.4 SQLite brain into Postgres, then embed rows lacking embeddings
   init-schema [<dir>] [--force]
                                  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
