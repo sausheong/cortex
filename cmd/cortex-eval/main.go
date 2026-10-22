@@ -1,13 +1,13 @@
 // Command cortex-eval is a retrieval-quality benchmark for cortex. It has two
 // subcommands:
 //
-//	cortex-eval generate --n 100 --out evalset.json [--abstain 10] [--abstain-hard 10]
+//	cortex-eval generate [--db <postgres-url>] --n 100 --out evalset.json [--abstain 10] [--abstain-hard 10]
 //	    Sample N memories from the graph and use the LLM to write a natural
 //	    question for each (synthetic ground truth), plus easy (out-of-domain)
 //	    and hard (counterfactual, on-topic) abstention negatives. Writes an
 //	    eval set as JSON.
 //
-//	cortex-eval run --set evalset.json [--limit 10] [--out results.json]
+//	cortex-eval run [--db <postgres-url>] --set evalset.json [--limit 10] [--out results.json]
 //	    Score the eval set under each ablation config and print a comparison
 //	    table.
 //
@@ -43,9 +43,9 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
-  cortex-eval generate --n <count> --out <evalset.json> [--abstain <count>] [--abstain-hard <count>]
-  cortex-eval run --set <evalset.json> [--limit <k>] [--out <results.json>]
+  cortex-eval generate [--db <postgres-url>] --n <count> --out <evalset.json> [--abstain <count>] [--abstain-hard <count>]
+  cortex-eval run [--db <postgres-url>] --set <evalset.json> [--limit <k>] [--out <results.json>]
 
-env: CORTEX_DATABASE_URL (required), OPENAI_API_KEY / EMBEDDING_MODEL / EMBEDDING_DIMS,
+env: CORTEX_DATABASE_URL (or --db <postgres-url>), OPENAI_API_KEY / EMBEDDING_MODEL / EMBEDDING_DIMS,
      LLM_PROVIDER / LLM_MODEL (generate needs an LLM to write questions)`)
 }

@@ -13,6 +13,8 @@ import (
 
 func newFlags(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	// --db is read by dbDSN() from os.Args; declare it so Parse accepts it.
+	fs.String("db", "", "Postgres URL (overrides CORTEX_DATABASE_URL)")
 	return fs
 }
 
