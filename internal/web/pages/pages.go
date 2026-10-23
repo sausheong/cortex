@@ -16,6 +16,7 @@ type Template = template.Template
 // Page is the data every template receives.
 type Page struct {
 	CSRF     string
+	Nonce    string // per-response CSP nonce for inline scripts
 	SignedIn bool
 	Path     string // request path, used to mark the current nav item
 	Data     any

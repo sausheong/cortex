@@ -100,7 +100,7 @@
   <textarea id="instructions" readonly rows="9">{{.Instructions}}</textarea>
   <p><button class="btn-secondary js-only" type="button" data-copy="instructions" data-copy-label="Copy">Copy</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
 </section>
-<script>
+<script nonce="{{$.Nonce}}">
 var nt=document.getElementById('new-token');if(nt){nt.focus()}
 document.querySelectorAll('[data-copy]').forEach(function(b){
 b.addEventListener('click',function(){

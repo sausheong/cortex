@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{template "title" .}} · cortex</title>
 <link rel="stylesheet" href="/static/app.css">
-<script>document.documentElement.className="js"</script>
+<script nonce="{{$.Nonce}}">document.documentElement.className="js"</script>
 {{block "head" .}}{{end}}
 </head>
 <body>
@@ -24,7 +24,7 @@
   </nav>{{end}}
 </header>
 <main id="main" tabindex="-1">{{template "content" .}}</main>
-<script>
+<script nonce="{{$.Nonce}}">
 (function(){
 // Progressive enhancement: on submit, disable the form's buttons and show the
 // clicked one as working, so a slow request cannot be sent twice.

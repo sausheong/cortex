@@ -455,8 +455,14 @@ func TestSecurityHeadersOnAllPages(t *testing.T) {
 	e := newEnv(t)
 	check := func(name string, r *http.Response) {
 		t.Helper()
-		if r.Header.Get("Content-Security-Policy") != "frame-ancestors 'none'; img-src 'self' data:" || r.Header.Get("X-Frame-Options") != "DENY" {
-			t.Errorf("%s: missing headers: %v", name, r.Header)
+		csp := r.Header.Get("Content-Security-Policy")
+		for _, want := range []string{"default-src 'self'", "script-src 'self' 'nonce-", "img-src 'self' data:", "connect-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self' https://accounts.google.com"} {
+			if !strings.Contains(csp, want) {
+				t.Errorf("%s: CSP missing %q: %s", name, want, csp)
+			}
+		}
+		if strings.Contains(csp, "unsafe-inline") || r.Header.Get("X-Frame-Options") != "DENY" {
+			t.Errorf("%s: bad headers: %v", name, r.Header)
 		}
 	}
 	r, _ := e.get("/")
@@ -741,5 +747,38 @@ func TestSettingsFieldErrorIsInline(t *testing.T) {
 	}
 	if strings.Contains(body, `name="embed_base_url"`+" ") && strings.Contains(body, `id="err-ebase" role="alert">base`) {
 		t.Fatal("error leaked to the embedding field")
+	}
+}
+
+var scriptTag = regexp.MustCompile(`<script\b[^>]*>`)
+
+// Each page's CSP carries a fresh nonce and every inline script uses it.
+func TestCSPNonceMatchesInlineScripts(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	seen := map[string]bool{}
+	for _, p := range []string{"/", "/settings", "/memories", "/connections", "/vault", "/graph", "/account"} {
+		r, body := e.get(p)
+		if r.StatusCode != 200 {
+			t.Errorf("%s: %d", p, r.StatusCode)
+			continue
+		}
+		m := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(r.Header.Get("Content-Security-Policy"))
+		if m == nil || len(m[1]) < 16 {
+			t.Errorf("%s: no nonce in CSP", p)
+			continue
+		}
+		if seen[m[1]] {
+			t.Errorf("%s: nonce reused", p)
+		}
+		seen[m[1]] = true
+		for _, tag := range scriptTag.FindAllString(body, -1) {
+			if strings.Contains(tag, " src=") {
+				continue
+			}
+			if !strings.Contains(tag, `nonce="`+m[1]+`"`) {
+				t.Errorf("%s: inline script without this response's nonce: %s", p, tag)
+			}
+		}
 	}
 }

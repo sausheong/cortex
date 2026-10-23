@@ -5,8 +5,10 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -143,12 +145,34 @@ func (s *server) handler() http.Handler {
 	return securityHeaders(mux)
 }
 
+type nonceKey struct{}
+
+// cspHeader is the page policy. Scripts run only from this origin or with the
+// per-response nonce; there are no inline styles or event-handler attributes.
+// The consent page omits form-action: its POST redirects to the client's own
+// redirect URI, which browsers would otherwise block.
+func cspHeader(nonce string, formAction bool) string {
+	p := "default-src 'self'; script-src 'self' 'nonce-" + nonce + "'; style-src 'self'; " +
+		"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+	if formAction {
+		p += "; form-action 'self' https://accounts.google.com"
+	}
+	return p
+}
+
+func newNonce() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return base64.RawStdEncoding.EncodeToString(b)
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := newNonce()
 		h := w.Header()
-		h.Set("Content-Security-Policy", "frame-ancestors 'none'; img-src 'self' data:")
+		h.Set("Content-Security-Policy", cspHeader(n, true))
 		h.Set("X-Frame-Options", "DENY")
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), nonceKey{}, n)))
 	})
 }
 
@@ -196,6 +220,10 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 		return
 	}
 	p := pages.Page{Data: data, Path: r.URL.Path}
+	if n, ok := r.Context().Value(nonceKey{}).(string); ok {
+		p.Nonce = n
+		w.Header().Set("Content-Security-Policy", cspHeader(n, name != "consent"))
+	}
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
 		if name == "home" || name == "memories" || name == "connections" || name == "settings" {

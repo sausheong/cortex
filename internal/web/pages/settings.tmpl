@@ -55,7 +55,7 @@
     <p class="note save-help">We make one small test request to your provider first. If it fails, nothing is saved, and we show you why.</p>
   </div>
 </form>
-{{if .Live}}<script>
+{{if .Live}}<script nonce="{{$.Nonce}}">
 (function(){var el=document.getElementById('job');if(!el)return;
 function text(j){if(j.status==='queued')return 'Waiting to start.';
 if(j.status==='running')return j.total?('Updating '+j.done+' of '+j.total+' memories. You can leave this page.'):'Getting started.';

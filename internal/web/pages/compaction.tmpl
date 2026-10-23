@@ -17,11 +17,11 @@
 {{end}}
 {{if eq .Status "proposing"}}
 <p class="lede" id="proposing" role="status">Looking for memories to merge. This page refreshes on its own.</p>
-<script>
-(function(){var t=setInterval(function(){fetch(location.href,{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(h){
+<script nonce="{{$.Nonce}}">
+(function(){var nonce=document.currentScript.nonce,t=setInterval(function(){fetch(location.href,{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(h){
 var d=new DOMParser().parseFromString(h,"text/html");if(d.getElementById("proposing"))return;
 clearInterval(t);document.getElementById("main").innerHTML=d.getElementById("main").innerHTML;
-var s=document.getElementById("main").querySelectorAll("script");s.forEach(function(o){var n=document.createElement("script");n.textContent=o.textContent;o.replaceWith(n)});
+var s=document.getElementById("main").querySelectorAll("script");s.forEach(function(o){var n=document.createElement("script");n.nonce=nonce;n.textContent=o.textContent;o.replaceWith(n)});
 document.getElementById("main").focus()}).catch(function(){})},3000)})();
 </script>
 {{else if eq .Status "ready"}}
@@ -49,7 +49,7 @@ document.getElementById("main").focus()}).catch(function(){})},3000)})();
     <button class="btn-secondary" name="select" value="all">Review all {{len .Changes}}</button>
   </div>
 </form>
-<script>
+<script nonce="{{$.Nonce}}">
 (function(){var all=document.getElementById('select-all'),box=document.getElementById('changes'),out=document.getElementById('selected-count');
 if(!all||!box)return;var cs=box.querySelectorAll('input[name=idx]');
 function upd(){var n=0;cs.forEach(function(c){if(c.checked)n++});out.textContent=n+' of '+cs.length+' selected';all.checked=n===cs.length;all.indeterminate=n>0&&n<cs.length}
