@@ -191,7 +191,7 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	p := pages.Page{Data: data}
+	p := pages.Page{Data: data, Path: r.URL.Path}
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
 	}

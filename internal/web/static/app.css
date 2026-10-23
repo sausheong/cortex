@@ -1,10 +1,18 @@
-:root{--bg:#fafaf7;--fg:#1d1d1b;--muted:#6b6b66;--line:#dcdcd4;--line-strong:oklch(0.62 0.01 100);--accent:#1f5f4a;--err:#a32020;
---danger:oklch(0.46 0.17 27);--on-danger:oklch(0.985 0.006 27);--danger-bg:oklch(0.965 0.022 27);--danger-line:oklch(0.78 0.08 27);
---info-bg:oklch(0.955 0.02 165);--info-line:oklch(0.8 0.05 165)}
-@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecece6;--muted:#9a9a92;--line:#33332f;--line-strong:oklch(0.55 0.01 100);--accent:#6cc4a1;--err:#ff8a8a;
---danger:oklch(0.68 0.16 25);--on-danger:oklch(0.2 0.02 25);--danger-bg:oklch(0.27 0.04 25);--danger-line:oklch(0.5 0.1 25);
---info-bg:oklch(0.26 0.03 165);--info-line:oklch(0.45 0.06 165)}}
+:root{
+/* Scene: the owner at a desk in the evening, checking what his assistants remembered under a warm lamp. Quiet, low glare, so light is warm paper and dark is warm charcoal; both follow the OS setting. Strategy: restrained, one green accent for the primary action, links, current nav and active state. Neutrals are tinted toward hue 85, never pure black or white. */
+--bg:oklch(0.975 0.008 85);--fg:oklch(0.23 0.012 85);--muted:oklch(0.47 0.014 85);
+--line:oklch(0.89 0.01 85);--line-strong:oklch(0.6 0.014 85);
+--accent:oklch(0.42 0.09 165);--on-accent:oklch(0.985 0.008 85);--accent-soft:oklch(0.94 0.03 165);
+--danger:oklch(0.46 0.17 27);--on-danger:oklch(0.985 0.006 27);--danger-bg:oklch(0.955 0.025 27);--danger-line:oklch(0.62 0.14 27);
+--info-bg:oklch(0.945 0.025 165);--info-line:oklch(0.78 0.06 165)}
+@media (prefers-color-scheme:dark){:root{
+--bg:oklch(0.2 0.008 85);--fg:oklch(0.93 0.01 85);--muted:oklch(0.73 0.012 85);
+--line:oklch(0.31 0.01 85);--line-strong:oklch(0.58 0.012 85);
+--accent:oklch(0.78 0.1 165);--on-accent:oklch(0.2 0.02 165);--accent-soft:oklch(0.29 0.03 165);
+--danger:oklch(0.74 0.14 25);--on-danger:oklch(0.2 0.02 25);--danger-bg:oklch(0.28 0.045 25);--danger-line:oklch(0.52 0.11 25);
+--info-bg:oklch(0.27 0.03 165);--info-line:oklch(0.46 0.06 165)}}
 /* Type scale (fixed rem, app UI): small 0.875, body 1, h2 1.25, h1 1.75. Weights: 400 body, 500 labels and links in nav, 600 headings and emphasis. */
+:root{accent-color:var(--accent)}
 :root{--font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;--text-sm:.875rem;--text-base:1rem;--text-lg:1.25rem;--text-xl:1.75rem;
 --lh-body:1.55;--lh-tight:1.2;--measure:68ch;--w-body:400;--w-label:500;--w-strong:600}
 body{margin:0;background:var(--bg);color:var(--fg);font:var(--w-body) var(--text-base)/var(--lh-body) var(--font);font-kerning:normal;-webkit-text-size-adjust:100%;text-rendering:optimizeLegibility}
@@ -21,7 +29,11 @@ input[aria-invalid=true]{border-color:var(--danger);border-width:2px}
 
 /* Buttons: one primary per page; secondary is the quiet default; danger is only for destructive steps. */
 .btn,.btn-secondary,.btn-danger,.btn-danger-quiet{display:inline-flex;align-items:center;justify-content:center;min-height:44px;box-sizing:border-box;padding:8px 16px;border:1px solid transparent;border-radius:6px;font:inherit;text-decoration:none;cursor:pointer}
-.btn{background:var(--accent);color:var(--bg)}
+.btn{background:var(--accent);color:var(--on-accent);font-weight:var(--w-label)}
+.btn:hover{background:color-mix(in oklch,var(--accent),var(--fg) 12%)}
+.btn-secondary:hover{background:var(--accent-soft)}
+.btn-danger:hover{background:color-mix(in oklch,var(--danger),var(--fg) 12%)}
+.btn-danger-quiet:hover{background:var(--danger-bg)}
 .btn-secondary{background:transparent;color:var(--fg);border-color:var(--line-strong)}
 .btn-danger{background:var(--danger);color:var(--on-danger);font-weight:var(--w-strong)}
 .btn-danger-quiet{background:transparent;color:var(--danger);border-color:var(--danger-line)}
@@ -61,6 +73,11 @@ main :is(p,li,dd,.lede,.note){max-width:var(--measure)}
 .conns li,.memlist li,.change li{max-width:none}
 .conn-name{font-weight:var(--w-label)}
 .top nav a,.top .link{font-size:var(--text-sm);font-weight:var(--w-label)}
+/* Current page: bold weight plus a 2px underline, so it never relies on colour alone. */
+.top nav a{color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;box-sizing:border-box}
+.top nav a:hover{color:var(--fg)}
+.top nav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}
+.top .link{color:var(--muted)}.top .link:hover{color:var(--fg)}
 code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums}
 .confirm h1,.consent h1{margin-bottom:var(--s3)}

@@ -4,6 +4,7 @@ package pages
 import (
 	"embed"
 	"html/template"
+	"strings"
 )
 
 //go:embed *.tmpl
@@ -16,7 +17,22 @@ type Template = template.Template
 type Page struct {
 	CSRF     string
 	SignedIn bool
+	Path     string // request path, used to mark the current nav item
 	Data     any
+}
+
+// Current returns aria-current="page" markup when href is the section the
+// request path belongs to. /memories/deleted is its own item, not Memories.
+func (p Page) Current(href string) template.HTMLAttr {
+	path := p.Path
+	on := path == href
+	if !on && href != "/memories/deleted" {
+		on = strings.HasPrefix(path, href+"/") && !(href == "/memories" && strings.HasPrefix(path, "/memories/deleted"))
+	}
+	if on {
+		return `aria-current="page"`
+	}
+	return ""
 }
 
 // Load parses every page template together with the layout, keyed by page

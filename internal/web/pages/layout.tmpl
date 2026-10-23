@@ -11,12 +11,12 @@
 <header class="top">
   <a class="brand" href="/">cortex</a>
   {{if .SignedIn}}<nav>
-    <a href="/memories">Memories</a>
-    <a href="/connections">Connections</a>
-    <a href="/compaction">Compaction</a>
-    <a href="/memories/deleted">Recently deleted</a>
-    <a href="/settings">Settings</a>
-    <a href="/account">Account</a>
+    <a href="/memories" {{.Current "/memories"}}>Memories</a>
+    <a href="/connections" {{.Current "/connections"}}>Connections</a>
+    <a href="/compaction" {{.Current "/compaction"}}>Compaction</a>
+    <a href="/memories/deleted" {{.Current "/memories/deleted"}}>Recently deleted</a>
+    <a href="/settings" {{.Current "/settings"}}>Settings</a>
+    <a href="/account" {{.Current "/account"}}>Account</a>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
   </nav>{{end}}
 </header>
