@@ -1,6 +1,7 @@
 {{define "title"}}Memories{{end}}
 {{define "content"}}
 {{with .Data}}
+{{template "memnav" $}}
 <h1>Memories</h1>
 <p class="lede">{{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}{{if .HasMore}} match{{if eq .Total 1}}es{{end}} your filter{{else}} stored{{end}}.</p>
 {{template "setup" $}}

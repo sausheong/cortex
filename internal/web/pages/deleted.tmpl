@@ -1,6 +1,7 @@
 {{define "title"}}Recently deleted{{end}}
 {{define "content"}}
 {{with .Data}}
+{{template "memnav" $}}
 <h1>Recently deleted</h1>
 <p class="lede">Deletions can be restored for 30 days, then they are removed for good.</p>
 <ul class="memlist batches">

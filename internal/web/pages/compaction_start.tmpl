@@ -1,6 +1,7 @@
 {{define "title"}}Compaction{{end}}
 {{define "content"}}
 {{with .Data}}
+{{template "memnav" $}}
 <h1>Compaction</h1>
 <p class="lede">Finds memories that repeat or overlap and proposes merging them.</p>
 {{if .Available}}

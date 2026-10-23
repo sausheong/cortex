@@ -204,3 +204,15 @@ main h1{font-size:1.5rem}
 .selall{margin:var(--s3) 0 0}
 .selact{display:inline-flex;align-items:center;min-height:44px;color:var(--accent)}
 .selact[hidden]{display:none}
+
+/* Memories sub-navigation and collapsed advanced settings */
+.subnav{display:flex;flex-wrap:wrap;gap:0 var(--s4);margin:0 0 var(--s3);border-bottom:1px solid var(--line)}
+.subnav a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;font-size:var(--text-sm);font-weight:var(--w-label);color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.subnav a:hover{color:var(--fg)}
+.subnav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}
+details.advanced{margin-top:var(--s5);border-top:1px solid var(--line);padding-top:var(--s2)}
+details.advanced>summary{display:block;min-height:44px;padding:var(--s2) 0;cursor:pointer}
+details.advanced>summary .adv-title{color:var(--accent);font-weight:var(--w-label)}
+details.advanced>summary .adv-sum{display:block;margin-top:var(--s1)}
+details.advanced>fieldset{margin-top:var(--s3)}
+@media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:nowrap}.top nav a{padding:0}.top nav .link{padding:8px 0;white-space:nowrap}.top nav a{white-space:nowrap}}

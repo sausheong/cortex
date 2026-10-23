@@ -43,6 +43,9 @@ type settingsView struct {
 	// and nothing changed; false for follow-up errors after a successful save.
 	NotSaved bool
 	Saved    bool
+	// EmbedError is true when a rejection concerns the embedding group, so the
+	// collapsed "Advanced" section opens on it.
+	EmbedError bool
 	Job      *jobView
 	Live     bool // Job is queued or running
 	Pending  bool // desired embedder differs from the active one
@@ -84,6 +87,7 @@ func (s *server) embedPending(ctx context.Context, userID string) (bool, error) 
 func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool) {
 	ctx := r.Context()
 	v := settingsView{Error: msg, Saved: saved, NotSaved: status == http.StatusBadRequest}
+	v.EmbedError = v.NotSaved && strings.Contains(strings.ToLower(msg), "embed")
 	if cur == nil {
 		if st, err := s.st.GetSettings(ctx, u.UserID); err == nil {
 			cur = st

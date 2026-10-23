@@ -29,18 +29,35 @@ type Setup struct {
 	Done                      int
 }
 
-// Current returns aria-current="page" markup when href is the section the
-// request path belongs to. /memories/deleted is its own item, not Memories.
+// Current returns aria-current="page" markup when href is the top-level
+// nav section the request path belongs to. Compaction and Recently deleted
+// are part of Memories.
 func (p Page) Current(href string) template.HTMLAttr {
-	path := p.Path
-	on := path == href
-	if !on && href != "/memories/deleted" {
-		on = strings.HasPrefix(path, href+"/") && !(href == "/memories" && strings.HasPrefix(path, "/memories/deleted"))
+	on := within(p.Path, href)
+	if href == "/memories" {
+		on = on || within(p.Path, "/compaction")
 	}
 	if on {
 		return `aria-current="page"`
 	}
 	return ""
+}
+
+// CurrentSub marks the item of the Memories sub-navigation the request path
+// belongs to. /memories/deleted is its own item, not "All memories".
+func (p Page) CurrentSub(href string) template.HTMLAttr {
+	on := within(p.Path, href)
+	if href == "/memories" && within(p.Path, "/memories/deleted") {
+		on = false
+	}
+	if on {
+		return `aria-current="page"`
+	}
+	return ""
+}
+
+func within(path, href string) bool {
+	return path == href || strings.HasPrefix(path, href+"/")
 }
 
 // Load parses every page template together with the layout, keyed by page

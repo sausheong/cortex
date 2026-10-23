@@ -6,6 +6,7 @@
 </form>{{end}}
 {{define "content"}}
 {{with .Data}}
+{{template "memnav" $}}
 <h1>Compaction</h1>
 {{if .Error}}
 <div class="error" role="alert">
