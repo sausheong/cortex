@@ -29,6 +29,7 @@
 {{with .Data}}
 <h1>Connections</h1>
 <p class="lede">Assistants and agents that can read and write your memory.</p>
+{{template "setup" $}}
 {{if .Revoked}}
 <section class="notice" id="revoke-notice" role="status">
   <p><strong>Revoked {{.Revoked.Name}}.</strong> It can no longer read or write your memory.{{if .Revoked.BatchID}} Deleted {{.Revoked.Items}} {{if eq .Revoked.Items 1}}item{{else}}items{{end}} it wrote. You can restore {{if eq .Revoked.Items 1}}it{{else}}them{{end}} for 30 days; the connection stays revoked.{{end}}</p>
@@ -52,13 +53,13 @@
 <section class="section" aria-labelledby="h-assistants">
   <h2 id="h-assistants">Assistants</h2>
   <ul class="conns">
-  {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty">None yet.</li>{{end}}
+  {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected.</strong> Paste the instructions under <a href="#h-add">Add a connection</a> into ChatGPT or Claude. It appears here after it first connects.</li>{{end}}
   </ul>
 </section>
 <section class="section" aria-labelledby="h-agents">
   <h2 id="h-agents">Agent tokens</h2>
   <ul class="conns">
-  {{range .Agents}}{{template "conn" .}}{{else}}<li class="conn-empty">None yet.</li>{{end}}
+  {{range .Agents}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No agent tokens.</strong> Create one below for a script or your own agent. The token is shown once.</li>{{end}}
   </ul>
 </section>
 <section class="section add-connection" aria-labelledby="h-add">

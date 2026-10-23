@@ -648,7 +648,7 @@ func TestFailedReembedShowsRetry(t *testing.T) {
 	e.insertJob("j_failed", id, "reembed", "failed", "provider unreachable")
 	e.enq = nil
 	_, body := e.get("/settings")
-	if !strings.Contains(body, "provider unreachable") || !strings.Contains(body, "Retry re-embedding") {
+	if !strings.Contains(body, "provider unreachable") || !strings.Contains(body, "Update memories now") {
 		t.Fatalf("no error/retry: %s", body)
 	}
 	if r, _ := e.post("/settings/reembed", url.Values{"csrf": {e.csrf()}}); r.StatusCode != http.StatusSeeOther {

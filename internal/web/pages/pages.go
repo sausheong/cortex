@@ -19,6 +19,14 @@ type Page struct {
 	SignedIn bool
 	Path     string // request path, used to mark the current nav item
 	Data     any
+	// Setup is the first-run checklist; nil once everything is done.
+	Setup *Setup
+}
+
+// Setup is the first-run checklist, ticked from real state.
+type Setup struct {
+	Provider, Connect, Memory bool
+	Done                      int
 }
 
 // Current returns aria-current="page" markup when href is the section the

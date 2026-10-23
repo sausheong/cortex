@@ -3,6 +3,7 @@
 {{with .Data}}
 <h1>Memories</h1>
 <p class="lede">{{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}{{if .HasMore}} match{{if eq .Total 1}}es{{end}} your filter{{else}} stored{{end}}.</p>
+{{template "setup" $}}
 {{if .Undo}}
 <section class="notice" id="undo-notice" role="status">
   <p><strong>Deleted {{.Undo.Count}} {{if eq .Undo.Count 1}}memory{{else}}memories{{end}}.</strong> You can restore {{if eq .Undo.Count 1}}it{{else}}them{{end}} for 30 days.</p>
@@ -47,7 +48,8 @@
       <span class="mem-body"><span class="mem-text">{{.Content}}</span>
       <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Who}} &middot; {{.Who}}{{end}}</span></span>
     </label></li>
-  {{else}}<li class="note empty">{{if $.Data.HasMore}}Nothing matches. Try fewer filters.{{else}}Nothing here yet. Memories appear as your assistants save them.{{end}}</li>{{end}}
+  {{else}}<li class="empty-state">{{if $.Data.HasMore}}<strong>Nothing matches.</strong> <span class="note">Try fewer filters, or <a href="/memories">clear the search</a>.</span>{{else}}<strong>No memories yet.</strong>
+    <span class="note">cortex only remembers what a connected assistant saves. <a href="/connections">Connect an assistant</a>, then ask it to remember something about you.</span>{{end}}</li>{{end}}
   </ul>
   <p class="field-error" id="err-ids" role="alert">{{if eq .ErrField "ids"}}{{.Error}}{{end}}</p>
 </form>

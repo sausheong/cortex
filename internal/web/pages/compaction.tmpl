@@ -48,7 +48,9 @@ function upd(){var n=0;cs.forEach(function(c){if(c.checked)n++});out.textContent
 all.addEventListener('change',function(){cs.forEach(function(c){c.checked=all.checked});upd()});
 cs.forEach(function(c){c.addEventListener('change',upd)});upd()})();
 </script>
-{{else}}<p>Nothing to compact.</p>{{end}}
+{{else}}<p><strong>Nothing to merge right now.</strong></p>
+<p class="note">Compaction combines memories that say the same thing. It has nothing to suggest yet; try again once your assistants have saved more.</p>
+<p><a href="/memories">Back to memories</a></p>{{end}}
 {{else if eq .Status "applied"}}
 <section class="notice" role="status">
   <p><strong>Compaction applied.</strong> The originals are kept for 30 days. You can undo it now.</p>

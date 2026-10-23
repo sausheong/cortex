@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,22 @@ type jobView struct {
 	ID, Status, Error string
 	Done, Total       int
 	Live              bool
+}
+
+// Text is the job's progress in plain words.
+func (j jobView) Text() string {
+	switch j.Status {
+	case "queued":
+		return "Waiting to start."
+	case "running":
+		if j.Total > 0 {
+			return fmt.Sprintf("Updating %d of %d memories. You can leave this page.", j.Done, j.Total)
+		}
+		return "Getting started."
+	case "failed":
+		return "This stopped before finishing. Check your provider settings, then update again."
+	}
+	return "Finished."
 }
 
 type settingsView struct {
@@ -75,6 +92,7 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 	}
 	if cur == nil {
 		d := accounts.Settings{}.WithDefaults()
+		d.ChatModel = "gpt-4o-mini" // starting point for a first-time user
 		cur = &d
 	}
 	v.S = cur.Masked()

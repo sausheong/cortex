@@ -194,6 +194,9 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	p := pages.Page{Data: data, Path: r.URL.Path}
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
+		if name == "memories" || name == "connections" || name == "settings" {
+			p.Setup = s.setupState(r.Context(), u.UserID)
+		}
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {

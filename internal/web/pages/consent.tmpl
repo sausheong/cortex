@@ -3,17 +3,26 @@
 {{define "content"}}
 <div class="consent">
 <h1>{{.Data.ClientName}} wants to use your cortex</h1>
-<p class="note">Redirects to <strong>{{.Data.RedirectHost}}</strong>{{if .Data.CIMDHost}} &middot; app published by <strong>{{.Data.CIMDHost}}</strong>{{end}}{{if .Data.Unverified}} &middot; <strong>unverified</strong> app: it registered itself, so check that you trust the address above{{end}}.</p>
+<p>If you allow it, this app can:</p>
 <ul>
   <li>Read your memories, people and preferences</li>
   <li>Save new things it learns about you</li>
   <li>Delete and merge memories (recoverable for 30 days)</li>
 </ul>
+<section class="trust{{if .Data.Unverified}} is-unverified{{end}}" aria-labelledby="trust-h">
+  {{if .Data.Unverified}}<h2 id="trust-h"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6.25" stroke-dasharray="2.5 2.5"/></svg>Unverified app</h2>
+  <p>This app is unverified: it registered itself, and cortex has not checked who runs it. After you decide, you are sent to <code>{{.Data.RedirectHost}}</code>. Allow it only if you started this connection and recognise that address.</p>
+  {{else}}<h2 id="trust-h">Where you go next</h2>
+  <p>After you decide, you are sent to <code>{{.Data.RedirectHost}}</code>{{if .Data.CIMDHost}}. The app is published by <code>{{.Data.CIMDHost}}</code>{{end}}.</p>
+  {{end}}
+</section>
 <form method="post" action="/oauth/authorize">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="request_id" value="{{.Data.RequestID}}">
-  <button class="btn" name="decision" value="allow">Allow</button>
-  <button class="link" name="decision" value="deny">Deny</button>
+  <div class="actions">
+    <button class="btn" name="decision" value="allow">Allow</button>
+    <button class="btn-secondary" name="decision" value="deny">Deny</button>
+  </div>
 </form>
 </div>
 {{end}}

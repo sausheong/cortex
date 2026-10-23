@@ -23,4 +23,26 @@
 <main>{{template "content" .}}</main>
 </body>
 </html>{{end}}
+{{define "check"}}<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>{{end}}
+{{define "setup"}}{{with .Setup}}
+<section class="setup" aria-labelledby="setup-h">
+  <h2 id="setup-h">Get started <span class="note">{{.Done}} of 3 done</span></h2>
+  <ol class="steps">
+    <li class="{{if .Provider}}is-done{{end}}">
+      <span class="step-mark">{{if .Provider}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>1{{end}}</span>
+      <div><strong>Set up your AI provider</strong>
+      <p class="note">cortex uses your own key to read and organise what is saved.{{if and (not .Provider) (ne $.Path "/settings")}} <a href="/settings">Open settings</a>{{end}}</p></div>
+    </li>
+    <li class="{{if .Connect}}is-done{{end}}">
+      <span class="step-mark">{{if .Connect}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>2{{end}}</span>
+      <div><strong>Connect an assistant</strong>
+      <p class="note">Add cortex to ChatGPT, Claude or your own agent.{{if and .Provider (not .Connect)}} <a href="/connections">Connect one</a>{{end}}</p></div>
+    </li>
+    <li class="{{if .Memory}}is-done{{end}}">
+      <span class="step-mark">{{if .Memory}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>3{{end}}</span>
+      <div><strong>Save your first memory</strong>
+      <p class="note">Tell your assistant something to remember. It appears on the Memories page.</p></div>
+    </li>
+  </ol>
+</section>{{end}}{{end}}
 {{template "layout" .}}
