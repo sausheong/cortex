@@ -74,8 +74,8 @@
 {{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 <section class="section" aria-labelledby="h-assistants">
-  <p class="note conn-legend"><strong>Not used yet</strong> turns to <strong>Active</strong> after the first request. <strong>Revoked</strong> can no longer connect.</p>
   <h2 id="h-assistants">Assistants</h2>
+  <p class="note conn-legend"><strong>Not used yet</strong> turns to <strong>Active</strong> after the first request. <strong>Revoked</strong> can no longer connect.</p>
   <ul class="conns">
   {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected.</strong> Paste the instructions under <a href="#h-add">Add a connection</a> into ChatGPT or Claude. It appears here after it first connects.</li>{{end}}
   </ul>

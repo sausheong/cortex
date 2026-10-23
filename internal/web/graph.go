@@ -637,7 +637,7 @@ func (s *server) graphRename(w http.ResponseWriter, r *http.Request, u SessionUs
 	if errors.As(err, &taken) {
 		msg := "Another " + strings.ToLower(typeLabel(ent.Type)) + " is already called " + name + "."
 		if ownerOf(r, cx, id) {
-			redo(http.StatusConflict, msg+" The entity that represents you cannot be merged into another one, so choose a different name.", nil)
+			redo(http.StatusConflict, msg+" You cannot be merged into another item, so choose a different name.", nil)
 			return
 		}
 		redo(http.StatusConflict, msg, &mergeOffer{TargetID: taken.ConflictID, TargetName: name, Name: ent.Name})
@@ -657,7 +657,7 @@ func (s *server) graphMerge(w http.ResponseWriter, r *http.Request, u SessionUse
 	keepID := strings.TrimSpace(r.PostFormValue("keep"))
 	dropID := strings.TrimSpace(r.PostFormValue("drop"))
 	if keepID == dropID {
-		s.graphErr(w, r, u, http.StatusBadRequest, dropID, "merge", "Choose a different entity to merge into.")
+		s.graphErr(w, r, u, http.StatusBadRequest, dropID, "merge", "Choose a different item to merge into.")
 		return
 	}
 	keep, kerr := cx.GetEntity(ctx, keepID)
@@ -671,11 +671,11 @@ func (s *server) graphMerge(w http.ResponseWriter, r *http.Request, u SessionUse
 		return
 	}
 	if ownerOf(r, cx, dropID) {
-		s.graphErr(w, r, u, http.StatusForbidden, dropID, "merge", "This entity represents you, so it cannot be merged into another one. Merge the other entity into this one instead.")
+		s.graphErr(w, r, u, http.StatusForbidden, dropID, "merge", "This item is you, so it cannot be merged into another one. Merge the other into this one instead.")
 		return
 	}
 	if keep.Type != drop.Type {
-		s.graphErr(w, r, u, http.StatusBadRequest, dropID, "merge", "Only entities of the same type can be merged.")
+		s.graphErr(w, r, u, http.StatusBadRequest, dropID, "merge", "Only items of the same type can be merged.")
 		return
 	}
 	st, err := cx.MergeEntitiesDryRun(ctx, keepID, dropID)
@@ -732,7 +732,7 @@ func (s *server) graphDelete(w http.ResponseWriter, r *http.Request, u SessionUs
 		return
 	}
 	if ownerOf(r, cx, id) {
-		s.graphErr(w, r, u, http.StatusForbidden, id, "delete", "This entity represents you, so it cannot be deleted.")
+		s.graphErr(w, r, u, http.StatusForbidden, id, "delete", "This item is you, so it cannot be deleted.")
 		return
 	}
 	_, n, err := cx.EntityRelations(ctx, id, 1)

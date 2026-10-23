@@ -19,10 +19,11 @@ body{margin:0;background:var(--bg);color:var(--fg);font:var(--w-body) var(--text
 .top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;border-bottom:1px solid var(--line)}
 .top nav a{display:inline-flex;align-items:center;min-height:44px}
 .top nav{display:flex;gap:4px 16px;align-items:center;flex-wrap:wrap}.top form{margin:0}
-.brand{font-weight:var(--w-strong);letter-spacing:-.01em;color:var(--fg);text-decoration:none}
+.brand{display:inline-flex;align-items:center;min-height:44px;font-weight:var(--w-strong);letter-spacing:-.01em;color:var(--fg);text-decoration:none}
 main{max-width:42rem;margin:0 auto;padding:24px 16px;overflow-wrap:anywhere}
 a{color:var(--accent)}label{display:block;margin:12px 0;font-size:var(--text-sm);font-weight:var(--w-label);line-height:1.4;color:var(--muted)}
 input,select,textarea{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line-strong);border-radius:6px}
+input:not([type=checkbox]):not([type=radio]),select{min-height:44px}
 input[type=checkbox],input[type=radio]{display:inline-block;width:auto;margin:0 8px 0 0;vertical-align:middle}
 :is(a,button,input,select,textarea,summary):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 input[aria-invalid=true]{border-color:var(--danger);border-width:2px}
@@ -78,7 +79,7 @@ main :is(p,li,dd,.lede,.note){max-width:var(--measure)}
 .top nav a{color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;box-sizing:border-box}
 .top nav a:hover{color:var(--fg)}
 .top nav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}
-.top .link{color:var(--muted)}.top .link:hover{color:var(--fg)}
+.top .link{color:var(--muted);min-height:44px;padding:0 4px}.top .link:hover{color:var(--fg)}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums}
 .confirm h1,.consent h1{margin-bottom:var(--s3)}
@@ -234,7 +235,7 @@ main h1{font-size:1.5rem}
 .subnav a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;font-size:var(--text-sm);font-weight:var(--w-label);color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
 .subnav a:hover{color:var(--fg)}
 .subnav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}
-@media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:wrap}.top nav a{padding:0}.top nav .link{padding:8px 0;white-space:nowrap}.top nav a{white-space:nowrap}}
+@media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:wrap}.top nav a{padding:0}.top nav .link{padding:0;white-space:nowrap}.top nav a{white-space:nowrap}}
 
 /* Graph: a map of the neighbourhood plus the same entities as a list. Flat, hairline-divided, shape-coded. */
 /* Heading and lede keep the 42rem column on every page; only a map, panel or list beneath breaks out. */

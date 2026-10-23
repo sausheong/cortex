@@ -648,7 +648,7 @@ func deletedKind(k string) string {
 	case "compaction":
 		return "Compaction"
 	case "merge":
-		return "Merged entities"
+		return "Merged items"
 	case "forget", "entity":
 		return "Forgotten item"
 	}
@@ -735,7 +735,7 @@ func (s *server) accountDelete(w http.ResponseWriter, r *http.Request, u Session
 	}
 	cv := confirmView{
 		Title:       "Delete your account?",
-		Consequence: "This signs you out and disconnects " + plural(live, "assistant or agent", "assistants and agents") + " right away. Your " + plural(n, "memory", "memories") + " are kept for 30 days.",
+		Consequence: "This signs you out and disconnects " + plural(live, "assistant or agent", "assistants and agents") + " right away. Your " + plural(n, "memory", "memories") + " " + map[bool]string{true: "is", false: "are"}[n == 1] + " kept for 30 days.",
 		Details:     []string{"Sign in again within 30 days to get your memories back. Connections do not come back; you connect them again. After 30 days everything is removed for good."},
 		Action:      "/account/delete",
 		Count:       n,

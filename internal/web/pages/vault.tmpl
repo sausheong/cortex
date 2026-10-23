@@ -13,7 +13,7 @@
 {{define "content"}}
 {{with .Data}}
 <h1>Vault</h1>
-<p class="lede">A read-only copy of what cortex knows, as the same linked notes <code>cortex export</code> writes for Obsidian; <a href="/vault/download">download them as a .zip</a>.</p>
+<p class="lede">A read-only copy of what cortex knows, as linked notes you can open in Obsidian. <a href="/vault/download">Download them as a .zip</a>.</p>
 <div class="breakout">
   <form method="get" action="/vault" class="vault-filter" role="search">
     <label>Find a page <input id="vault-q" name="q" type="search" value="{{.Q}}" autocomplete="off" placeholder="Name"></label>

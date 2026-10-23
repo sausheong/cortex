@@ -217,7 +217,7 @@ func (h *connHandler) revoke(w http.ResponseWriter, r *http.Request, u SessionUs
 		if !has || want != n {
 			cv := confirmView{
 				Title:       "Revoke " + conn.Name + " and delete " + plural(n, "item", "items") + "?",
-				Consequence: conn.Name + " loses access right away, and the " + plural(n, "item", "items") + " it wrote are deleted. You can restore the items for 30 days. The connection stays revoked.",
+				Consequence: conn.Name + " loses access right away, and the " + plural(n, "item", "items") + " it wrote " + map[bool]string{true: "is", false: "are"}[n == 1] + " deleted. You can restore " + map[bool]string{true: "it", false: "them"}[n == 1] + " for 30 days. The connection stays revoked.",
 				Action:      "/connections/" + id + "/revoke",
 				Fields:      []confirmField{{"choice", "delete"}},
 				Count:       n,

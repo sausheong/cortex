@@ -19,7 +19,7 @@
 {{if .WasRestored}}<p class="notice" role="status">{{if .Restored}}Restored {{.Restored}} {{if eq .Restored 1}}memory{{else}}memories{{end}}.{{else}}Restored.{{end}}</p>{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 {{if .Since}}<p class="notice" role="status">Showing only memories added since <time datetime="{{.Since}}">{{.SinceAgo}}</time>. <a href="/memories">Show all memories</a></p>{{end}}
-{{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}an entity that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}</p>{{end}}
+{{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}something that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}</p>{{end}}
 <form method="get" action="/memories" class="search" aria-label="Find memories">
   {{if .Entity}}<input type="hidden" name="entity" value="{{.Entity}}">{{end}}
   {{if .Since}}<input type="hidden" name="since" value="{{.Since}}">{{end}}
@@ -43,7 +43,7 @@
     <button class="btn-secondary" data-pending="Applying&hellip;">Apply</button>
   </div>
   <p class="field-error" id="err-range" role="alert">{{.RangeErr}}</p>
-  <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included. The offset is fixed, so a day near a daylight saving change can be off by an hour.</p>
+  <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included.</p>
   <nav class="presets" aria-label="Date presets"><span class="note">Quick range:</span>
     {{range .Presets}}<a href="{{.Href}}"{{if .Current}} aria-current="true" class="on"{{end}}>{{.Label}}</a>{{end}}
   </nav>
