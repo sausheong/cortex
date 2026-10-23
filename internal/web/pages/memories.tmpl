@@ -25,7 +25,7 @@
       <select name="by"><option value="">Anyone</option>
         {{range .Conns}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Name}}</option>{{end}}
       </select></label>
-    <button class="btn-secondary">Search</button>
+    <button class="btn-secondary" data-pending="Searching&hellip;">Search</button>
   </div>
   <details class="more"{{if or .From .To}} open{{end}}>
     <summary>More filters</summary>

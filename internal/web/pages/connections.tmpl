@@ -4,7 +4,7 @@
     <strong class="conn-name">{{.Name}}</strong>
     {{if .Revoked}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>
     {{else if .LastUsed}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>
-    {{else}}<span class="status status-unverified"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Unverified</span>{{end}}
+    {{else}}<span class="status status-unused"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Not used yet</span>{{end}}
     <div class="conn-metas"><span class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else}}Never used{{end}}</span>
     <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span></div>
   </div>
@@ -69,7 +69,7 @@
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <label>Token name <input name="name" required maxlength="80" placeholder="my agent" value="{{.FormName}}" aria-describedby="err-name"{{if eq .ErrField "name"}} aria-invalid="true"{{end}}></label>
     <p class="field-error" id="err-name" role="alert">{{if eq .ErrField "name"}}{{.Error}}{{end}}</p>
-    <button class="btn">Create token</button>
+    <button class="btn" data-pending="Creating&hellip;">Create token</button>
   </form>
   <h3>Connect an assistant</h3>
   <p>Paste this into your assistant's custom instructions.</p>

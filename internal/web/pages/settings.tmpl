@@ -26,11 +26,12 @@
     <legend>Chat</legend>
     <p class="note group-help">The model that reads new memories and picks out the people, places and facts in them.</p>
     <label>Provider
-      <select name="provider">
+      <select name="provider"{{if eq .ErrField "provider"}} aria-invalid="true"{{end}}>
         <option value="openai-compatible" {{if eq .S.Provider "openai-compatible"}}selected{{end}}>OpenAI-compatible (OpenAI, OpenRouter, local servers)</option>
         <option value="anthropic" {{if eq .S.Provider "anthropic"}}selected{{end}}>Anthropic</option>
       </select></label>
-    <label>Base URL <input name="base_url" value="{{.S.BaseURL}}" placeholder="https://api.openai.com/v1" aria-describedby="h-base"></label>
+    <label>Base URL <input name="base_url" value="{{.S.BaseURL}}" placeholder="https://api.openai.com/v1" aria-describedby="err-base h-base"{{if eq .ErrField "base_url"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-base" role="alert">{{if eq .ErrField "base_url"}}{{.Error}}{{end}}</p>
     <p class="note field-help" id="h-base">The web address of your provider's API. The default works for OpenAI. Change it only for another provider or a server you run. Leave it blank for Anthropic.</p>
     <label>API key <input name="api_key" type="password" value="" placeholder="{{.S.APIKey}}" aria-describedby="h-key"></label>
     <p class="note field-help" id="h-key">{{if .S.APIKey}}A key is saved. Leave this blank to keep it.{{else}}Paste the secret key from your provider's dashboard.{{end}}</p>
@@ -44,14 +45,17 @@
     <legend class="sr-only">Embeddings</legend>
     <p class="note group-help">Embeddings let cortex search by meaning instead of exact words. Optional with an OpenAI-compatible provider: the defaults reuse the chat key above. Required with Anthropic, which does not offer embeddings, so add an embedding key here.</p>
     <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
-    <label>Dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric" aria-describedby="h-dims"></label>
+    <label>Dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric" aria-describedby="err-dims h-dims"{{if eq .ErrField "embed_dims"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-dims" role="alert">{{if eq .ErrField "embed_dims"}}{{.Error}}{{end}}</p>
     <p class="note field-help" id="h-dims">How finely cortex describes each memory for search. 512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
-    <label>Base URL <input name="embed_base_url" value="{{.S.EmbedBaseURL}}" placeholder="Same as chat"></label>
-    <label>API key <input name="embed_api_key" type="password" value="" placeholder="{{if .S.EmbedAPIKey}}{{.S.EmbedAPIKey}}{{else}}Same as chat{{end}}"></label>
+    <label>Base URL <input name="embed_base_url" value="{{.S.EmbedBaseURL}}" placeholder="Same as chat" aria-describedby="err-ebase"{{if eq .ErrField "embed_base_url"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-ebase" role="alert">{{if eq .ErrField "embed_base_url"}}{{.Error}}{{end}}</p>
+    <label>API key <input name="embed_api_key" type="password" value="" placeholder="{{if .S.EmbedAPIKey}}{{.S.EmbedAPIKey}}{{else}}Same as chat{{end}}" aria-describedby="err-ekey"{{if eq .ErrField "embed_api_key"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-ekey" role="alert">{{if eq .ErrField "embed_api_key"}}{{.Error}}{{end}}</p>
   </fieldset>
   </details>
   <div class="actions">
-    <button class="btn">Test &amp; save</button>
+    <button class="btn" data-pending="Testing&hellip;">Test &amp; save</button>
     <p class="note save-help">We make one small test request to your provider first. If it fails, nothing is saved, and we show you why.</p>
   </div>
 </form>

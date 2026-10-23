@@ -21,6 +21,28 @@
   </nav>{{end}}
 </header>
 <main id="main" tabindex="-1">{{template "content" .}}</main>
+<script>
+(function(){
+// Progressive enhancement: on submit, disable the form's buttons and show the
+// clicked one as working, so a slow request cannot be sent twice.
+document.addEventListener("submit",function(e){
+  var f=e.target,b=e.submitter;
+  if(f.dataset.busy){e.preventDefault();return}
+  f.dataset.busy="1";f.setAttribute("aria-busy","true");
+  var bs=f.querySelectorAll("button:not([type=button])");
+  if(b&&b.name){var h=document.createElement("input");h.type="hidden";h.name=b.name;h.value=b.value;f.appendChild(h)}
+  setTimeout(function(){bs.forEach(function(x){
+    x.disabled=true;
+    if(x===b||(!b&&bs.length===1)){x.dataset.label=x.textContent;x.textContent=x.dataset.pending||"Working\u2026"}
+  })},0);
+});
+// Back/forward cache can restore a page mid-submit; reset it.
+addEventListener("pageshow",function(e){if(!e.persisted)return;
+  document.querySelectorAll("form[data-busy]").forEach(function(f){
+    delete f.dataset.busy;f.removeAttribute("aria-busy");
+    f.querySelectorAll("button:disabled").forEach(function(x){x.disabled=false;if(x.dataset.label){x.textContent=x.dataset.label}})})});
+})();
+</script>
 </body>
 </html>{{end}}
 {{define "check"}}<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>{{end}}

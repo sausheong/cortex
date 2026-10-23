@@ -46,9 +46,12 @@ type settingsView struct {
 	// EmbedError is true when a rejection concerns the embedding group, so the
 	// collapsed "Advanced" section opens on it.
 	EmbedError bool
-	Job        *jobView
-	Live       bool // Job is queued or running
-	Pending    bool // desired embedder differs from the active one
+	// ErrField names the form field Error is about ("" when it concerns the
+	// whole form); the message also shows next to that field.
+	ErrField string
+	Job      *jobView
+	Live     bool // Job is queued or running
+	Pending  bool // desired embedder differs from the active one
 	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
 	MaintenanceError string
 }
@@ -91,9 +94,12 @@ func (s *server) embedPending(ctx context.Context, userID string) (bool, error) 
 	return act.EmbedModel != cur.EmbedModel || act.EmbedDims != cur.EmbedDims || act.EmbedBaseURL != cur.EffectiveEmbedURL(), nil
 }
 
-func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool) {
+func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool, field ...string) {
 	ctx := r.Context()
 	v := settingsView{Error: msg, Saved: saved, NotSaved: status == http.StatusBadRequest}
+	if len(field) > 0 {
+		v.ErrField = field[0]
+	}
 	if cur == nil {
 		if st, err := s.st.GetSettings(ctx, u.UserID); err == nil {
 			cur = st
@@ -111,7 +117,7 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 	v.S = cur.Masked()
 	// Validate and TestProvider errors do not say which group failed, so a
 	// rejected save opens the embedding group whenever it was customised.
-	v.EmbedError = v.NotSaved && (strings.Contains(strings.ToLower(msg), "embed") || embedCustomised(*cur))
+	v.EmbedError = v.NotSaved && (strings.Contains(strings.ToLower(msg), "embed") || embedCustomised(*cur) || strings.HasPrefix(v.ErrField, "embed_"))
 	j, err := s.latestReembed(ctx, u.UserID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -168,8 +174,8 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	redisplay := in // keys are masked on display
-	if err := in.Validate(s.st.AllowPrivate); err != nil {
-		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false)
+	if field, err := in.ValidateField(s.st.AllowPrivate); err != nil {
+		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false, field)
 		return
 	}
 	if err := s.testProvider(ctx, in); err != nil {

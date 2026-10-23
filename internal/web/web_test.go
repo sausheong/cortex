@@ -726,3 +726,18 @@ func TestSettingsEmbedGroupOpensOnRejection(t *testing.T) {
 		t.Fatalf("chat rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
 	}
 }
+
+func TestSettingsFieldErrorIsInline(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	r, body := e.post("/settings", settingsForm(e.csrf(), "base_url", "http://api.example.com/v1"))
+	if r.StatusCode != 400 || !strings.Contains(body, `name="base_url"`) ||
+		!strings.Contains(body, `aria-describedby="err-base h-base" aria-invalid="true"`) ||
+		!strings.Contains(body, `id="err-base" role="alert">base URL must use https`) ||
+		!strings.Contains(body, `<strong>Not saved.</strong>`) {
+		t.Fatalf("inline field error missing: %d", r.StatusCode)
+	}
+	if strings.Contains(body, `name="embed_base_url"`+" ") && strings.Contains(body, `id="err-ebase" role="alert">base`) {
+		t.Fatal("error leaked to the embedding field")
+	}
+}

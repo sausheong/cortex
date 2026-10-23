@@ -38,6 +38,8 @@ input[aria-invalid=true]{border-color:var(--danger);border-width:2px}
 .btn-danger{background:var(--danger);color:var(--on-danger);font-weight:var(--w-strong)}
 .btn-danger-quiet{background:transparent;color:var(--danger);border-color:var(--danger-line)}
 .btn[disabled],.btn-secondary[disabled],.btn-danger[disabled],.btn-danger-quiet[disabled]{opacity:.55;cursor:not-allowed}
+form[aria-busy=true]{cursor:progress}form[aria-busy=true] button:disabled{cursor:progress}
+.settings-form .field-error:empty{display:none}
 .link{background:none;border:0;color:var(--accent);font:inherit;cursor:pointer;padding:8px 4px;min-height:40px}
 .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:16px}
 
@@ -97,7 +99,7 @@ time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums
 .conn-metas{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:0 var(--s5)}
 .conn-meta{color:var(--muted);font-size:var(--text-sm)}
 .status{display:inline-flex;align-items:center;gap:6px;font-size:var(--text-sm);font-weight:var(--w-strong)}
-.status-active{color:var(--accent)}.status-revoked{color:var(--danger)}.status-unverified{color:var(--muted)}
+.status-active{color:var(--accent)}.status-revoked{color:var(--danger)}.status-unused{color:var(--muted)}
 .conn-hint{margin:var(--s2) 0 0}
 .is-revoked .conn-name{color:var(--muted)}
 details.revoke{margin-top:var(--s3)}
