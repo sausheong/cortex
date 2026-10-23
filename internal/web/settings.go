@@ -46,11 +46,18 @@ type settingsView struct {
 	// EmbedError is true when a rejection concerns the embedding group, so the
 	// collapsed "Advanced" section opens on it.
 	EmbedError bool
-	Job      *jobView
-	Live     bool // Job is queued or running
-	Pending  bool // desired embedder differs from the active one
+	Job        *jobView
+	Live       bool // Job is queued or running
+	Pending    bool // desired embedder differs from the active one
 	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
 	MaintenanceError string
+}
+
+// embedCustomised reports whether any embedding field differs from its default.
+func embedCustomised(c accounts.Settings) bool {
+	return c.EmbedBaseURL != "" || c.EmbedAPIKey != "" ||
+		(c.EmbedModel != "" && c.EmbedModel != accounts.DefaultEmbedModel) ||
+		(c.EmbedDims != 0 && c.EmbedDims != accounts.DefaultEmbedDims)
 }
 
 func (s *server) latestReembed(ctx context.Context, userID string) (*jobView, error) {
@@ -87,7 +94,6 @@ func (s *server) embedPending(ctx context.Context, userID string) (bool, error) 
 func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool) {
 	ctx := r.Context()
 	v := settingsView{Error: msg, Saved: saved, NotSaved: status == http.StatusBadRequest}
-	v.EmbedError = v.NotSaved && strings.Contains(strings.ToLower(msg), "embed")
 	if cur == nil {
 		if st, err := s.st.GetSettings(ctx, u.UserID); err == nil {
 			cur = st
@@ -103,6 +109,9 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 		cur = &d
 	}
 	v.S = cur.Masked()
+	// Validate and TestProvider errors do not say which group failed, so a
+	// rejected save opens the embedding group whenever it was customised.
+	v.EmbedError = v.NotSaved && (strings.Contains(strings.ToLower(msg), "embed") || embedCustomised(*cur))
 	j, err := s.latestReembed(ctx, u.UserID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

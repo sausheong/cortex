@@ -709,3 +709,20 @@ func TestJobProgressOwnOnly(t *testing.T) {
 		t.Fatalf("own: %d %s", r.StatusCode, body)
 	}
 }
+
+func TestSettingsEmbedGroupOpensOnRejection(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	open := `<details class="advanced" open`
+	// Rejected embed base URL: the group opens.
+	r, body := e.post("/settings", settingsForm(e.csrf(), "embed_base_url", "http://embed.example.com/v1"))
+	if r.StatusCode != 400 || !strings.Contains(body, open) {
+		t.Fatalf("embed url rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
+	}
+	// Rejected chat URL with default embedding fields: the group stays closed.
+	r, body = e.post("/settings", settingsForm(e.csrf(), "base_url", "http://api.example.com/v1",
+		"embed_model", "", "embed_dims", ""))
+	if r.StatusCode != 400 || strings.Contains(body, open) || !strings.Contains(body, `<details class="advanced"`) {
+		t.Fatalf("chat rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
+	}
+}
