@@ -37,12 +37,15 @@ func (j jobView) Text() string {
 }
 
 type settingsView struct {
-	S       accounts.Settings // masked
-	Error   string
-	Saved   bool
-	Job     *jobView
-	Live    bool // Job is queued or running
-	Pending bool // desired embedder differs from the active one
+	S     accounts.Settings // masked
+	Error string
+	// NotSaved is true when Error means the submitted settings were rejected
+	// and nothing changed; false for follow-up errors after a successful save.
+	NotSaved bool
+	Saved    bool
+	Job      *jobView
+	Live     bool // Job is queued or running
+	Pending  bool // desired embedder differs from the active one
 	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
 	MaintenanceError string
 }
@@ -80,7 +83,7 @@ func (s *server) embedPending(ctx context.Context, userID string) (bool, error) 
 
 func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool) {
 	ctx := r.Context()
-	v := settingsView{Error: msg, Saved: saved}
+	v := settingsView{Error: msg, Saved: saved, NotSaved: status == http.StatusBadRequest}
 	if cur == nil {
 		if st, err := s.st.GetSettings(ctx, u.UserID); err == nil {
 			cur = st
@@ -186,7 +189,7 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		if _, err := s.opts.Enqueue(ctx, u.UserID, "reembed"); err != nil {
 			s.cfg.Logger.Error("enqueue reembed", "err", err)
 			s.settingsPage(w, r, u, http.StatusInternalServerError, nil,
-				"Settings were saved, but re-embedding could not be started. Use Retry.", false)
+				"Settings were saved, but re-embedding could not be started. Use Update memories now.", false)
 			return
 		}
 	}

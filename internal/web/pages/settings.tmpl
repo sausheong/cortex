@@ -3,8 +3,7 @@
 {{with .Data}}
 <h1>Settings</h1>
 <p class="lede">cortex uses your own AI provider to read and organise what your assistants save. Keys are stored encrypted and shown masked.</p>
-{{template "setup" $}}
-{{if .Error}}<p class="error" role="alert"><strong>Not saved.</strong> {{.Error}} Your previous settings are unchanged.</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{if .NotSaved}}<strong>Not saved.</strong> {{end}}{{.Error}}{{if .NotSaved}} Your previous settings are unchanged.{{end}}</p>{{end}}
 {{if .Saved}}<p class="notice" role="status">Settings saved. The connection to your provider worked.</p>{{end}}
 {{if .MaintenanceError}}<p class="error" role="alert">Last nightly maintenance failed: {{.MaintenanceError}}. Check your provider settings.</p>{{end}}
 {{if .Job}}
@@ -39,8 +38,8 @@
     <p class="note field-help" id="h-chat">The model name, for example gpt-4o-mini. A small, cheap model is enough.</p>
   </fieldset>
   <fieldset>
-    <legend>Embeddings (optional)</legend>
-    <p class="note group-help">Embeddings let cortex search by meaning instead of exact words. The defaults work with an OpenAI-compatible provider and the key above. Anthropic does not offer embeddings, so with Anthropic you need to add an embedding key here.</p>
+    <legend>Embeddings</legend>
+    <p class="note group-help">Embeddings let cortex search by meaning instead of exact words. Optional with an OpenAI-compatible provider: the defaults reuse the chat key above. Required with Anthropic, which does not offer embeddings, so add an embedding key here.</p>
     <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
     <label>Dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric" aria-describedby="h-dims"></label>
     <p class="note field-help" id="h-dims">How detailed each memory's fingerprint is. 512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
