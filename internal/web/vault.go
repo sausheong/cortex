@@ -443,8 +443,8 @@ func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser
 		Backlinks:  vs.backlinks[f.Path],
 	}
 	if f.Kind == vault.KindEntity {
-		v.GraphHref = "/graph?entity=" + url.QueryEscape(f.EntityID)
-		v.MemoriesHref = "/memories?q=" + url.QueryEscape(f.Name)
+		v.GraphHref = "/graph?center=" + url.QueryEscape(f.EntityID)
+		v.MemoriesHref = "/memories?entity=" + url.QueryEscape(f.EntityID)
 	}
 	if !f.Updated.IsZero() {
 		v.Ago, v.Abs, v.ISO = relTime(s.now(), f.Updated), absTime(f.Updated), f.Updated.UTC().Format(time.RFC3339)
