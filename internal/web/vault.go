@@ -45,8 +45,8 @@ type folderCount struct {
 }
 
 var folderLabels = map[string]string{
-	"people": "People", "organizations": "Organisations", "concepts": "Projects and concepts",
-	"events": "Events", "documents": "Documents", "sources": "Sources",
+	"people": "People", "organizations": "Organisations", "concepts": "Projects",
+	"events": "Events", "documents": "Documents", "sources": "Pages",
 }
 
 var folderOrder = []string{"people", "organizations", "concepts", "events", "documents"}
@@ -289,7 +289,17 @@ func (s *server) mountVault(mux *http.ServeMux) {
 }
 
 type vaultRow struct {
-	Path, Base, Name, Folder, Ago, Abs, ISO string
+	Path, Base, Name, Folder, Type, Ago, Abs, ISO string
+}
+
+type vaultTab struct {
+	Label, Href string
+	Current     bool
+}
+
+var folderSingular = map[string]string{
+	"people": "Person", "organizations": "Organisation", "concepts": "Project",
+	"events": "Event", "documents": "Document", "sources": "Page",
 }
 
 type vaultListView struct {
@@ -298,6 +308,7 @@ type vaultListView struct {
 	Total, All          int
 	Rows                []vaultRow
 	Folders             []folderCount
+	Tabs                []vaultTab
 	Page, Prev, Next    int
 	Query               string // encoded filters for paging links, without page
 	HasIndex            bool
@@ -368,7 +379,7 @@ func (s *server) vaultList(w http.ResponseWriter, r *http.Request, u SessionUser
 	hi := min(lo+vaultPerPage, len(files))
 	now := s.now()
 	for _, f := range files[lo:hi] {
-		row := vaultRow{Path: f.Path, Base: f.Path, Name: f.Name, Folder: f.Folder}
+		row := vaultRow{Path: f.Path, Base: f.Path, Name: f.Name, Folder: f.Folder, Type: rowType(f)}
 		if !f.Updated.IsZero() {
 			row.Ago, row.Abs, row.ISO = relTime(now, f.Updated), absTime(f.Updated), f.Updated.UTC().Format(time.RFC3339)
 		}
@@ -391,6 +402,7 @@ func (s *server) vaultList(w http.ResponseWriter, r *http.Request, u SessionUser
 		qs.Set("sort", v.Sort)
 	}
 	v.Query = qs.Encode()
+	v.Tabs = vaultTabs(vs, v.Folder, v.Q)
 	s.render(w, r, http.StatusOK, "vault", v)
 }
 
@@ -410,7 +422,7 @@ type vaultPageView struct {
 func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	p := r.PathValue("path")
 	if !strings.HasSuffix(p, ".md") {
-		http.NotFound(w, r)
+		s.vaultMissing(w, r)
 		return
 	}
 	vs, err := s.vaultFor(r.Context(), u.UserID)
@@ -422,7 +434,7 @@ func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser
 	// The path is only ever a key into this user's own generated files.
 	f, ok := vs.file(p)
 	if !ok {
-		http.NotFound(w, r)
+		s.vaultMissing(w, r)
 		return
 	}
 	front, body := splitFrontmatter(f.Content)
@@ -535,4 +547,50 @@ func splitExported(in []prop) (out []prop, exported string) {
 		out = append(out, p)
 	}
 	return out, exported
+}
+
+// rowType is the quiet type label under a page title in the list.
+func rowType(f vault.File) string {
+	if f.Kind == vault.KindIndex {
+		return "Overview"
+	}
+	if l, ok := folderSingular[f.Folder]; ok {
+		return l
+	}
+	return folderLabel(f.Folder)
+}
+
+// vaultTabs builds the segmented type row: All plus the fixed page types,
+// and Pages only when the vault has any. A search term carries across tabs.
+func vaultTabs(vs *vaultSet, folder, q string) []vaultTab {
+	href := func(key string) string {
+		qs := url.Values{}
+		if key != "" {
+			qs.Set("folder", key)
+		}
+		if q != "" {
+			qs.Set("q", q)
+		}
+		if e := qs.Encode(); e != "" {
+			return "/vault?" + e
+		}
+		return "/vault"
+	}
+	tabs := []vaultTab{{"All", href(""), folder == "" || folder == "index"}}
+	for _, k := range folderOrder {
+		tabs = append(tabs, vaultTab{folderLabel(k), href(k), folder == k})
+	}
+	for _, f := range vs.folders {
+		if f.Key == "sources" {
+			tabs = append(tabs, vaultTab{folderLabel("sources"), href("sources"), folder == "sources"})
+		}
+	}
+	return tabs
+}
+
+type vaultMissingView struct{ Path string }
+
+// vaultMissing is the friendly 404 for a vault page that does not exist.
+func (s *server) vaultMissing(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, http.StatusNotFound, "vault_missing", vaultMissingView{})
 }

@@ -237,7 +237,9 @@ main h1{font-size:1.5rem}
 @media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:wrap}.top nav a{padding:0}.top nav .link{padding:8px 0;white-space:nowrap}.top nav a{white-space:nowrap}}
 
 /* Graph: a map of the neighbourhood plus the same entities as a list. Flat, hairline-divided, shape-coded. */
-main:has(.graph-page){max-width:72rem}
+/* Heading and lede keep the 42rem column on every page; only a map, panel or list beneath breaks out. */
+.breakout{--wide:64rem;position:relative;left:50%;width:min(var(--wide),calc(100vw - 2 * var(--s4)));transform:translateX(-50%)}
+.graph-layout.breakout{--wide:72rem}
 .graph-search label{margin:0 0 var(--s1)}
 .graph-search-row{display:grid;justify-content:start;grid-template-columns:minmax(0,28rem) auto;gap:var(--s3);align-items:end}
 .graph-search-row input{margin-top:0;min-height:44px}
@@ -323,26 +325,17 @@ details.more .home-bullets{margin-top:var(--s1)}
 .status-idle{color:var(--muted)}
 @media (max-width:560px){.home-rows li{grid-template-columns:1fr}}
 
-/* Vault: a quiet reading list and note view. Folders sit beside the list; below 48rem they stack above it. */
-main:has(.vault-wide){max-width:64rem}
-.vault{display:grid;grid-template-columns:15rem minmax(0,1fr);gap:var(--s5) var(--s6);align-items:start}
-.vault-side label{margin:0 0 var(--s3)}
-.vault-side .btn-secondary{width:100%;margin-bottom:var(--s4)}
-.vault-folders ul{list-style:none;margin:0 0 var(--s4);padding:0}
-.vault-folders a{display:flex;justify-content:space-between;gap:var(--s2);align-items:center;min-height:44px;box-sizing:border-box;padding:0 var(--s3);border-radius:6px;color:var(--fg);text-decoration:none}
-.vault-folders a:hover{background:var(--accent-soft)}
-.vault-folders a[aria-current=page]{font-weight:var(--w-strong);background:var(--accent-soft)}
-.count{color:var(--muted);font-size:var(--text-sm);font-variant-numeric:tabular-nums;font-weight:var(--w-body)}
-.vault-dl{margin:0 0 var(--s2)}
-.vault-dl .btn{width:100%}
+/* Vault: one list under a segmented type row. Rows are title first, type and date quiet. */
+.vault-filter{display:flex;flex-wrap:wrap;gap:var(--s3) var(--s4);align-items:end;margin:0 0 var(--s4)}
+.vault-filter label{margin:0;flex:0 1 20rem}
+.vault-filter :is(input,select){min-height:44px;margin:var(--s1) 0 0;box-sizing:border-box}
+.vault-tabs{margin-bottom:var(--s3)}
 .vault-count{margin:0 0 var(--s2)}
 .vault-files{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
-.vault-files li{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s4);max-width:none;border-bottom:1px solid var(--line)}
-.vf{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 var(--s3);flex:1;min-width:0;min-height:44px;box-sizing:border-box;padding:10px var(--s1);color:var(--fg);text-decoration:none}
-.vf:hover .vf-name{text-decoration:underline}
-.vf-name{font-weight:var(--w-label);overflow-wrap:anywhere}
-.vf-title{color:var(--muted);font-size:var(--text-sm)}
-.vault-files time{flex:none;color:var(--muted);font-size:var(--text-sm);font-variant-numeric:tabular-nums}
+.vault-files li{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s1) var(--s4);max-width:none;border-bottom:1px solid var(--line)}
+.vf{flex:1;min-width:0;min-height:44px;box-sizing:border-box;display:flex;align-items:center;padding:10px var(--s1);font-weight:var(--w-label);color:var(--fg);text-decoration:none;overflow-wrap:anywhere}
+.vf:hover{text-decoration:underline}
+.vf-meta{flex:none;color:var(--muted);font-size:var(--text-sm);font-variant-numeric:tabular-nums}
 .vault-doc{max-width:var(--measure);margin:0 auto}
 .crumbs{margin:0 0 var(--s3);font-size:var(--text-sm)}
 .crumbs a{display:inline-flex;align-items:center;min-height:32px}
@@ -367,6 +360,7 @@ main:has(.vault-wide){max-width:64rem}
 .backlinks{margin-top:var(--s6);padding-top:var(--s4);border-top:1px solid var(--line)}
 .backlinks ul{list-style:none;margin:0;padding:0}.backlinks li{padding:var(--s1) 0}
 .vault-source{margin:var(--s4) 0 0;padding:var(--s4);background:var(--accent-soft);border-radius:8px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--text-sm);line-height:1.6}
-@media (max-width:48rem){.vault{grid-template-columns:minmax(0,1fr)}.vault-folders ul{display:flex;flex-wrap:wrap;gap:var(--s1)}.vault-folders a{border:1px solid var(--line);border-radius:6px}.vault-folders a[aria-current=page]{border-color:var(--accent)}.props>div{grid-template-columns:minmax(0,1fr)}.props .nested dt{padding-left:0}.vault-dl .btn{width:auto}.vault-side .btn-secondary{width:auto}}
+@media (max-width:48rem){.props>div{grid-template-columns:minmax(0,1fr)}.props .nested dt{padding-left:0}}
+@media (max-width:560px){.vault-files li{flex-wrap:wrap}.vf-meta{flex:1 0 100%;padding:0 var(--s1) 10px;margin-top:-6px}}
 .js .vault-filter .btn-secondary{display:none}
 .doc-foot{margin:var(--s5) 0 0;padding-top:var(--s3);border-top:1px solid var(--line)}
