@@ -54,6 +54,7 @@ details.revoke[open]>summary{background:var(--danger-bg)}
 :root{--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:40px}
 main h1{margin:0 0 var(--s2);font-size:var(--text-xl);font-weight:var(--w-strong);line-height:var(--lh-tight);letter-spacing:-.02em;text-wrap:balance}
 main h2{margin:0 0 var(--s3);font-size:var(--text-lg);font-weight:var(--w-strong);line-height:var(--lh-tight);letter-spacing:-.01em}
+/* h3 shares the body size by design; it is separated by weight 600 and the --s5 space above it. */
 main h3{margin:var(--s5) 0 var(--s2);font-size:var(--text-base);font-weight:var(--w-strong);line-height:1.3}
 .lede{margin:0 0 var(--s5);color:var(--muted)}
 main :is(p,li,dd,.lede,.note){max-width:var(--measure)}
@@ -109,13 +110,14 @@ details.more>summary,details.cleanup>summary{display:flex;align-items:center;wid
 details.more .search-row{grid-template-columns:repeat(2,minmax(0,12rem));margin-bottom:var(--s2)}
 .memlist{margin:var(--s4) 0 0}
 .memlist li{padding:0}
-.mem{display:flex;align-items:flex-start;gap:var(--s3);margin:0;padding:var(--s3) var(--s1);font-size:inherit;color:var(--fg);cursor:pointer}
+.mem{display:flex;align-items:flex-start;gap:var(--s3);margin:0;padding:var(--s3) var(--s1);font-size:inherit;font-weight:var(--w-body);line-height:var(--lh-body);color:var(--fg);cursor:pointer}
 .mem input[type=checkbox]{flex:none;margin:3px 0 0;width:20px;height:20px}
 .mem-body{display:block;min-width:0}
 .mem-text{display:block}
 .mem-meta{display:block;margin-top:2px;font-size:var(--text-sm);color:var(--muted)}
 .mem-meta .new{color:var(--accent)}
 .memlist .empty{padding:var(--s5) 0}
+.memlist.batches li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s2) var(--s4);padding:var(--s3) var(--s1)}
 .seltoolbar{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);padding:var(--s2) 0;margin-top:var(--s3);background:var(--bg);border-bottom:1px solid var(--line)}
 .js .seltoolbar:not(.has-sel){display:none}
 .js .js-hide{display:none}
