@@ -12,7 +12,7 @@ import (
 )
 
 // connectionInstructions is the custom-instruction text shown on the page.
-const connectionInstructions = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me — a preference, a person or organisation I know, a capability, my background — save it with cortex `remember`."
+const connectionInstructions = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me (a preference, a person or organisation I know, a capability, my background), save it with cortex `remember`."
 
 // ago renders an elapsed duration the way people say it.
 func ago(d time.Duration) string {

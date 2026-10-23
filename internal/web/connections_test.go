@@ -166,7 +166,7 @@ func TestInstructionTextPresent(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	_, body := e.get("/connections")
-	const want = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me — a preference, a person or organisation I know, a capability, my background — save it with cortex `remember`."
+	const want = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me (a preference, a person or organisation I know, a capability, my background), save it with cortex `remember`."
 	if !strings.Contains(html.UnescapeString(body), want) {
 		t.Fatalf("instruction text missing")
 	}

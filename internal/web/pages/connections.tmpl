@@ -5,8 +5,8 @@
     {{if .Revoked}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>
     {{else if .LastUsed}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>
     {{else}}<span class="status status-unverified"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Unverified</span>{{end}}
-    <span class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else}}Never used{{end}}</span>
-    <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span>
+    <div class="conn-metas"><span class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else}}Never used{{end}}</span>
+    <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span></div>
   </div>
   {{if .Revoked}}<p class="note conn-hint">Cannot connect any more.</p>{{else if not .LastUsed}}<p class="note conn-hint">Not connected yet. It shows as Active after its first use.</p>{{end}}
   {{if not .Revoked}}
@@ -40,6 +40,14 @@
 </section>
 {{end}}
 {{if .WasRestored}}<p class="notice" role="status">Restored what it wrote. The connection stays revoked.</p>{{end}}
+{{if .NewToken}}
+<section class="notice new-token" id="new-token" role="alert" tabindex="-1" aria-labelledby="new-token-h">
+  <h2 id="new-token-h">Token created for {{.NewName}}</h2>
+  <p>Copy it now. It is shown only once.</p>
+  <p><code id="new-token-value">{{.NewToken}}</code></p>
+  <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy token">Copy token</button></p>
+</section>
+{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 <section class="section" aria-labelledby="h-assistants">
   <h2 id="h-assistants">Assistants</h2>
@@ -55,14 +63,6 @@
 </section>
 <section class="section add-connection" aria-labelledby="h-add">
   <h2 id="h-add">Add a connection</h2>
-  {{if .NewToken}}
-  <div class="notice" id="new-token">
-    <h3>New token for {{.NewName}}</h3>
-    <p>Copy it now. It is shown only once.</p>
-    <p><code id="new-token-value">{{.NewToken}}</code></p>
-    <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy token">Copy token</button></p>
-  </div>
-  {{end}}
   <h3>Create an agent token</h3>
   <form method="post" action="/connections/tokens" autocomplete="off" class="token-form">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -72,10 +72,11 @@
   </form>
   <h3>Connect an assistant</h3>
   <p>Paste this into your assistant's custom instructions.</p>
-  <textarea id="instructions" readonly rows="5">{{.Instructions}}</textarea>
+  <textarea id="instructions" readonly rows="9">{{.Instructions}}</textarea>
   <p><button class="btn-secondary js-only" type="button" data-copy="instructions" data-copy-label="Copy">Copy</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
 </section>
 <script>
+var nt=document.getElementById('new-token');if(nt){nt.focus()}
 document.querySelectorAll('[data-copy]').forEach(function(b){
 b.addEventListener('click',function(){
 var el=document.getElementById(b.dataset.copy);
