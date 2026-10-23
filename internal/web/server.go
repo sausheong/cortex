@@ -163,7 +163,7 @@ func cspHeader(nonce string, formAction bool) string {
 func newNonce() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	return base64.RawStdEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func securityHeaders(next http.Handler) http.Handler {
