@@ -14,6 +14,9 @@ import (
 	"github.com/sausheong/cortex"
 )
 
+// now is the clock Export stamps pages with; tests replace it.
+var now = time.Now
+
 // Options controls Export.
 type Options struct {
 	VaultDir string // required
@@ -53,7 +56,7 @@ func Export(ctx context.Context, c *cortex.Cortex, opts Options) (Stats, error) 
 		manifest = newManifest()
 	}
 
-	exportedAt := time.Now().UTC()
+	exportedAt := now().UTC()
 	archiveStamp := exportedAt.Format("2006-01-02T15-04-05")
 
 	set, err := Build(ctx, c, exportedAt)
@@ -239,8 +242,24 @@ func computeSourceBasenames(sources map[string]struct{}) map[string]string {
 	return out
 }
 
+// hashContent identifies a page's content for incremental export. The
+// exported_at front-matter line records when the run happened, not what the
+// page says, so it is left out: otherwise a run that lands in a later second
+// than the previous one would rewrite every page.
 func hashContent(s string) string {
-	sum := sha256.Sum256([]byte(s))
+	head, body := s, ""
+	if i := strings.Index(s, "\n---\n"); i >= 0 { // end of the front matter
+		head, body = s[:i], s[i:]
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, line := range strings.SplitAfter(head, "\n") {
+		if !strings.HasPrefix(line, "exported_at: ") {
+			b.WriteString(line)
+		}
+	}
+	b.WriteString(body)
+	sum := sha256.Sum256([]byte(b.String()))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 

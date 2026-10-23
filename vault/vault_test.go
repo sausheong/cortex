@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/pgtest"
@@ -83,6 +84,35 @@ func TestExport_Idempotent(t *testing.T) {
 	}
 	if second.Skipped < first.Written {
 		t.Errorf("second run Skipped = %d, want >= %d", second.Skipped, first.Written)
+	}
+}
+
+// The page hash must not depend on exported_at: a second run that lands in a
+// later second (or hour) still has nothing to write.
+func TestExport_IdempotentAcrossClockTicks(t *testing.T) {
+	cx, cleanup := seedBrain(t)
+	defer cleanup()
+	vaultDir := t.TempDir()
+	ctx := context.Background()
+	clock := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	old := now
+	now = func() time.Time { return clock }
+	defer func() { now = old }()
+
+	first, err := Export(ctx, cx, Options{VaultDir: vaultDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Written < 2 {
+		t.Fatalf("first run Written = %d", first.Written)
+	}
+	clock = clock.Add(90 * time.Minute)
+	second, err := Export(ctx, cx, Options{VaultDir: vaultDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Written != 0 || second.Skipped < first.Written {
+		t.Errorf("second run Written=%d Skipped=%d, want 0 written, >=%d skipped", second.Written, second.Skipped, first.Written)
 	}
 }
 
