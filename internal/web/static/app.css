@@ -116,7 +116,10 @@ details.revoke{margin-top:var(--s3)}
 
 /* Memories: list first, quiet metadata, selection toolbar only when needed. */
 .search-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,12rem) auto;gap:var(--s3);align-items:end}
-.search-row label{margin:0}
+.search-row label{display:flex;flex-direction:column;gap:var(--s1);margin:0;min-width:0;line-height:1.4}
+.search-row input,.search-row select{margin-top:0}
+.search-row input[type=date]{-webkit-appearance:none;appearance:none;height:44px;max-width:100%;line-height:normal}
+.search-row input[type=date]::-webkit-date-and-time-value{text-align:left;min-height:1.2em}
 .search-row .btn-secondary{min-height:44px}
 .search-row input,.search-row select{min-height:44px}
 details.more,details.cleanup{margin-top:var(--s2)}
@@ -198,3 +201,6 @@ main h1{font-size:1.5rem}
 .conn-row{grid-template-columns:1fr}
 .pager a{display:inline-flex;align-items:center;min-height:44px}
 }
+.selall{margin:var(--s3) 0 0}
+.selact{display:inline-flex;align-items:center;min-height:44px;color:var(--accent)}
+.selact[hidden]{display:none}

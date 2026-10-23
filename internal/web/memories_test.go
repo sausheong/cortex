@@ -387,3 +387,17 @@ func TestMemoriesListFirstWithRelativeTimeAndCleanUpCollapsed(t *testing.T) {
 		t.Fatal("Clean up must start collapsed")
 	}
 }
+
+func TestMemoriesSelectPageFallback(t *testing.T) {
+	e, c, _ := memEnv(t)
+	putMem(t, c, "one")
+	putMem(t, c, "two")
+	_, body := e.get("/memories")
+	if strings.Contains(body, " checked>") || !strings.Contains(body, "Select all on this page") {
+		t.Fatalf("plain page wrong: %s", body)
+	}
+	_, body = e.get("/memories?page=1&select=page")
+	if strings.Count(body, `name="ids"`) != 2 || strings.Count(body, `name="ids" value`) != strings.Count(body, " checked>") || !strings.Contains(body, "2 selected") {
+		t.Fatalf("select=page wrong: %s", body)
+	}
+}

@@ -62,6 +62,11 @@ type memoriesView struct {
 	Restored        int // memories restored by the last Undo
 	WasRestored     bool
 	HasMore         bool // a filter is active, so the filter row shows it
+	// SelectPage pre-ticks every row (the no-JS "Select all on this page").
+	SelectPage bool
+	SelCount   int    // rows on this page
+	SelectHref string // same page, all rows ticked
+	PageHref   string // same page, nothing ticked
 }
 
 func parseDay(v string) *time.Time {
@@ -145,6 +150,14 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	add("from", v.From)
 	add("to", v.To)
 	v.Query = strings.Join(pq, "&")
+	v.SelectPage = r.Method == http.MethodGet && q.Get("select") == "page" && len(v.Memories) > 0
+	v.SelCount = len(v.Memories)
+	v.PageHref = "/memories?" + v.Query
+	if v.Query != "" {
+		v.PageHref += "&"
+	}
+	v.PageHref += "page=" + strconv.Itoa(v.Page)
+	v.SelectHref = v.PageHref + "&select=page"
 	s.render(w, r, status, "memories", v)
 }
 

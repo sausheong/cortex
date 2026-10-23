@@ -38,13 +38,15 @@
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="scope" value="selected">
   <div class="seltoolbar" id="seltoolbar">
-    <span id="selcount" aria-live="polite" class="selcount"></span>
+    <span id="selcount" aria-live="polite" class="selcount">{{if .SelectPage}}{{.SelCount}} selected{{end}}</span>
     <button class="btn-danger-quiet">Delete selected&hellip;</button>
+    <a id="selclear" class="selact" href="{{.PageHref}}"{{if not .SelectPage}} hidden{{end}}>Clear selection</a>
     <span class="note js-hide">Tick memories to delete. You confirm the count on the next screen.</span>
   </div>
+  {{if .Memories}}<p class="selall"><a id="selall" class="selact" href="{{.SelectHref}}">Select all on this page{{if gt .SelCount 0}} ({{.SelCount}}){{end}}</a></p>{{end}}
   <ul class="memlist" id="memlist" aria-describedby="err-ids">
   {{range .Memories}}
-    <li><label class="mem"><input type="checkbox" name="ids" value="{{.ID}}">
+    <li><label class="mem"><input type="checkbox" name="ids" value="{{.ID}}"{{if $.Data.SelectPage}} checked{{end}}>
       <span class="mem-body"><span class="mem-text">{{.Content}}</span>
       <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Who}} &middot; {{.Who}}{{end}}</span></span>
     </label></li>
@@ -89,7 +91,13 @@
     var n=f.querySelectorAll('input[name=ids]:checked').length;
     bar.classList.toggle("has-sel",n>0);
     out.textContent=n?n+" selected":"";
+    if(sa) sa.hidden=n===f.querySelectorAll('input[name=ids]').length&&n>0;
   }
+  function setAll(v){f.querySelectorAll('input[name=ids]').forEach(function(c){c.checked=v});upd();}
+  var sa=document.getElementById("selall"), sc=document.getElementById("selclear");
+  if(sa) sa.addEventListener("click",function(e){e.preventDefault();setAll(true);});
+  if(sc) sc.hidden=false;
+  if(sc) sc.addEventListener("click",function(e){e.preventDefault();setAll(false);});
   f.addEventListener("change",upd); upd();
 })();
 </script>
