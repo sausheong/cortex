@@ -82,8 +82,10 @@ func (c *Cortex) Usage(ctx context.Context) (Usage, error) {
 type MemoryListFilter struct {
 	Query     string
 	WrittenBy string
-	From, To  *time.Time // created_at in [From, To)
-	Oldest    bool       // oldest first; the default is newest first. Ties break on id.
+	// EntityID keeps memories linked to this entity (a foreign ID matches none).
+	EntityID string
+	From, To *time.Time // created_at in [From, To)
+	Oldest   bool       // oldest first; the default is newest first. Ties break on id.
 }
 
 // ListMemories pages this user's live memories, newest first unless
@@ -100,6 +102,10 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 	if f.WrittenBy != "" {
 		conds = append(conds, "written_by_connection_id = ?")
 		args = append(args, f.WrittenBy)
+	}
+	if f.EntityID != "" {
+		conds = append(conds, "id IN (SELECT memory_id FROM memory_entities WHERE user_id = ? AND entity_id = ?)")
+		args = append(args, c.userID, f.EntityID)
 	}
 	if f.From != nil {
 		conds = append(conds, "created_at >= ?")

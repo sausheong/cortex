@@ -57,27 +57,30 @@ type memoriesView struct {
 	ConnOpts  []connOpt
 	ConnNames map[string]string
 	Q, By     string
-	From, To  string
-	Total     int
-	Page      int
-	PrevPage  int
-	NextPage  int
-	Query     string // url-encoded filters for paging links
-	ViewQuery string // filters plus page, carried through delete forms
-	Size      int
-	Sizes     []int
-	Sort      string // "newest" or "oldest"
-	Range     string // preset key, or ""
-	Presets   []preset
-	TZHint    string
-	RangeErr  string
-	Pages     []pageLink
-	PrevHref  string
-	NextHref  string
-	ShowFrom  int // 1-based index of the first row shown
-	ShowTo    int
-	TotalFmt  string
-	ShowFmt   string
+	// Entity limits the list to memories that mention one entity; EntityName
+	// is its name, empty when it is not the viewer's.
+	Entity, EntityName string
+	From, To           string
+	Total              int
+	Page               int
+	PrevPage           int
+	NextPage           int
+	Query              string // url-encoded filters for paging links
+	ViewQuery          string // filters plus page, carried through delete forms
+	Size               int
+	Sizes              []int
+	Sort               string // "newest" or "oldest"
+	Range              string // preset key, or ""
+	Presets            []preset
+	TZHint             string
+	RangeErr           string
+	Pages              []pageLink
+	PrevHref           string
+	NextHref           string
+	ShowFrom           int // 1-based index of the first row shown
+	ShowTo             int
+	TotalFmt           string
+	ShowFmt            string
 	// Error is shown next to the control named by ErrField
 	// ("ids", "older_than", "match", "").
 	Error, ErrField string
@@ -254,7 +257,8 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 		v.From, v.To = from.Format("2006-01-02"), today.Format("2006-01-02")
 	}
-	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, Oldest: v.Sort == "oldest"}
+	v.Entity = strings.TrimSpace(q.Get("entity"))
+	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, EntityID: v.Entity, Oldest: v.Sort == "oldest"}
 	badDate := false
 	if t := parseDay(v.From); t != nil {
 		start := t.Add(shift)
@@ -303,6 +307,11 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	v.Total, v.Conns = total, conns
+	if v.Entity != "" {
+		if e, err := cx.GetEntity(ctx, v.Entity); err == nil {
+			v.EntityName = e.Name
+		}
+	}
 	v.ConnNames = map[string]string{}
 	for _, c := range conns {
 		v.ConnNames[c.ID] = c.Name
@@ -320,7 +329,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 			Ago: relTime(now, m.CreatedAt), Abs: absTime(m.CreatedAt), ISO: m.CreatedAt.UTC().Format(time.RFC3339),
 			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
 	}
-	v.HasMore = v.Q != "" || v.By != "" || v.From != "" || v.To != ""
+	v.HasMore = v.Entity != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
 	last := (total + v.Size - 1) / v.Size
 	if v.Page > 1 {
 		v.PrevPage = v.Page - 1
@@ -336,6 +345,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	add("q", v.Q)
+	add("entity", v.Entity)
 	add("by", v.By)
 	if v.Range != "" {
 		add("range", v.Range)
@@ -378,7 +388,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	// Presets keep search and author but replace the dates.
 	presetHref := func(rng string) string {
 		p := make([]string, 0, 6)
-		for _, kv := range [][2]string{{"q", v.Q}, {"by", v.By}} {
+		for _, kv := range [][2]string{{"q", v.Q}, {"entity", v.Entity}, {"by", v.By}} {
 			if kv[1] != "" {
 				p = append(p, kv[0]+"="+url.QueryEscape(kv[1]))
 			}
@@ -575,6 +585,8 @@ func deletedKind(k string) string {
 		return "Revoked connection"
 	case "compaction":
 		return "Compaction"
+	case "merge":
+		return "Merged entities"
 	case "forget", "entity":
 		return "Forgotten item"
 	}
