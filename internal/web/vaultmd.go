@@ -122,8 +122,10 @@ func safeURL(dest string) bool {
 // loads from memory text) and unsafe destinations are dropped.
 type sanitizer struct{}
 
-func (sanitizer) Transform(doc *ast.Document, _ text.Reader, _ parser.Context) {
+func (sanitizer) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
+	src := reader.Source()
 	var imgs []*ast.Image
+	var autos []*ast.AutoLink
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -131,6 +133,10 @@ func (sanitizer) Transform(doc *ast.Document, _ text.Reader, _ parser.Context) {
 		switch t := n.(type) {
 		case *ast.Image:
 			imgs = append(imgs, t)
+		case *ast.AutoLink:
+			if !safeURL(string(t.URL(src))) {
+				autos = append(autos, t)
+			}
 		case *ast.Link:
 			if !safeURL(string(t.Destination)) {
 				t.Destination = []byte("#")
@@ -138,6 +144,9 @@ func (sanitizer) Transform(doc *ast.Document, _ text.Reader, _ parser.Context) {
 		}
 		return ast.WalkContinue, nil
 	})
+	for _, a := range autos { // unsafe autolinks become inert text
+		a.Parent().ReplaceChild(a.Parent(), a, ast.NewString(a.Label(src)))
+	}
 	for _, im := range imgs {
 		l := ast.NewLink()
 		l.Destination, l.Title = im.Destination, im.Title
@@ -171,7 +180,9 @@ func renderMarkdown(src string, resolve func(string) (string, bool)) template.HT
 	}
 	// Plain links with a scheme we do not browse to are rendered inert by
 	// goldmark; links that remain get rel so they never leak the vault URL.
-	out := strings.ReplaceAll(buf.String(), `<a href="http`, `<a rel="noopener noreferrer nofollow" href="http`)
+	// Every markdown-produced anchor starts `<a href="` (wikilinks carry a
+	// class first and are internal), so rel is set on all of them.
+	out := strings.ReplaceAll(buf.String(), `<a href="`, `<a rel="noopener noreferrer nofollow" href="`)
 	return template.HTML(out)
 }
 

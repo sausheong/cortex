@@ -330,6 +330,20 @@ func TestRenderMarkdownEncodedSchemesAndImages(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownAutolinks(t *testing.T) {
+	none := func(string) (string, bool) { return "", false }
+	for _, src := range []string{"<javascript:alert(1)>", "<JaVaScRiPt:alert(1)>", "<data:text/html;base64,AAA>", "<vbscript:x>"} {
+		out := strings.ToLower(string(renderMarkdown(src, none)))
+		if strings.Contains(out, "href") || strings.Contains(out, "<a") {
+			t.Errorf("%q rendered live link: %s", src, out)
+		}
+	}
+	out := string(renderMarkdown("<https://ok.test/x> <me@ok.test>", none))
+	if !strings.Contains(out, `rel="noopener noreferrer nofollow" href="https://ok.test/x"`) || !strings.Contains(out, "mailto:me@ok.test") {
+		t.Fatalf("safe autolinks lost: %s", out)
+	}
+}
+
 func TestSafeZipName(t *testing.T) {
 	for n, want := range map[string]bool{"people/a.md": true, "index.md": true, "../x/a.md": false, "/a.md": false,
 		"a\\b.md": false, "a/../b.md": false, "a\x00.md": false, "a//b.md": false} {

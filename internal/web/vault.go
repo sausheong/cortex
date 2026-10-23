@@ -246,6 +246,9 @@ SELECT
 	return fmt.Sprintf("%d|%s|%s|%d|%s|%s", e, et, rh, m, mt, mh), nil
 }
 
+// vaultBuildSem caps simultaneous vault builds process-wide.
+var vaultBuildSem = make(chan struct{}, 2)
+
 // vaultFor returns the user's vault, rebuilding it when their data changed.
 // It only ever builds from the signed-in user's own scope.
 func (s *server) vaultFor(ctx context.Context, userID string) (*vaultSet, error) {
@@ -260,7 +263,13 @@ func (s *server) vaultFor(ctx context.Context, userID string) (*vaultSet, error)
 	if e.v != nil && e.version == ver && now.Sub(e.v.builtAt) < vaultCacheTTL {
 		return e.v, nil
 	}
+	select { // bound concurrent builds across all users (memory)
+	case vaultBuildSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	set, err := vault.Build(ctx, s.root.ForUser(userID), now.UTC())
+	<-vaultBuildSem
 	if err != nil {
 		return nil, err
 	}
