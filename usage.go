@@ -157,13 +157,22 @@ func (c *Cortex) WrittenSince(ctx context.Context, since time.Time) (map[string]
 
 // MemoryListFilter narrows ListMemories. Zero fields are ignored.
 type MemoryListFilter struct {
-	Query     string
+	Query string
+	// WrittenBy keeps memories written by this connection ID; NoConnection
+	// keeps those no connection wrote (added directly).
 	WrittenBy string
 	// EntityID keeps memories linked to this entity (a foreign ID matches none).
 	EntityID string
 	From, To *time.Time // created_at in [From, To)
-	Oldest   bool       // oldest first; the default is newest first. Ties break on id.
+	// Since keeps memories created strictly after this instant. It composes
+	// with From and To, and matches NewMemoriesSince.
+	Since  *time.Time
+	Oldest bool // oldest first; the default is newest first. Ties break on id.
 }
+
+// NoConnection is the MemoryListFilter.WrittenBy value for memories that no
+// connection wrote.
+const NoConnection = "none"
 
 // ListMemories pages this user's live memories, newest first unless
 // f.Oldest, and returns the
@@ -176,7 +185,9 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 		conds = append(conds, `content ILIKE ? ESCAPE '\'`)
 		args = append(args, "%"+esc+"%")
 	}
-	if f.WrittenBy != "" {
+	if f.WrittenBy == NoConnection {
+		conds = append(conds, "COALESCE(written_by_connection_id,'') = ''")
+	} else if f.WrittenBy != "" {
 		conds = append(conds, "written_by_connection_id = ?")
 		args = append(args, f.WrittenBy)
 	}
@@ -191,6 +202,10 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 	if f.To != nil {
 		conds = append(conds, "created_at < ?")
 		args = append(args, *f.To)
+	}
+	if f.Since != nil {
+		conds = append(conds, "created_at > ?")
+		args = append(args, *f.Since)
 	}
 	where := strings.Join(conds, " AND ")
 	var total int

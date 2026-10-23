@@ -2,7 +2,10 @@ package web
 
 import (
 	"context"
+	"html"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -129,10 +132,74 @@ func TestHomeNewSinceGroupsAndLinks(t *testing.T) {
 	if n := strings.Count(body, "chat says"); n != 3 {
 		t.Fatalf("lines for ChatGPT = %d, want 3", n)
 	}
-	from := e.now.Add(-time.Hour).UTC().Format("2006-01-02")
-	want := `href="/memories?by=` + chat.ID + `&amp;from=` + from + `&amp;sort=newest"`
+	since := e.now.Add(-time.Hour).Truncate(time.Second).UTC().Format(time.RFC3339)
+	want := `href="/memories?by=` + chat.ID + `&amp;since=` + url.QueryEscape(since) + `&amp;sort=newest"`
 	if !strings.Contains(body, want) {
 		t.Fatalf("link %q missing in %s", want, body)
+	}
+	if strings.Contains(body, "from=") {
+		t.Fatal("new-since links must use an exact timestamp, not a day")
+	}
+}
+
+// The Memories page behind a "N new" link shows exactly N memories, including
+// ones written earlier the same day, and "Added directly" links to by=none.
+func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT")
+	// Written before the visit marker, same calendar day.
+	e.write(ua.ID, chat.ID, "old chat note")
+	if err := e.root.ForUser(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "old direct note"}); err != nil {
+		t.Fatal(err)
+	}
+	// The visit marker is whole seconds: put it in a later second than the old notes.
+	time.Sleep(1100 * time.Millisecond)
+	e.now = time.Now().UTC()
+	e.get("/")
+	e.now = e.now.Add(time.Hour)
+	e.write(ua.ID, chat.ID, "new chat one")
+	e.write(ua.ID, chat.ID, "new chat two")
+	if err := e.root.ForUser(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "new direct note"}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := e.get("/")
+	hrefs := regexp.MustCompile(`<h3 class="group-head"><a href="([^"]+)">([^<]*)`).FindAllStringSubmatch(body, -1)
+	if len(hrefs) != 2 {
+		t.Fatalf("want 2 groups, got %v in %s", hrefs, body)
+	}
+	for _, h := range hrefs {
+		link := html.UnescapeString(h[1])
+		_, page := e.get(link)
+		n := regexp.MustCompile(`(\d+) new`).FindStringSubmatch(h[2])[1]
+		want := n + " " + map[string]string{"1": "memory", "2": "memories"}[n]
+		if !strings.Contains(page, `<p class="lede">`+want) {
+			t.Errorf("%s: %q does not show %s: %.400s", link, h[2], want, page)
+		}
+		if strings.Contains(page, "old chat note") || strings.Contains(page, "old direct note") {
+			t.Errorf("%s: lists memories from before the visit", link)
+		}
+		if strings.HasPrefix(h[2], "Added directly") && !strings.Contains(link, "by=none") {
+			t.Errorf("Added directly must link with by=none: %s", link)
+		}
+	}
+}
+
+// Removed connections do not tick the setup checklist's "Connect" step.
+func TestSetupIgnoresRemovedConnections(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Gone")
+	if st := e.srv.setupState(t.Context(), ua.ID); st == nil || !st.Connect {
+		t.Fatalf("live connection should tick Connect: %+v", st)
+	}
+	if _, err := e.st.DB.ExecContext(t.Context(), `UPDATE connections SET removed_at = now() WHERE id = $1`, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := e.srv.setupState(t.Context(), ua.ID); st == nil || st.Connect {
+		t.Fatalf("removed connection must not tick Connect: %+v", st)
 	}
 }
 

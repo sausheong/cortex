@@ -358,3 +358,43 @@ func TestMemoriesGarbageDateIgnoredWithMessage(t *testing.T) {
 		t.Fatal("garbage date must be cleared with a message")
 	}
 }
+
+// since composes with from/to (strictly after the instant), and by=none lists
+// memories no connection wrote.
+func TestMemoriesSinceAndByNone(t *testing.T) {
+	e, c, id := memEnv(t)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), id, "Agent")
+	putMem(t, c, "direct early")
+	time.Sleep(20 * time.Millisecond)
+	mark := time.Now().UTC().Truncate(time.Second).Add(time.Second)
+	time.Sleep(time.Until(mark.Add(20 * time.Millisecond)))
+	putMem(t, c, "direct late")
+	e.write(id, conn.ID, "agent late")
+	q := func(v url.Values) string { _, b := e.get("/memories?" + v.Encode()); return b }
+	since := mark.Format(time.RFC3339)
+	b := q(url.Values{"since": {since}})
+	if !strings.Contains(b, "direct late") || !strings.Contains(b, "agent late") || strings.Contains(b, "direct early") {
+		t.Fatalf("since: %s", b)
+	}
+	b = q(url.Values{"since": {since}, "by": {"none"}})
+	if !strings.Contains(b, "direct late") || strings.Contains(b, "agent late") || strings.Contains(b, "direct early") {
+		t.Fatalf("since+by=none: %s", b)
+	}
+	b = q(url.Values{"by": {"none"}})
+	if !strings.Contains(b, "direct early") || strings.Contains(b, "agent late") {
+		t.Fatalf("by=none: %s", b)
+	}
+	// Composes with a day range: an earlier From does not widen since.
+	day := mark.Format("2006-01-02")
+	b = q(url.Values{"since": {since}, "from": {day}, "to": {day}})
+	if strings.Contains(b, "direct early") || !strings.Contains(b, "agent late") {
+		t.Fatalf("since+from/to: %s", b)
+	}
+	// Paging links keep since, and a bad value is ignored.
+	if b = q(url.Values{"since": {since}, "size": {"25"}}); !strings.Contains(b, "since") {
+		t.Fatal("since not carried in the view")
+	}
+	if b = q(url.Values{"since": {"garbage"}}); !strings.Contains(b, "direct early") {
+		t.Fatalf("bad since should be ignored: %s", b)
+	}
+}

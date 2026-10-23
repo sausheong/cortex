@@ -17,7 +17,7 @@ func (s *server) setupState(ctx context.Context, userID string) *pages.Setup {
 	}
 	if conns, err := s.st.ListConnections(ctx, userID); err == nil {
 		for _, c := range conns {
-			if c.RevokedAt == nil {
+			if c.RevokedAt == nil && c.RemovedAt == nil {
 				st.Connect = true
 				break
 			}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -197,6 +198,9 @@ func (s *server) homeNew(ctx context.Context, cx *cortex.Cortex, conns []account
 		h.Heading = "Recently added"
 		since = now.AddDate(0, 0, -homeFallbackDays)
 	}
+	// Whole seconds, so the Memories page behind each link (which takes an
+	// RFC3339 instant) counts exactly the same memories as "N new".
+	since = since.Truncate(time.Second)
 	if connErr != nil {
 		s.cfg.Logger.Error("home connections", "err", connErr)
 		h.Err = true
@@ -220,14 +224,12 @@ func (s *server) homeNew(ctx context.Context, cx *cortex.Cortex, conns []account
 	for _, c := range conns {
 		byID[c.ID] = c
 	}
-	from := since.UTC().Format("2006-01-02")
+	stamp := since.UTC().Format(time.RFC3339)
 	for _, g := range groups {
 		hg := homeGroup{Name: connLabel(byID, g.ConnectionID), Count: g.Count}
 		q := url.Values{}
-		if g.ConnectionID != "" {
-			q.Set("by", g.ConnectionID)
-		}
-		q.Set("from", from)
+		q.Set("by", cmp.Or(g.ConnectionID, cortex.NoConnection))
+		q.Set("since", stamp)
 		q.Set("sort", "newest")
 		hg.Href = "/memories?" + q.Encode()
 		for _, m := range g.Latest {

@@ -61,6 +61,8 @@ type memoriesView struct {
 	// is its name, empty when it is not the viewer's.
 	Entity, EntityName string
 	From, To           string
+	Since              string // RFC3339 instant; "" when not filtering by it
+	SinceAgo           string
 	Total              int
 	Page               int
 	PrevPage           int
@@ -189,7 +191,7 @@ func (s *server) memoriesGet(w http.ResponseWriter, r *http.Request, u SessionUs
 }
 
 // viewKeys are the only parameters a carried view may hold.
-var viewKeys = []string{"q", "by", "from", "to", "range", "size", "sort", "page"}
+var viewKeys = []string{"q", "by", "from", "to", "range", "size", "sort", "page", "entity", "since"}
 
 // cleanView parses a carried view string keeping only known keys, so the
 // value can never redirect elsewhere or inject other parameters.
@@ -258,7 +260,13 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.From, v.To = from.Format("2006-01-02"), today.Format("2006-01-02")
 	}
 	v.Entity = strings.TrimSpace(q.Get("entity"))
-	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, EntityID: v.Entity, Oldest: v.Sort == "oldest"}
+	var since *time.Time
+	if t, err := time.Parse(time.RFC3339, q.Get("since")); err == nil {
+		t = t.UTC()
+		since, v.Since = &t, t.Format(time.RFC3339)
+		v.SinceAgo = relTime(s.now(), t)
+	}
+	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, EntityID: v.Entity, Since: since, Oldest: v.Sort == "oldest"}
 	badDate := false
 	if t := parseDay(v.From); t != nil {
 		start := t.Add(shift)
@@ -329,7 +337,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 			Ago: relTime(now, m.CreatedAt), Abs: absTime(m.CreatedAt), ISO: m.CreatedAt.UTC().Format(time.RFC3339),
 			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
 	}
-	v.HasMore = v.Entity != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
+	v.HasMore = v.Entity != "" || v.Since != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
 	last := (total + v.Size - 1) / v.Size
 	if v.Page > 1 {
 		v.PrevPage = v.Page - 1
@@ -347,6 +355,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	add("q", v.Q)
 	add("entity", v.Entity)
 	add("by", v.By)
+	add("since", v.Since)
 	if v.Range != "" {
 		add("range", v.Range)
 	} else {
@@ -388,7 +397,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	// Presets keep search and author but replace the dates.
 	presetHref := func(rng string) string {
 		p := make([]string, 0, 6)
-		for _, kv := range [][2]string{{"q", v.Q}, {"entity", v.Entity}, {"by", v.By}} {
+		for _, kv := range [][2]string{{"q", v.Q}, {"entity", v.Entity}, {"by", v.By}, {"since", v.Since}} {
 			if kv[1] != "" {
 				p = append(p, kv[0]+"="+url.QueryEscape(kv[1]))
 			}
