@@ -13,6 +13,7 @@
 <header class="top">
   <a class="brand" href="/">cortex</a>
   {{if .SignedIn}}<nav aria-label="Main">
+    <a href="/" {{.Current "/"}}>Home</a>
     <a href="/memories" {{.Current "/memories"}}>Memories</a>
     <a href="/graph" {{.Current "/graph"}}>Graph</a>
     <a href="/connections" {{.Current "/connections"}}>Connections</a>

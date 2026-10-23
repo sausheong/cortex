@@ -195,7 +195,7 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	p := pages.Page{Data: data, Path: r.URL.Path}
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
-		if name == "memories" || name == "connections" || name == "settings" {
+		if name == "home" || name == "memories" || name == "connections" || name == "settings" {
 			p.Setup = s.setupState(r.Context(), u.UserID)
 		}
 	}
@@ -209,14 +209,6 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
-}
-
-func (s *server) home(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.sessionFor(r); ok {
-		http.Redirect(w, r, "/memories", http.StatusFound)
-		return
-	}
-	s.render(w, r, http.StatusOK, "signin", nil)
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request, u SessionUser) {

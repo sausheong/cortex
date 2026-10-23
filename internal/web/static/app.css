@@ -234,7 +234,7 @@ main h1{font-size:1.5rem}
 .subnav a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;font-size:var(--text-sm);font-weight:var(--w-label);color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
 .subnav a:hover{color:var(--fg)}
 .subnav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}
-@media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:nowrap}.top nav a{padding:0}.top nav .link{padding:8px 0;white-space:nowrap}.top nav a{white-space:nowrap}}
+@media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:wrap}.top nav a{padding:0}.top nav .link{padding:8px 0;white-space:nowrap}.top nav a{white-space:nowrap}}
 
 /* Graph: a map of the neighbourhood plus the same entities as a list. Flat, hairline-divided, shape-coded. */
 main:has(.graph-page){max-width:72rem}
@@ -300,4 +300,25 @@ label.check input{margin:0}
 .graph-panel .facts{margin-bottom:var(--s3)}
 .graph-list h2{font-size:var(--text-lg)}
 @media (max-width:560px){.graph-search-row{grid-template-columns:1fr}}
-@media (max-width:560px){.top nav{flex-wrap:wrap}}
+
+/* Home: quiet sections divided by hairlines, plain rows, no tiles. */
+.home-section{margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--line)}
+.setup+.home-section,.lede+.home-section{margin-top:var(--s5)}
+.home-section p{margin:0 0 var(--s2)}
+.home-bullets{margin:0 0 var(--s2);padding-left:var(--s5);max-width:var(--measure)}
+.home-bullets li+li{margin-top:var(--s1)}
+details.more .home-bullets{margin-top:var(--s1)}
+.home-groups,.home-lines,.home-rows{list-style:none;margin:0 0 var(--s2);padding:0}
+.home-groups>li{padding:var(--s3) 0;max-width:none}
+.home-groups>li+li{border-top:1px solid var(--line)}
+.group-head{margin:0 0 var(--s1)}
+.group-head a{display:inline-flex;align-items:center;min-height:44px}
+.home-lines li{padding:var(--s1) 0;max-width:var(--measure)}
+.home-lines .note{white-space:nowrap}
+.home-rows li{display:grid;grid-template-columns:minmax(0,11rem) minmax(0,1fr);gap:var(--s1) var(--s4);padding:var(--s3) 0;border-top:1px solid var(--line);max-width:none}
+.home-rows li:last-child{border-bottom:1px solid var(--line)}
+.row-name{font-weight:var(--w-label)}
+.row-meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s1) var(--s3)}
+.home-rows a{display:inline-flex;align-items:center;min-height:44px;margin:-12px 0}
+.status-idle{color:var(--muted)}
+@media (max-width:560px){.home-rows li{grid-template-columns:1fr}}
