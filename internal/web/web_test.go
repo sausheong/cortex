@@ -710,20 +710,22 @@ func TestJobProgressOwnOnly(t *testing.T) {
 	}
 }
 
-func TestSettingsEmbedGroupOpensOnRejection(t *testing.T) {
+func TestSettingsShowsEmbeddingsSection(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
-	open := `<details class="advanced" open`
-	// Rejected embed base URL: the group opens.
-	r, body := e.post("/settings", settingsForm(e.csrf(), "embed_base_url", "http://embed.example.com/v1"))
-	if r.StatusCode != 400 || !strings.Contains(body, open) {
-		t.Fatalf("embed url rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
+	_, body := e.get("/settings")
+	if strings.Contains(body, "<details") || strings.Contains(body, "Advanced") {
+		t.Fatal("embeddings still collapsed")
 	}
-	// Rejected chat URL with default embedding fields: the group stays closed.
-	r, body = e.post("/settings", settingsForm(e.csrf(), "base_url", "http://api.example.com/v1",
-		"embed_model", "", "embed_dims", ""))
-	if r.StatusCode != 400 || strings.Contains(body, open) || !strings.Contains(body, `<details class="advanced"`) {
-		t.Fatalf("chat rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
+	for _, want := range []string{"<legend>Embeddings</legend>", `name="embed_model"`, `name="embed_dims"`, `name="embed_base_url"`, `name="embed_api_key"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	// A rejected embed URL still shows its inline error.
+	r, body := e.post("/settings", settingsForm(e.csrf(), "embed_base_url", "http://embed.example.com/v1"))
+	if r.StatusCode != 400 || !strings.Contains(body, `name="embed_base_url"`) {
+		t.Fatalf("embed url rejection: %d", r.StatusCode)
 	}
 }
 

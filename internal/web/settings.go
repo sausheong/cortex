@@ -43,9 +43,6 @@ type settingsView struct {
 	// and nothing changed; false for follow-up errors after a successful save.
 	NotSaved bool
 	Saved    bool
-	// EmbedError is true when a rejection concerns the embedding group, so the
-	// collapsed "Advanced" section opens on it.
-	EmbedError bool
 	// ErrField names the form field Error is about ("" when it concerns the
 	// whole form); the message also shows next to that field.
 	ErrField string
@@ -54,13 +51,6 @@ type settingsView struct {
 	Pending  bool // desired embedder differs from the active one
 	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
 	MaintenanceError string
-}
-
-// embedCustomised reports whether any embedding field differs from its default.
-func embedCustomised(c accounts.Settings) bool {
-	return c.EmbedBaseURL != "" || c.EmbedAPIKey != "" ||
-		(c.EmbedModel != "" && c.EmbedModel != accounts.DefaultEmbedModel) ||
-		(c.EmbedDims != 0 && c.EmbedDims != accounts.DefaultEmbedDims)
 }
 
 func (s *server) latestReembed(ctx context.Context, userID string) (*jobView, error) {
@@ -115,9 +105,6 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 		cur = &d
 	}
 	v.S = cur.Masked()
-	// Validate and TestProvider errors do not say which group failed, so a
-	// rejected save opens the embedding group whenever it was customised.
-	v.EmbedError = v.NotSaved && (strings.Contains(strings.ToLower(msg), "embed") || embedCustomised(*cur) || strings.HasPrefix(v.ErrField, "embed_"))
 	j, err := s.latestReembed(ctx, u.UserID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -38,22 +38,18 @@
     <label>Model <input name="chat_model" value="{{.S.ChatModel}}" aria-describedby="h-chat"></label>
     <p class="note field-help" id="h-chat">The model name, for example gpt-4o-mini. A small, cheap model is enough.</p>
   </fieldset>
-  <details class="advanced"{{if or (eq .S.Provider "anthropic") .EmbedError}} open{{end}}>
-  <summary><span class="adv-title">Advanced: embeddings</span>
-    <span class="note adv-sum">{{.S.EmbedModel}}, {{.S.EmbedDims}} dimensions, {{if .S.EmbedBaseURL}}own address{{else}}same address as chat{{end}}, {{if .S.EmbedAPIKey}}own key{{else}}chat key{{end}}. {{if eq .S.Provider "anthropic"}}A key is required with Anthropic.{{else}}The defaults are fine for most people.{{end}}</span></summary>
   <fieldset>
-    <legend class="sr-only">Embeddings</legend>
-    <p class="note group-help">Embeddings let cortex search by meaning instead of exact words. Optional with an OpenAI-compatible provider: the defaults reuse the chat key above. Required with Anthropic, which does not offer embeddings, so add an embedding key here.</p>
+    <legend>Embeddings</legend>
+    <p class="note group-help">Embeddings let cortex search by meaning, not just exact words. With an OpenAI-compatible provider the defaults reuse the chat key above. Anthropic does not offer embeddings, so add an embedding key here.</p>
     <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
     <label>Dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric" aria-describedby="err-dims h-dims"{{if eq .ErrField "embed_dims"}} aria-invalid="true"{{end}}></label>
     <p class="field-error" id="err-dims" role="alert">{{if eq .ErrField "embed_dims"}}{{.Error}}{{end}}</p>
-    <p class="note field-help" id="h-dims">How finely cortex describes each memory for search. 512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
+    <p class="note field-help" id="h-dims">512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
     <label>Base URL <input name="embed_base_url" value="{{.S.EmbedBaseURL}}" placeholder="Same as chat" aria-describedby="err-ebase"{{if eq .ErrField "embed_base_url"}} aria-invalid="true"{{end}}></label>
     <p class="field-error" id="err-ebase" role="alert">{{if eq .ErrField "embed_base_url"}}{{.Error}}{{end}}</p>
     <label>API key <input name="embed_api_key" type="password" value="" placeholder="{{if .S.EmbedAPIKey}}{{.S.EmbedAPIKey}}{{else}}Same as chat{{end}}" aria-describedby="err-ekey"{{if eq .ErrField "embed_api_key"}} aria-invalid="true"{{end}}></label>
     <p class="field-error" id="err-ekey" role="alert">{{if eq .ErrField "embed_api_key"}}{{.Error}}{{end}}</p>
   </fieldset>
-  </details>
   <div class="actions">
     <button class="btn" data-pending="Testing&hellip;">Test &amp; save</button>
     <p class="note save-help">We make one small test request to your provider first. If it fails, nothing is saved, and we show you why.</p>
