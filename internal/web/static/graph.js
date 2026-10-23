@@ -38,16 +38,38 @@
       .force("center", d3f.forceCenter(W / 2, H / 2))
       .stop();
     for (var i = 0; i < 300; i++) sim.tick();
-    var pad = 44;
-    nodes.forEach(function (n) { n.x = Math.max(pad, Math.min(W - pad, n.x)); n.y = Math.max(pad, Math.min(H - pad, n.y)); });
+    // Which nodes carry a visible label: all of them when the map is small,
+    // otherwise the centre and the best-connected neighbours. The rest show
+    // theirs on hover, focus (via the list) or tap.
+    var LABEL_ALL = 12, LABEL_TOP = 8;
+    var ranked = nodes.filter(function (n) { return !n.center; })
+      .sort(function (a, b) { return (b.rels || 0) - (a.rels || 0); });
+    var shown = {};
+    nodes.forEach(function (n) { if (n.center || nodes.length <= LABEL_ALL) shown[n.id] = true; });
+    if (nodes.length > LABEL_ALL) ranked.slice(0, LABEL_TOP).forEach(function (n) { shown[n.id] = true; });
+    function labelOf(n) { return short(n.name, n.center ? 28 : 20); }
+    // Fit the viewBox to the nodes, their labels and a margin, so the map
+    // fills its frame instead of floating in blank canvas.
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, m = 24;
+    nodes.forEach(function (n) {
+      var r = n.center ? 20 : 14, lw = shown[n.id] ? labelOf(n).length * 3.9 : 0, lb = shown[n.id] ? (n.center ? 42 : 34) : 0;
+      x0 = Math.min(x0, n.x - Math.max(r, lw)); x1 = Math.max(x1, n.x + Math.max(r, lw));
+      y0 = Math.min(y0, n.y - r); y1 = Math.max(y1, n.y + Math.max(r, lb));
+    });
+    x0 -= m; y0 -= m; x1 += m; y1 += m;
+    var minW = 300, minH = 200;
+    if (x1 - x0 < minW) { var cx = (x0 + x1) / 2; x0 = cx - minW / 2; x1 = cx + minW / 2; }
+    if (y1 - y0 < minH) { var cy = (y0 + y1) / 2; y0 = cy - minH / 2; y1 = cy + minH / 2; }
+    var VW = x1 - x0, VH = y1 - y0;
 
     box.textContent = "";
-    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, width: W, height: H, "aria-hidden": "true", focusable: "false", class: "g-svg" }, box);
+    var svg = el("svg", { viewBox: x0 + " " + y0 + " " + VW + " " + VH, "aria-hidden": "true", focusable: "false", class: "g-svg" }, box);
     var defs = el("defs", {}, svg);
     var mk = el("marker", { id: "g-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
     el("path", { d: "M0 1L9 5L0 9Z", class: "g-arrowhead" }, mk);
     var gl = el("g", {}, svg), gn = el("g", {}, svg);
-    var showAll = nodes.length <= 60 && W >= 520;
+    var open = null;
+    var coarse = window.matchMedia && matchMedia("(hover: none)").matches;
     links.forEach(function (l) {
       var s = l.source, t = l.target, dx = t.x - s.x, dy = t.y - s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
       var rs = s.center ? 17 : 12, rt = t.center ? 17 : 12;
@@ -60,11 +82,17 @@
       var sc = n.center ? 1.6 : 1;
       el("path", { d: n.path, "fill-rule": "evenodd", transform: "scale(" + sc + ")", class: "g-shape" }, g);
       el("title", {}, g).textContent = n.name + " (" + n.type_label + ")";
-      if (showAll || n.center) {
-        var t = el("text", { y: n.center ? 32 : 24, "text-anchor": "middle", class: "g-label" }, g);
-        t.textContent = short(n.name, n.center ? 28 : 20);
-      }
-      if (!n.center) g.addEventListener("click", function () { go(n.id); });
+      var t = el("text", { y: n.center ? 32 : 24, "text-anchor": "middle", class: "g-label" + (shown[n.id] ? "" : " g-label-more") }, g);
+      t.textContent = labelOf(n);
+      if (!n.center) g.addEventListener("click", function () {
+        // On touch, a first tap on an unlabelled shape names it; a second opens it.
+        if (coarse && !shown[n.id] && open !== g) {
+          if (open) open.classList.remove("is-open");
+          open = g; g.classList.add("is-open");
+          return;
+        }
+        go(n.id);
+      });
     });
     // Moving through the list highlights the same shape on the map.
     document.querySelectorAll("#node-list a[data-node]").forEach(function (a) {
