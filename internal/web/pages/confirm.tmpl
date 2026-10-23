@@ -1,0 +1,25 @@
+{{define "title"}}{{.Data.Title}}{{end}}
+{{define "content"}}
+{{with .Data}}
+<div class="confirm">
+<h1>{{.Title}}</h1>
+{{if .Error}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+<p class="consequence">{{.Consequence}}</p>
+{{range .Details}}<p class="note">{{.}}</p>{{end}}
+<form method="post" action="{{.Action}}" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  {{range .Fields}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">
+  {{end}}<input type="hidden" name="confirm_count" value="{{.Count}}">
+  {{if .Phrase}}
+  <label for="confirm-phrase">Type <strong>{{.Phrase}}</strong> to confirm
+    <input id="confirm-phrase" name="confirm" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="confirm-phrase-err"{{if .PhraseErr}} aria-invalid="true"{{end}}></label>
+  <p class="field-error" id="confirm-phrase-err">{{.PhraseErr}}</p>
+  {{end}}
+  <div class="actions">
+    <button class="btn-danger">{{.Button}}</button>
+    <a class="btn-secondary" href="{{.CancelHref}}">Cancel</a>
+  </div>
+</form>
+</div>
+{{end}}
+{{end}}

@@ -3,6 +3,8 @@ package web
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,13 +18,27 @@ type connView struct {
 	ID, Name, LastUsed string
 	Written            int
 	Revoked            bool
+	// DeleteCount is how many items "Revoke and delete" would remove.
+	DeleteCount int
+	CSRF        string
+}
+
+// revokeNotice is the persistent message after a revoke.
+type revokeNotice struct {
+	Name    string
+	BatchID string // set when items were deleted and Undo is available
+	Items   int
 }
 
 type connectionsView struct {
 	Assistants, Agents []connView
 	NewToken, NewName  string
 	Error              string
+	ErrField           string // "name" ties Error to the token name field
+	FormName           string // token name to redisplay after an error
 	Instructions       string
+	Revoked            *revokeNotice
+	WasRestored        bool
 }
 
 // ConnectionsMount registers the connections page routes.
@@ -41,8 +57,32 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 	if err != nil {
 		return v, err
 	}
+	cx := h.d.Root.ForUser(u.UserID)
+	q := r.URL.Query()
+	if _, err := strconv.Atoi(q.Get("restored")); err == nil {
+		v.WasRestored = true
+	}
 	for _, c := range conns {
-		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil}
+		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil, CSRF: u.CSRF}
+		if c.RevokedAt == nil {
+			if cv.DeleteCount, err = cx.CountByConnection(r.Context(), c.ID); err != nil {
+				return v, err
+			}
+		}
+		if q.Get("revoked") == c.ID && c.RevokedAt != nil {
+			v.Revoked = &revokeNotice{Name: c.Name}
+			// Build the undo from the stored batch, not the URL's numbers.
+			if b := q.Get("batch"); b != "" {
+				if bs, err := cx.ListDeleteBatches(r.Context()); err == nil {
+					for _, d := range bs {
+						if d.ID == b && d.Kind == "connection" {
+							v.Revoked.BatchID = d.ID
+							v.Revoked.Items = d.Memories + d.Entities + d.Relationships + d.Chunks
+						}
+					}
+				}
+			}
+		}
 		if c.LastUsed != nil {
 			cv.LastUsed = c.LastUsed.UTC().Format(time.RFC3339)
 		}
@@ -75,7 +115,9 @@ func (h *connHandler) list(w http.ResponseWriter, r *http.Request, u SessionUser
 func (h *connHandler) newToken(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if name == "" || len(name) > 80 {
-		h.page(w, r, u, func(v *connectionsView) { v.Error = "Enter a token name (up to 80 characters)." })
+		h.page(w, r, u, func(v *connectionsView) {
+			v.Error, v.ErrField, v.FormName = "Enter a name for the token, up to 80 characters. For example: laptop agent.", "name", name
+		})
 		return
 	}
 	tok, _, err := h.d.Accounts.CreateAgentToken(r.Context(), u.UserID, name)
@@ -88,8 +130,59 @@ func (h *connHandler) newToken(w http.ResponseWriter, r *http.Request, u Session
 }
 
 func (h *connHandler) revoke(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	ctx := r.Context()
 	id := r.PathValue("id")
-	if err := h.d.Accounts.RevokeConnection(r.Context(), u.UserID, id); err != nil {
+	cx := h.d.Root.ForUser(u.UserID)
+	conns, err := h.d.Accounts.ListConnections(ctx, u.UserID)
+	if err != nil {
+		h.d.Cfg.Logger.Error("revoke", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var conn *accounts.Connection
+	for i := range conns {
+		if conns[i].ID == id {
+			conn = &conns[i]
+		}
+	}
+	if conn == nil {
+		http.NotFound(w, r)
+		return
+	}
+	choice := r.PostFormValue("choice")
+	if choice != "keep" && choice != "delete" {
+		h.page(w, r, u, func(v *connectionsView) {
+			v.Error = "Choose what happens to what " + conn.Name + " wrote: keep it, or delete it. Nothing was revoked."
+		})
+		return
+	}
+	n := 0
+	if choice == "delete" {
+		if n, err = cx.CountByConnection(ctx, id); err != nil {
+			h.d.Cfg.Logger.Error("revoke count", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		want, has := expectCount(r)
+		if !has || want != n {
+			cv := confirmView{
+				Title:       "Revoke " + conn.Name + " and delete " + plural(n, "item", "items") + "?",
+				Consequence: conn.Name + " loses access right away, and the " + plural(n, "item", "items") + " it wrote are deleted. You can restore the items for 30 days. The connection stays revoked.",
+				Action:      "/connections/" + id + "/revoke",
+				Fields:      []confirmField{{"choice", "delete"}},
+				Count:       n,
+				Button:      "Revoke and delete " + plural(n, "item", "items"),
+				CancelHref:  "/connections",
+			}
+			status := http.StatusOK
+			if has {
+				cv.Error, status = changedMsg(want, n, "items it wrote"), http.StatusConflict
+			}
+			h.d.RenderStatus(w, r, status, "confirm", cv)
+			return
+		}
+	}
+	if err := h.d.Accounts.RevokeConnection(ctx, u.UserID, id); err != nil {
 		if errors.Is(err, accounts.ErrNotFound) {
 			http.NotFound(w, r)
 			return
@@ -98,12 +191,17 @@ func (h *connHandler) revoke(w http.ResponseWriter, r *http.Request, u SessionUs
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if r.PostFormValue("remove") == "1" {
-		if _, _, err := h.d.Root.ForUser(u.UserID).SoftDeleteByConnection(r.Context(), id); err != nil {
+	dest := "/connections?revoked=" + url.QueryEscape(id)
+	if choice == "delete" {
+		batch, _, err := cx.SoftDeleteByConnection(ctx, id)
+		if err != nil {
 			h.d.Cfg.Logger.Error("remove by connection", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		if batch != "" {
+			dest += "&batch=" + url.QueryEscape(batch)
+		}
 	}
-	http.Redirect(w, r, "/connections", http.StatusSeeOther)
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }

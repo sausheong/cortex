@@ -2,8 +2,19 @@
 {{define "content"}}
 {{with .Data}}
 <h1>Memories</h1>
-{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-{{if .Restored}}<p class="notice">Restored.</p>{{end}}
+{{if .Undo}}
+<section class="notice" id="undo-notice" role="status">
+  <p><strong>Deleted {{.Undo.Count}} {{if eq .Undo.Count 1}}memory{{else}}memories{{end}}.</strong> You can restore {{if eq .Undo.Count 1}}it{{else}}them{{end}} for 30 days.</p>
+  <form method="post" action="/memories/restore/{{.Undo.BatchID}}" class="actions">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="next" value="{{.Undo.Next}}">
+    <button class="btn">Undo delete</button>
+    <a href="/memories/deleted">Recently deleted</a>
+  </form>
+</section>
+{{end}}
+{{if .WasRestored}}<p class="notice" role="status">{{if .Restored}}Restored {{.Restored}} {{if eq .Restored 1}}memory{{else}}memories{{end}}.{{else}}Restored.{{end}}</p>{{end}}
+{{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 <form method="get" action="/memories">
   <label>Search <input name="q" value="{{.Q}}"></label>
   <label>Written by
@@ -12,38 +23,45 @@
     </select></label>
   <label>From <input name="from" type="date" value="{{.From}}"></label>
   <label>To <input name="to" type="date" value="{{.To}}"></label>
-  <button class="btn">Filter</button>
+  <button class="btn-secondary">Filter</button>
 </form>
 <p class="note">{{.Total}} memories. <a href="/memories/deleted">Recently deleted</a></p>
 <form method="post" action="/memories/delete">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <ul class="memlist">
+  <input type="hidden" name="scope" value="selected">
+  <ul class="memlist" id="memlist" aria-describedby="err-ids">
   {{range .Memories}}
-    <li><label><input type="checkbox" name="ids" value="{{.ID}}" style="display:inline;width:auto"> {{.Content}}</label>
+    <li><label><input type="checkbox" name="ids" value="{{.ID}}"> {{.Content}}</label>
     <span class="note">{{.CreatedAt.Format "2006-01-02"}}{{if .WrittenBy}} · {{index $.Data.ConnNames .WrittenBy}}{{end}}</span></li>
   {{else}}<li class="note">No memories.</li>{{end}}
   </ul>
-  <button class="btn">Delete selected</button>
+  <p class="field-error" id="err-ids" role="alert">{{if eq .ErrField "ids"}}{{.Error}}{{end}}</p>
+  {{if .Memories}}<button class="btn-danger-quiet">Delete selected&hellip;</button>
+  <span class="note">You confirm the count on the next screen.</span>{{end}}
 </form>
 <p>{{if .PrevPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.PrevPage}}">Previous</a>{{end}}
 {{if .NextPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.NextPage}}">Next</a>{{end}}</p>
 <h2>Bulk delete</h2>
 <form method="post" action="/memories/delete">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="scope" value="matching">
   <label>Written by
     <select name="by"><option value="">-</option>
       {{range .Conns}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
     </select></label>
-  <label>Older than (days) <input name="older_than" inputmode="numeric"></label>
-  <label>Containing text <input name="match"></label>
-  <button class="btn">Delete matching</button>
+  <label>Older than (days) <input name="older_than" inputmode="numeric" aria-describedby="err-older"{{if eq .ErrField "older_than"}} aria-invalid="true"{{end}}></label>
+  <p class="field-error" id="err-older" role="alert">{{if eq .ErrField "older_than"}}{{.Error}}{{end}}</p>
+  <label>Containing text <input name="match" aria-describedby="err-match"{{if eq .ErrField "match"}} aria-invalid="true"{{end}}></label>
+  <p class="field-error" id="err-match" role="alert">{{if eq .ErrField "match"}}{{.Error}}{{end}}</p>
+  <button class="btn-danger-quiet">Delete matching&hellip;</button>
+  <span class="note">Shows the exact count before anything is deleted.</span>
 </form>
 <h2>Delete everything</h2>
 <form method="post" action="/memories/delete">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="scope" value="all">
   <input type="hidden" name="all" value="1">
-  <label>Type <b>delete my brain</b> to confirm <input name="confirm" autocomplete="off"></label>
-  <button class="btn">Delete all memories</button>
+  <button class="btn-danger-quiet">Delete all memories&hellip;</button>
 </form>
 <p class="note">Deleted memories can be restored for 30 days.</p>
 {{end}}

@@ -114,7 +114,26 @@ func TestApplyOnlySelected(t *testing.T) {
 	if r, body := e.get("/compaction/c_1"); r.StatusCode != 200 || !strings.Contains(body, "one-two") {
 		t.Fatalf("%d %.300s", r.StatusCode, body)
 	}
-	if r, body := e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}, "idx": {"1"}}); r.StatusCode != 303 {
+	// Changes are not pre-checked.
+	if _, body := e.get("/compaction/c_1"); strings.Contains(body, "checked") && strings.Contains(body, `name="idx" value="0" checked`) {
+		t.Fatal("changes are pre-checked")
+	}
+	// Step 1 (no count): preview with the exact count, nothing applied.
+	if r, body := e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}, "idx": {"1"}}); r.StatusCode != 200 ||
+		!strings.Contains(body, "Apply 1 change?") || !strings.Contains(body, "replaces 2 memories with 1 merged memory") || !strings.Contains(body, "30 days") {
+		t.Fatalf("preview: %d %s", r.StatusCode, body)
+	}
+	if live := e.liveContents(a); !live["three"] || live["three-four"] {
+		t.Fatalf("preview applied: %v", live)
+	}
+	// Stale count: refused.
+	if r, body := e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}, "idx": {"1"}, "confirm_count": {"2"}}); r.StatusCode != http.StatusConflict || !strings.Contains(body, "changed from 2 to 1") {
+		t.Fatalf("stale: %d %s", r.StatusCode, body)
+	}
+	if live := e.liveContents(a); !live["three"] {
+		t.Fatalf("stale count applied: %v", live)
+	}
+	if r, body := e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}, "idx": {"1"}, "confirm_count": {"1"}}); r.StatusCode != 303 {
 		t.Fatalf("%d %s", r.StatusCode, body)
 	}
 	live := e.liveContents(a)
@@ -141,7 +160,7 @@ func TestApplyIgnoresPostedChangeBodies(t *testing.T) {
 	e.seedCompaction("c_1", a, []cortex.Change{{Kind: "merge", SourceIDs: []string{am1, am2}, Result: "stored result"}})
 	csrf := e.csrf()
 	r, _ := e.post("/compaction/c_1/apply", url.Values{
-		"csrf": {csrf}, "idx": {"0"},
+		"csrf": {csrf}, "idx": {"0"}, "confirm_count": {"1"},
 		"source_ids": {bm}, "result": {"evil"}, "changes": {`[{"source_ids":["` + bm + `"],"result":"evil"}]`},
 	})
 	if r.StatusCode != 303 {
@@ -177,5 +196,54 @@ func TestIsolationCompaction(t *testing.T) {
 	}
 	if live := e.liveContents(b.ID); !live["bob private"] {
 		t.Fatal("bob's memory changed")
+	}
+}
+
+func TestApplyNeedsSelectionOrReviewAll(t *testing.T) {
+	e := compactEnv(t)
+	e.signIn(alice(), "")
+	a := e.userBySub("g-alice").ID
+	m1, m2 := e.seedMemory(a, "one"), e.seedMemory(a, "two")
+	m3, m4 := e.seedMemory(a, "three"), e.seedMemory(a, "four")
+	e.seedCompaction("c_1", a, []cortex.Change{
+		{Kind: "merge", SourceIDs: []string{m1, m2}, Result: "one-two", Sources: []string{"one", "two"}},
+		{Kind: "merge", SourceIDs: []string{m3, m4}, Result: "three-four", Sources: []string{"three", "four"}},
+	})
+	csrf := e.csrf()
+	r, body := e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}})
+	if r.StatusCode != 400 || !strings.Contains(body, "Tick at least one change") || !strings.Contains(body, `id="err-select"`) {
+		t.Fatalf("empty selection: %d %s", r.StatusCode, body)
+	}
+	// Review all previews both changes without applying.
+	r, body = e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}, "select": {"all"}})
+	if r.StatusCode != 200 || !strings.Contains(body, "Apply 2 changes?") || !strings.Contains(body, "replaces 4 memories with 2 merged memories") {
+		t.Fatalf("review all: %d %s", r.StatusCode, body)
+	}
+	if live := e.liveContents(a); !live["one"] || live["one-two"] {
+		t.Fatalf("applied on preview: %v", live)
+	}
+	r, _ = e.post("/compaction/c_1/apply", url.Values{"csrf": {csrf}, "idx": {"0", "1"}, "confirm_count": {"2"}})
+	if r.StatusCode != 303 {
+		t.Fatalf("apply: %d", r.StatusCode)
+	}
+	if live := e.liveContents(a); !live["one-two"] || !live["three-four"] || live["one"] {
+		t.Fatalf("live = %v", live)
+	}
+	_, body = e.get("/compaction/c_1")
+	if !strings.Contains(body, "Undo compaction") || !strings.Contains(body, "30 days") {
+		t.Fatalf("no persistent undo: %s", body)
+	}
+}
+
+func TestCompactionFailureLinksToSettings(t *testing.T) {
+	e := compactEnv(t)
+	e.signIn(alice(), "")
+	a := e.userBySub("g-alice").ID
+	if _, err := e.st.DB.Exec(`INSERT INTO compactions (id, user_id, status) VALUES ('c_f', $1, 'failed')`, a); err != nil {
+		t.Fatal(err)
+	}
+	_, body := e.get("/compaction/c_f")
+	if !strings.Contains(body, `href="/settings"`) || !strings.Contains(body, "Start a new compaction") {
+		t.Fatalf("no next step: %s", body)
 	}
 }

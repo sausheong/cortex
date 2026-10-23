@@ -14,7 +14,8 @@ import (
 
 const (
 	memoriesPerPage  = 50
-	clearBrainPhrase = "delete my brain"
+	clearAllPhrase   = "delete everything"
+	deleteAcctPhrase = "delete my account"
 )
 
 func (s *server) mountMemories(mux *http.ServeMux) {
@@ -26,20 +27,30 @@ func (s *server) mountMemories(mux *http.ServeMux) {
 	mux.HandleFunc("POST /account/delete", s.auth(s.accountDelete))
 }
 
+// undoNotice is the persistent "Deleted N. Undo" message shown after a delete.
+type undoNotice struct {
+	BatchID string
+	Count   int
+	Next    string // where Undo returns to
+}
+
 type memoriesView struct {
-	Memories    []cortex.Memory
-	Conns       []accounts.Connection
-	ConnNames   map[string]string
-	Q, By       string
-	From, To    string
-	Total       int
-	Page        int
-	PrevPage    int
-	NextPage    int
-	Query       string // url-encoded filters for paging links
-	Error       string
-	DeletedFlag int
-	Restored    bool
+	Memories  []cortex.Memory
+	Conns     []accounts.Connection
+	ConnNames map[string]string
+	Q, By     string
+	From, To  string
+	Total     int
+	Page      int
+	PrevPage  int
+	NextPage  int
+	Query     string // url-encoded filters for paging links
+	// Error is shown next to the control named by ErrField
+	// ("ids", "older_than", "match", "").
+	Error, ErrField string
+	Undo            *undoNotice
+	Restored        int // memories restored by the last Undo
+	WasRestored     bool
 }
 
 func parseDay(v string) *time.Time {
@@ -51,25 +62,27 @@ func parseDay(v string) *time.Time {
 }
 
 func (s *server) memoriesGet(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	s.memoriesPage(w, r, u, http.StatusOK, "")
+	s.memoriesPage(w, r, u, http.StatusOK, "", "")
 }
 
-func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, msg string) {
+func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, field, msg string) {
 	ctx := r.Context()
 	q := r.URL.Query()
-	v := memoriesView{Q: q.Get("q"), By: q.Get("by"), From: q.Get("from"), To: q.Get("to"), Error: msg}
+	v := memoriesView{Q: q.Get("q"), By: q.Get("by"), From: q.Get("from"), To: q.Get("to"), Error: msg, ErrField: field}
 	v.Page, _ = strconv.Atoi(q.Get("page"))
 	if v.Page < 1 {
 		v.Page = 1
 	}
-	v.DeletedFlag, _ = strconv.Atoi(q.Get("deleted"))
-	v.Restored = q.Get("restored") == "1"
+	if n, err := strconv.Atoi(q.Get("restored")); err == nil {
+		v.WasRestored, v.Restored = true, n
+	}
 	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, From: parseDay(v.From)}
 	if t := parseDay(v.To); t != nil {
 		end := t.AddDate(0, 0, 1)
 		f.To = &end
 	}
-	ms, total, err := s.root.ForUser(u.UserID).ListMemories(ctx, f, memoriesPerPage, (v.Page-1)*memoriesPerPage)
+	cx := s.root.ForUser(u.UserID)
+	ms, total, err := cx.ListMemories(ctx, f, memoriesPerPage, (v.Page-1)*memoriesPerPage)
 	if err != nil {
 		s.cfg.Logger.Error("memories", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -79,6 +92,17 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	// The undo notice is built from the stored batch, never from the URL's
+	// numbers, so a crafted link cannot show a false count.
+	if b := q.Get("batch"); b != "" {
+		if bs, err := cx.ListDeleteBatches(ctx); err == nil {
+			for _, d := range bs {
+				if d.ID == b && d.Kind == "memories" {
+					v.Undo = &undoNotice{BatchID: d.ID, Count: d.Memories, Next: "/memories"}
+				}
+			}
+		}
 	}
 	v.Memories, v.Total, v.Conns = ms, total, conns
 	v.ConnNames = map[string]string{}
@@ -105,45 +129,150 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	s.render(w, r, status, "memories", v)
 }
 
+// describeFilter says in plain words what a delete filter selects.
+func describeFilter(f cortex.DeleteFilter, days string, connName string) string {
+	var parts []string
+	if len(f.IDs) > 0 {
+		parts = append(parts, "the memories you ticked")
+	}
+	if f.WrittenBy != "" {
+		who := connName
+		if who == "" {
+			who = "one connection"
+		}
+		parts = append(parts, "written by "+who)
+	}
+	if f.OlderThan != nil {
+		parts = append(parts, "older than "+plural(atoiOr(days), "day", "days"))
+	}
+	if f.Query != "" {
+		parts = append(parts, "containing \""+f.Query+"\"")
+	}
+	if len(parts) == 0 {
+		return "every memory you have"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func atoiOr(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
+}
+
 func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	scope := r.PostFormValue("scope") // "selected", "matching" or "all"
+	days := strings.TrimSpace(r.PostFormValue("older_than"))
 	f := cortex.DeleteFilter{IDs: r.PostForm["ids"], WrittenBy: strings.TrimSpace(r.PostFormValue("by")),
 		Query: strings.TrimSpace(r.PostFormValue("match"))}
-	if d := strings.TrimSpace(r.PostFormValue("older_than")); d != "" {
-		days, err := strconv.Atoi(d)
-		if err != nil || days < 0 {
-			s.memoriesPage(w, r, u, http.StatusBadRequest, "older_than must be a number of days")
+	if days != "" {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			s.memoriesPage(w, r, u, http.StatusBadRequest, "older_than", "Enter a whole number of days, like 30.")
 			return
 		}
-		t := s.now().UTC().AddDate(0, 0, -days)
+		t := s.now().UTC().AddDate(0, 0, -n)
 		f.OlderThan = &t
 	}
-	if r.PostFormValue("all") == "1" {
-		if strings.TrimSpace(r.PostFormValue("confirm")) != clearBrainPhrase {
-			s.memoriesPage(w, r, u, http.StatusBadRequest, "Type \""+clearBrainPhrase+"\" to delete everything.")
-			return
-		}
-		f.All = true
-	}
+	f.All = r.PostFormValue("all") == "1"
 	if len(f.IDs) == 0 && f.WrittenBy == "" && f.Query == "" && f.OlderThan == nil && !f.All {
-		s.memoriesPage(w, r, u, http.StatusBadRequest, "Choose what to delete.")
+		if scope == "selected" {
+			s.memoriesPage(w, r, u, http.StatusBadRequest, "ids", "Tick at least one memory, then choose Delete selected.")
+		} else {
+			s.memoriesPage(w, r, u, http.StatusBadRequest, "match", "Choose who wrote it, how old it is, or text it contains.")
+		}
 		return
 	}
-	_, n, err := s.root.ForUser(u.UserID).SoftDeleteMemories(r.Context(), f, "web:"+u.UserID)
+	cx := s.root.ForUser(u.UserID)
+	n, err := cx.CountMemories(r.Context(), f)
+	if err != nil {
+		s.cfg.Logger.Error("memories count", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		field := "match"
+		if len(f.IDs) > 0 {
+			field = "ids"
+		}
+		s.memoriesPage(w, r, u, http.StatusBadRequest, field, "No memories match, so nothing was deleted.")
+		return
+	}
+
+	cv := confirmView{
+		Title:      "Delete " + plural(n, "memory", "memories") + "?",
+		Action:     "/memories/delete",
+		Count:      n,
+		Button:     "Delete " + plural(n, "memory", "memories"),
+		CancelHref: "/memories",
+	}
+	if f.All && f.WrittenBy == "" && f.Query == "" && f.OlderThan == nil && len(f.IDs) == 0 {
+		cv.Title = "Delete all " + plural(n, "memory", "memories") + "?"
+		cv.Button = "Delete all " + plural(n, "memory", "memories")
+		cv.Phrase = clearAllPhrase
+		cv.Consequence = "This clears everything cortex remembers about you. You can restore it for 30 days."
+	} else {
+		cv.Consequence = "You can restore " + map[bool]string{true: "it", false: "them"}[n == 1] + " for 30 days."
+		cn := ""
+		if f.WrittenBy != "" {
+			if conns, err := s.st.ListConnections(r.Context(), u.UserID); err == nil {
+				for _, c := range conns {
+					if c.ID == f.WrittenBy {
+						cn = c.Name
+					}
+				}
+			}
+		}
+		cv.Details = []string{"Selected: " + describeFilter(f, days, cn) + "."}
+	}
+	cv.Details = append(cv.Details, "Restore from Recently deleted. After 30 days they are removed for good.")
+	cv.Fields = []confirmField{{"scope", scope}}
+	for _, id := range f.IDs {
+		cv.Fields = append(cv.Fields, confirmField{"ids", id})
+	}
+	for _, kv := range [][2]string{{"by", f.WrittenBy}, {"older_than", days}, {"match", f.Query}} {
+		if kv[1] != "" {
+			cv.Fields = append(cv.Fields, confirmField{kv[0], kv[1]})
+		}
+	}
+	if f.All {
+		cv.Fields = append(cv.Fields, confirmField{"all", "1"})
+	}
+
+	want, has := expectCount(r)
+	if !has {
+		s.renderConfirm(w, r, http.StatusOK, cv)
+		return
+	}
+	if want != n {
+		cv.Error = changedMsg(want, n, "memories")
+		s.renderConfirm(w, r, http.StatusConflict, cv)
+		return
+	}
+	if cv.Phrase != "" && !phraseOK(r, cv.Phrase) {
+		cv.PhraseErr = "That did not match. Type " + cv.Phrase + " exactly, or cancel."
+		cv.Error = "Nothing was deleted."
+		s.renderConfirm(w, r, http.StatusBadRequest, cv)
+		return
+	}
+	batch, deleted, err := cx.SoftDeleteMemories(r.Context(), f, "web:"+u.UserID)
 	if err != nil {
 		s.cfg.Logger.Error("memories delete", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/memories/deleted?deleted="+strconv.Itoa(n), http.StatusSeeOther)
+	if batch == "" || deleted == 0 {
+		s.memoriesPage(w, r, u, http.StatusConflict, "", "Those memories were already gone, so nothing was deleted.")
+		return
+	}
+	http.Redirect(w, r, "/memories?batch="+url.QueryEscape(batch), http.StatusSeeOther)
 }
 
 type deletedView struct {
 	Batches []cortex.DeleteBatch
-	Deleted int
 }
 
 func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u SessionUser) {
@@ -152,12 +281,21 @@ func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u Sessi
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	n, _ := strconv.Atoi(r.URL.Query().Get("deleted"))
-	s.render(w, r, http.StatusOK, "deleted", deletedView{Batches: bs, Deleted: n})
+	s.render(w, r, http.StatusOK, "deleted", deletedView{Batches: bs})
 }
 
 func (s *server) memoriesRestore(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	err := s.root.ForUser(u.UserID).RestoreBatch(r.Context(), r.PathValue("batch"))
+	cx := s.root.ForUser(u.UserID)
+	id := r.PathValue("batch")
+	n := 0
+	if bs, err := cx.ListDeleteBatches(r.Context()); err == nil {
+		for _, b := range bs {
+			if b.ID == id {
+				n = b.Memories
+			}
+		}
+	}
+	err := cx.RestoreBatch(r.Context(), id)
 	if errors.Is(err, cortex.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -167,7 +305,11 @@ func (s *server) memoriesRestore(w http.ResponseWriter, r *http.Request, u Sessi
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/memories?restored=1", http.StatusSeeOther)
+	dest := "/memories"
+	if r.PostFormValue("next") == "/connections" {
+		dest = "/connections"
+	}
+	http.Redirect(w, r, dest+"?restored="+strconv.Itoa(n), http.StatusSeeOther)
 }
 
 type accountView struct {
@@ -186,7 +328,48 @@ func (s *server) accountGet(w http.ResponseWriter, r *http.Request, u SessionUse
 }
 
 func (s *server) accountDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	if err := s.st.DeleteAccount(r.Context(), u.UserID); err != nil {
+	ctx := r.Context()
+	n, err := s.root.ForUser(u.UserID).CountMemories(ctx, cortex.DeleteFilter{All: true})
+	if err != nil {
+		s.cfg.Logger.Error("account count", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	live := 0
+	if conns, err := s.st.ListConnections(ctx, u.UserID); err == nil {
+		for _, c := range conns {
+			if c.RevokedAt == nil {
+				live++
+			}
+		}
+	}
+	cv := confirmView{
+		Title:       "Delete your account?",
+		Consequence: "This signs you out and disconnects " + plural(live, "assistant or agent", "assistants and agents") + " right away. Your " + plural(n, "memory", "memories") + " are kept for 30 days.",
+		Details:     []string{"Sign in again within 30 days to get your memories back. Connections do not come back; you connect them again. After 30 days everything is removed for good."},
+		Action:      "/account/delete",
+		Count:       n,
+		Phrase:      deleteAcctPhrase,
+		Button:      "Delete my account",
+		CancelHref:  "/account",
+	}
+	want, has := expectCount(r)
+	if !has {
+		s.renderConfirm(w, r, http.StatusOK, cv)
+		return
+	}
+	if want != n {
+		cv.Error = changedMsg(want, n, "memories")
+		s.renderConfirm(w, r, http.StatusConflict, cv)
+		return
+	}
+	if !phraseOK(r, cv.Phrase) {
+		cv.PhraseErr = "That did not match. Type " + cv.Phrase + " exactly, or cancel."
+		cv.Error = "Your account was not deleted."
+		s.renderConfirm(w, r, http.StatusBadRequest, cv)
+		return
+	}
+	if err := s.st.DeleteAccount(ctx, u.UserID); err != nil {
 		s.cfg.Logger.Error("delete account", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

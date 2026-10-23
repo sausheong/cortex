@@ -1,34 +1,62 @@
 {{define "title"}}Compaction{{end}}
+{{define "retry"}}<form method="post" action="/memories/compact" class="actions">
+  <input type="hidden" name="csrf" value="{{.}}">
+  <button class="btn-secondary">Start a new compaction</button>
+</form>{{end}}
 {{define "content"}}
 {{with .Data}}
 <h1>Compact memories</h1>
+{{if .Error}}
+<div class="error" role="alert">
+  <p><strong>{{.Error}}</strong></p>
+  {{if .ErrLink}}<p><a href="{{.ErrLink}}">{{.ErrLinkText}}</a></p>{{end}}
+</div>
+{{if .CanRetry}}{{template "retry" $.CSRF}}{{end}}
+{{end}}
 {{if eq .Status "proposing"}}
 <p>Looking for memories to merge. This page refreshes on its own.</p>
 <meta http-equiv="refresh" content="3">
-{{else if eq .Status "failed"}}
-<p class="error" role="alert">Compaction failed. Check your AI provider settings and try again.</p>
 {{else if eq .Status "ready"}}
 {{if .Changes}}
-<p>Review the proposed changes. Sources are kept and can be restored with Undo.</p>
+<p>Review the proposed changes. Nothing changes until you confirm, and the originals are kept for 30 days.</p>
 <form method="post" action="/compaction/{{.ID}}/apply">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  {{range $i, $c := .Changes}}
+  <div class="toolbar">
+    <label class="js-only" style="margin:0"><input type="checkbox" id="select-all"> Select all {{len .Changes}}</label>
+    <span class="note" id="selected-count" aria-live="polite"></span>
+  </div>
+  <div id="changes" aria-describedby="err-select">
+  {{range .Changes}}
   <section class="change">
-    <label><input type="checkbox" name="idx" value="{{$i}}" checked> <strong>{{$c.Kind}}</strong></label>
+    <label><input type="checkbox" name="idx" value="{{.Index}}"> <strong>{{.Label}}</strong></label>
     <p>Replaces:</p>
-    <ul>{{range $c.Sources}}<li>{{.}}</li>{{end}}</ul>
-    <p>With: {{$c.Result}}</p>
+    <ul>{{range .Sources}}<li>{{.}}</li>{{end}}</ul>
+    <p>With: {{.Result}}</p>
   </section>
   {{end}}
-  <button class="btn">Apply selected</button>
+  </div>
+  <p class="field-error" id="err-select" role="alert">{{.ErrSelect}}</p>
+  <div class="actions">
+    <button class="btn">Review selected</button>
+    <button class="btn-secondary" name="select" value="all">Review all {{len .Changes}}</button>
+  </div>
 </form>
+<script>
+(function(){var all=document.getElementById('select-all'),box=document.getElementById('changes'),out=document.getElementById('selected-count');
+if(!all||!box)return;var cs=box.querySelectorAll('input[name=idx]');
+function upd(){var n=0;cs.forEach(function(c){if(c.checked)n++});out.textContent=n+' of '+cs.length+' selected';all.checked=n===cs.length;all.indeterminate=n>0&&n<cs.length}
+all.addEventListener('change',function(){cs.forEach(function(c){c.checked=all.checked});upd()});
+cs.forEach(function(c){c.addEventListener('change',upd)});upd()})();
+</script>
 {{else}}<p>Nothing to compact.</p>{{end}}
 {{else if eq .Status "applied"}}
-<p>Compaction applied.</p>
-<form method="post" action="/compaction/{{.ID}}/undo">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <button class="btn">Undo</button>
-</form>
+<section class="notice" role="status">
+  <p><strong>Compaction applied.</strong> The originals are kept for 30 days. You can undo it now.</p>
+  <form method="post" action="/compaction/{{.ID}}/undo" class="actions">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn-secondary">Undo compaction</button>
+  </form>
+</section>
 {{else if eq .Status "undone"}}
 <p>Compaction undone. Your memories are back as they were.</p>
 {{end}}

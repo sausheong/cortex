@@ -23,7 +23,7 @@ type Page struct {
 // name ("signin", "settings", "notice").
 func Load() map[string]*Template {
 	out := map[string]*Template{}
-	for _, n := range []string{"signin", "settings", "notice", "consent", "connections", "memories", "deleted", "account", "compaction"} {
+	for _, n := range []string{"signin", "settings", "notice", "consent", "connections", "memories", "deleted", "account", "compaction", "confirm"} {
 		out[n] = template.Must(template.ParseFS(files, "layout.tmpl", n+".tmpl"))
 	}
 	return out

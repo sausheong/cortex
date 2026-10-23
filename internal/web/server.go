@@ -54,6 +54,8 @@ type Deps struct {
 	Auth func(next func(w http.ResponseWriter, r *http.Request, u SessionUser)) http.HandlerFunc
 	// Render writes a page inside the layout with security headers.
 	Render func(w http.ResponseWriter, r *http.Request, name string, data any)
+	// RenderStatus is Render with an explicit HTTP status.
+	RenderStatus func(w http.ResponseWriter, r *http.Request, status int, name string, data any)
 }
 
 type server struct {
@@ -109,7 +111,8 @@ func (s *server) deps() Deps {
 		Auth: s.auth,
 		Render: func(w http.ResponseWriter, r *http.Request, name string, data any) {
 			s.render(w, r, http.StatusOK, name, data)
-		}}
+		},
+		RenderStatus: s.render}
 }
 
 func (s *server) handler() http.Handler {
