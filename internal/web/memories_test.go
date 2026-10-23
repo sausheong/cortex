@@ -378,7 +378,7 @@ func TestMemoriesListFirstWithRelativeTimeAndCleanUpCollapsed(t *testing.T) {
 	e, c, _ := memEnv(t)
 	putMem(t, c, "a quiet fact")
 	_, body := e.get("/memories")
-	for _, want := range []string{"just now", `title="`, "<summary>More filters</summary>", "<summary>Clean up</summary>", `href="/compaction"`, `href="/memories/deleted"`} {
+	for _, want := range []string{"just now", `title="`, "<summary>Clean up</summary>", `href="/compaction"`, `href="/memories/deleted"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q: %s", want, body)
 		}

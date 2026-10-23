@@ -83,9 +83,11 @@ type MemoryListFilter struct {
 	Query     string
 	WrittenBy string
 	From, To  *time.Time // created_at in [From, To)
+	Oldest    bool       // oldest first; the default is newest first. Ties break on id.
 }
 
-// ListMemories pages this user's live memories, newest first, and returns the
+// ListMemories pages this user's live memories, newest first unless
+// f.Oldest, and returns the
 // total number matching the filter.
 func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, offset int) ([]Memory, int, error) {
 	conds := []string{"user_id = ?", "deleted_at IS NULL"}
@@ -115,9 +117,13 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 	if limit <= 0 {
 		limit = 50
 	}
+	dir := "DESC"
+	if f.Oldest {
+		dir = "ASC"
+	}
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT id, content, COALESCE(source,''), COALESCE(speaker,''), COALESCE(written_by_connection_id,''), confidence, created_at, updated_at
-		 FROM memories WHERE `+where+` ORDER BY created_at DESC, id LIMIT ? OFFSET ?`,
+		 FROM memories WHERE `+where+` ORDER BY created_at `+dir+`, id LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cortex: list memories: %w", err)
