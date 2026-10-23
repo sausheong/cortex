@@ -70,8 +70,14 @@ func (e *Embedder) Embed(ctx context.Context, texts []string) ([][]float32, erro
 		Input: texts,
 		Model: e.model,
 	}
-	// Only text-embedding-3-* models accept the dimensions parameter.
-	if strings.HasPrefix(string(e.model), "text-embedding-3") {
+	// Only text-embedding-3-* models accept the dimensions parameter. Gateways
+	// prefix the name with a route ("azure/text-embedding-3-small-eastus"), so
+	// match on the last path segment.
+	name := string(e.model)
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if strings.HasPrefix(name, "text-embedding-3") {
 		req.Dimensions = e.dims
 	}
 	resp, err := e.client.CreateEmbeddings(ctx, req)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -137,6 +138,10 @@ func ProviderError(err error) error {
 	if err == nil {
 		return nil
 	}
+	var dm DimsMismatchError
+	if errors.As(err, &dm) {
+		return dm
+	}
 	if errors.Is(err, ErrProviderUnreachable) || errors.Is(err, ErrProviderRejectedKey) || errors.Is(err, ErrProviderUnexpected) {
 		return err
 	}
@@ -168,4 +173,15 @@ func ProviderError(err error) error {
 		return ErrProviderUnreachable
 	}
 	return ErrProviderUnexpected
+}
+
+// DimsMismatchError reports an embedding model that returned vectors of a
+// different size than the settings ask for (e.g. a gateway that ignores the
+// dimensions parameter). Its text names only the two sizes, never upstream
+// content, so it is safe to show the user.
+type DimsMismatchError struct{ Got, Want int }
+
+func (e DimsMismatchError) Error() string {
+	return fmt.Sprintf("the embedding model returned %d dimensions, but Dimensions is set to %d. "+
+		"Set Dimensions to %d, or use a model that supports %d", e.Got, e.Want, e.Got, e.Want)
 }

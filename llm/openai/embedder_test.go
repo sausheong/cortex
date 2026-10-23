@@ -81,3 +81,16 @@ func TestEmbedderNoDimensionsForOtherModels(t *testing.T) {
 		t.Errorf("dimensions should be absent for non text-embedding-3 models: %v", body)
 	}
 }
+
+// Gateways (LiteLLM, Azure, OpenRouter) prefix the model name with a route,
+// e.g. "azure/text-embedding-3-small-eastus". Those are still
+// text-embedding-3 models and must get the dimensions parameter, or they
+// return full-size vectors.
+func TestEmbedderSendsDimensionsForPrefixedModels(t *testing.T) {
+	for _, m := range []string{"azure/text-embedding-3-small-eastus", "openai/text-embedding-3-large"} {
+		body := embedRequestBody(t, m)
+		if d, ok := body["dimensions"].(float64); !ok || d != 512 {
+			t.Errorf("%s: dimensions = %v, want 512", m, body["dimensions"])
+		}
+	}
+}

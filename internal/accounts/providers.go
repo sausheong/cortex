@@ -40,7 +40,7 @@ func (d dimEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, er
 	}
 	for _, v := range vecs {
 		if len(v) != d.dims {
-			return nil, ErrProviderUnexpected
+			return nil, DimsMismatchError{Got: len(v), Want: d.dims}
 		}
 	}
 	return vecs, nil

@@ -220,3 +220,25 @@ func TestProvidersAnthropicAndHTTPClient(t *testing.T) {
 		t.Fatalf("custom client unused: %v hits=%d", err, hits.Load())
 	}
 }
+
+// A provider that ignores the requested size must produce an error that says
+// so, not the generic "unexpected response".
+func TestProviderDimsMismatchExplained(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			io.WriteString(w, `{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"model":"x"}`)
+			return
+		}
+		io.WriteString(w, chatOK)
+	}))
+	defer srv.Close()
+	s := Settings{BaseURL: srv.URL + "/v1", APIKey: "k", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
+	err := TestProvider(context.Background(), s, SafeClient(true, ChatBodyCap))
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "3 dimensions") || !strings.Contains(got, "512") {
+		t.Fatalf("got %q, want it to name both sizes", got)
+	}
+}
