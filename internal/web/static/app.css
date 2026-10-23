@@ -148,12 +148,27 @@ details.more .search-row{grid-template-columns:repeat(2,minmax(0,12rem));margin-
 .js .seltoolbar:not(.has-sel){display:none}
 .js .js-hide{display:none}
 .selcount{font-weight:var(--w-strong)}
-.pager{display:flex;gap:var(--s5);margin:var(--s4) 0 0}
+.pager{margin:var(--s4) 0 0}
+.showing{margin:0 0 var(--s2);font-size:var(--text-sm);color:var(--muted);font-variant-numeric:tabular-nums}
+.pages{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s1);list-style:none;margin:0;padding:0}
+.pages li{margin:0;padding:0}
+.pages .gap{min-width:24px;text-align:center;color:var(--muted)}
+.pg,.pg-step{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0 var(--s2);border-radius:6px;font-variant-numeric:tabular-nums}
+.pg-step{padding:0 var(--s3)}
+a.pg,a.pg-step{color:var(--accent)}
+.pg.on{border:1px solid var(--line);font-weight:var(--w-strong);color:var(--fg)}
+.pg-step.off{color:var(--muted)}
+.search-row.dates{grid-template-columns:repeat(4,minmax(0,1fr)) auto;margin-top:var(--s3)}
+.search .field-error:empty{display:none}
+.presets{display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--s3)}
+.presets a{display:inline-flex;align-items:center;min-height:44px;color:var(--accent)}
+.presets a.on{color:var(--fg);font-weight:var(--w-strong);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:6px}
 details.cleanup{border-top:1px solid var(--line);padding-top:var(--s2)}
 .cleanup-form{margin:var(--s5) 0 0;max-width:28rem}
 .cleanup-form h2{font-size:var(--text-base);letter-spacing:0;margin:0 0 var(--s2)}
 .cleanup-form .field-error:empty{display:none}
-@media (max-width:560px){.search-row,details.more .search-row{grid-template-columns:1fr}}
+@media (max-width:760px){.search-row.dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.search-row,details.more .search-row{grid-template-columns:1fr}.search-row.dates{grid-template-columns:repeat(2,minmax(0,1fr))}.search-row.dates .btn-secondary{grid-column:1/-1}}
 
 /* First run and trust */
 .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}

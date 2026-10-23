@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,7 +14,9 @@ import (
 )
 
 const (
-	memoriesPerPage  = 50
+	maxPageParam     = 1 << 24 // beyond this the clamp-to-last logic applies; avoids offset overflow
+	defaultPageSize  = 50
+	tzCookie         = "cortex_tz"
 	clearAllPhrase   = "delete everything"
 	deleteAcctPhrase = "delete my account"
 )
@@ -60,6 +63,21 @@ type memoriesView struct {
 	PrevPage  int
 	NextPage  int
 	Query     string // url-encoded filters for paging links
+	ViewQuery string // filters plus page, carried through delete forms
+	Size      int
+	Sizes     []int
+	Sort      string // "newest" or "oldest"
+	Range     string // preset key, or ""
+	Presets   []preset
+	TZHint    string
+	RangeErr  string
+	Pages     []pageLink
+	PrevHref  string
+	NextHref  string
+	ShowFrom  int // 1-based index of the first row shown
+	ShowTo    int
+	TotalFmt  string
+	ShowFmt   string
 	// Error is shown next to the control named by ErrField
 	// ("ids", "older_than", "match", "").
 	Error, ErrField string
@@ -74,6 +92,87 @@ type memoriesView struct {
 	PageHref   string // same page, nothing ticked
 }
 
+type preset struct {
+	Label, Href string
+	Current     bool
+}
+
+// pageLink is one entry in the numbered pager; Gap marks an ellipsis.
+type pageLink struct {
+	N       int
+	Href    string
+	Current bool
+	Gap     bool
+}
+
+var pageSizes = []int{25, 50, 100, 200}
+
+// parseSize accepts only the offered sizes; anything else falls back to the default.
+func parseSize(v string) int {
+	n, _ := strconv.Atoi(v)
+	for _, s := range pageSizes {
+		if n == s {
+			return n
+		}
+	}
+	return defaultPageSize
+}
+
+// fmtInt groups thousands: 1274 -> "1,274".
+func fmtInt(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
+// tzOffset reads the browser-sent offset (minutes, as Date.getTimezoneOffset:
+// UTC minus local). Missing or out of range means UTC.
+func tzOffset(r *http.Request) (int, bool) {
+	c, err := r.Cookie(tzCookie)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(c.Value)
+	if err != nil || n < -840 || n > 720 {
+		return 0, false
+	}
+	return n, true
+}
+
+func tzLabel(off int, ok bool) string {
+	if !ok || off == 0 {
+		return "UTC"
+	}
+	sign, m := "+", -off
+	if m < 0 {
+		sign, m = "-", -m
+	}
+	l := "UTC" + sign + strconv.Itoa(m/60)
+	if m%60 != 0 {
+		l += ":" + fmt.Sprintf("%02d", m%60)
+	}
+	return l
+}
+
+// pageWindow lists page numbers around the current page, with gaps.
+func pageWindow(cur, last int, href func(int) string) []pageLink {
+	var out []pageLink
+	prev := 0
+	for n := 1; n <= last; n++ {
+		if n != 1 && n != last && (n < cur-2 || n > cur+2) {
+			continue
+		}
+		if prev != 0 && n-prev > 1 {
+			out = append(out, pageLink{Gap: true})
+		}
+		out = append(out, pageLink{N: n, Href: href(n), Current: n == cur})
+		prev = n
+	}
+	return out
+}
+
 func parseDay(v string) *time.Time {
 	t, err := time.Parse("2006-01-02", strings.TrimSpace(v))
 	if err != nil {
@@ -86,24 +185,102 @@ func (s *server) memoriesGet(w http.ResponseWriter, r *http.Request, u SessionUs
 	s.memoriesPage(w, r, u, http.StatusOK, "", "")
 }
 
+// viewKeys are the only parameters a carried view may hold.
+var viewKeys = []string{"q", "by", "from", "to", "range", "size", "sort", "page"}
+
+// cleanView parses a carried view string keeping only known keys, so the
+// value can never redirect elsewhere or inject other parameters.
+func cleanView(raw string) url.Values {
+	in, _ := url.ParseQuery(raw)
+	out := url.Values{}
+	for _, k := range viewKeys {
+		if v := in.Get(k); v != "" {
+			out.Set(k, v)
+		}
+	}
+	return out
+}
+
+// viewURL is /memories with the viewer's filters from a POST, optionally plus extra params.
+func viewURL(r *http.Request, extra ...string) string {
+	q := cleanView(r.PostFormValue("view"))
+	for i := 0; i+1 < len(extra); i += 2 {
+		q.Set(extra[i], extra[i+1])
+	}
+	if len(q) == 0 {
+		return "/memories"
+	}
+	return "/memories?" + q.Encode()
+}
+
 func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, field, msg string) {
 	ctx := r.Context()
 	q := r.URL.Query()
+	if r.Method == http.MethodPost {
+		q = cleanView(r.PostFormValue("view"))
+	}
 	v := memoriesView{Q: q.Get("q"), By: q.Get("by"), From: q.Get("from"), To: q.Get("to"), Error: msg, ErrField: field}
-	v.Page, _ = strconv.Atoi(q.Get("page"))
+	pg, perr := strconv.Atoi(q.Get("page"))
+	if perr != nil && errors.Is(perr, strconv.ErrRange) && !strings.HasPrefix(q.Get("page"), "-") {
+		pg = maxPageParam
+	}
+	v.Page = min(pg, maxPageParam)
 	if v.Page < 1 {
 		v.Page = 1
+	}
+	v.Size, v.Sizes = parseSize(q.Get("size")), pageSizes
+	v.Sort = "newest"
+	if q.Get("sort") == "oldest" {
+		v.Sort = "oldest"
 	}
 	if n, err := strconv.Atoi(q.Get("restored")); err == nil {
 		v.WasRestored, v.Restored = true, n
 	}
-	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, From: parseDay(v.From)}
+	// Dates are whole days in the viewer's local time: the browser sends its
+	// UTC offset in a cookie; without it we use UTC and say so.
+	off, haveTZ := tzOffset(r)
+	v.TZHint = tzLabel(off, haveTZ)
+	shift := time.Duration(off) * time.Minute
+	today := s.now().UTC().Add(-shift)
+	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	switch rng := q.Get("range"); rng {
+	case "7d", "30d", "year":
+		v.Range = rng
+		from := today.AddDate(0, 0, -6)
+		if rng == "30d" {
+			from = today.AddDate(0, 0, -29)
+		} else if rng == "year" {
+			from = time.Date(today.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		}
+		v.From, v.To = from.Format("2006-01-02"), today.Format("2006-01-02")
+	}
+	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, Oldest: v.Sort == "oldest"}
+	badDate := false
+	if t := parseDay(v.From); t != nil {
+		start := t.Add(shift)
+		f.From = &start
+	} else if v.From != "" {
+		v.From, badDate = "", true
+	}
 	if t := parseDay(v.To); t != nil {
-		end := t.AddDate(0, 0, 1)
+		end := t.AddDate(0, 0, 1).Add(shift)
 		f.To = &end
+	} else if v.To != "" {
+		v.To, badDate = "", true
+	}
+	if badDate {
+		v.RangeErr = "A date was not understood, so it was ignored. Pick dates with the date fields."
+	}
+	if f.From != nil && f.To != nil && !f.From.Before(*f.To) {
+		v.RangeErr = "From is after To, so no memories can match. Change one of the dates."
 	}
 	cx := s.root.ForUser(u.UserID)
-	ms, total, err := cx.ListMemories(ctx, f, memoriesPerPage, (v.Page-1)*memoriesPerPage)
+	ms, total, err := cx.ListMemories(ctx, f, v.Size, (v.Page-1)*v.Size)
+	if err == nil && total > 0 && (v.Page-1)*v.Size >= total {
+		// Never show a page beyond the last.
+		v.Page = (total + v.Size - 1) / v.Size
+		ms, total, err = cx.ListMemories(ctx, f, v.Size, (v.Page-1)*v.Size)
+	}
 	if err != nil {
 		s.cfg.Logger.Error("memories", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -144,13 +321,15 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
 	}
 	v.HasMore = v.Q != "" || v.By != "" || v.From != "" || v.To != ""
+	last := (total + v.Size - 1) / v.Size
 	if v.Page > 1 {
 		v.PrevPage = v.Page - 1
 	}
-	if v.Page*memoriesPerPage < total {
+	if v.Page < last {
 		v.NextPage = v.Page + 1
 	}
-	pq := make([]string, 0, 4)
+	// base carries every filter but not the page, so each link keeps the view.
+	pq := make([]string, 0, 8)
 	add := func(k, val string) {
 		if val != "" {
 			pq = append(pq, k+"="+url.QueryEscape(val))
@@ -158,9 +337,73 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	}
 	add("q", v.Q)
 	add("by", v.By)
-	add("from", v.From)
-	add("to", v.To)
+	if v.Range != "" {
+		add("range", v.Range)
+	} else {
+		add("from", v.From)
+		add("to", v.To)
+	}
+	if v.Size != defaultPageSize {
+		add("size", strconv.Itoa(v.Size))
+	}
+	if v.Sort == "oldest" {
+		add("sort", "oldest")
+	}
 	v.Query = strings.Join(pq, "&")
+	href := func(n int) string {
+		h := "/memories?" + v.Query
+		if n > 1 {
+			if v.Query != "" {
+				h += "&"
+			}
+			h += "page=" + strconv.Itoa(n)
+		}
+		return strings.TrimSuffix(h, "?")
+	}
+	if v.PrevPage > 0 {
+		v.PrevHref = href(v.PrevPage)
+	}
+	if v.NextPage > 0 {
+		v.NextHref = href(v.NextPage)
+	}
+	if last > 1 {
+		v.Pages = pageWindow(v.Page, last, href)
+	}
+	if len(ms) > 0 {
+		v.ShowFrom = (v.Page-1)*v.Size + 1
+		v.ShowTo = v.ShowFrom + len(ms) - 1
+		v.ShowFmt = fmtInt(v.ShowFrom) + "\u2013" + fmtInt(v.ShowTo)
+	}
+	v.TotalFmt = fmtInt(total)
+	// Presets keep search and author but replace the dates.
+	presetHref := func(rng string) string {
+		p := make([]string, 0, 6)
+		for _, kv := range [][2]string{{"q", v.Q}, {"by", v.By}} {
+			if kv[1] != "" {
+				p = append(p, kv[0]+"="+url.QueryEscape(kv[1]))
+			}
+		}
+		if rng != "" {
+			p = append(p, "range="+rng)
+		}
+		if v.Size != defaultPageSize {
+			p = append(p, "size="+strconv.Itoa(v.Size))
+		}
+		if v.Sort == "oldest" {
+			p = append(p, "sort=oldest")
+		}
+		if len(p) == 0 {
+			return "/memories"
+		}
+		return "/memories?" + strings.Join(p, "&")
+	}
+	anyTime := v.Range == "" && v.From == "" && v.To == ""
+	v.Presets = []preset{
+		{"Last 7 days", presetHref("7d"), v.Range == "7d"},
+		{"Last 30 days", presetHref("30d"), v.Range == "30d"},
+		{"This year", presetHref("year"), v.Range == "year"},
+		{"Any time", presetHref(""), anyTime},
+	}
 	v.SelectPage = r.Method == http.MethodGet && q.Get("select") == "page" && len(v.Memories) > 0
 	v.SelCount = len(v.Memories)
 	v.PageHref = "/memories?" + v.Query
@@ -168,6 +411,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.PageHref += "&"
 	}
 	v.PageHref += "page=" + strconv.Itoa(v.Page)
+	v.ViewQuery = strings.TrimPrefix(v.PageHref, "/memories?")
 	v.SelectHref = v.PageHref + "&select=page"
 	s.render(w, r, status, "memories", v)
 }
@@ -250,7 +494,7 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 		Action:     "/memories/delete",
 		Count:      n,
 		Button:     "Delete " + plural(n, "memory", "memories"),
-		CancelHref: "/memories",
+		CancelHref: viewURL(r),
 	}
 	if f.All && f.WrittenBy == "" && f.Query == "" && f.OlderThan == nil && len(f.IDs) == 0 {
 		cv.Title = "Delete all " + plural(n, "memory", "memories") + "?"
@@ -273,6 +517,9 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 	}
 	cv.Details = append(cv.Details, "Restore from Recently deleted. After 30 days they are removed for good.")
 	cv.Fields = []confirmField{{"scope", scope}}
+	if vq := cleanView(r.PostFormValue("view")).Encode(); vq != "" {
+		cv.Fields = append(cv.Fields, confirmField{"view", vq})
+	}
 	for _, id := range f.IDs {
 		cv.Fields = append(cv.Fields, confirmField{"ids", id})
 	}
@@ -311,7 +558,7 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 		s.memoriesPage(w, r, u, http.StatusConflict, "", "Those memories were already gone, so nothing was deleted.")
 		return
 	}
-	http.Redirect(w, r, "/memories?batch="+url.QueryEscape(batch), http.StatusSeeOther)
+	http.Redirect(w, r, viewURL(r, "batch", batch), http.StatusSeeOther)
 }
 
 type deletedRow struct {

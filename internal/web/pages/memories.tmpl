@@ -3,7 +3,7 @@
 {{with .Data}}
 {{template "memnav" $}}
 <h1>Memories</h1>
-<p class="lede">{{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}{{if .HasMore}} match{{if eq .Total 1}}es{{end}} your filter{{else}} stored{{end}}.</p>
+<p class="lede">{{.TotalFmt}} {{if eq .Total 1}}memory{{else}}memories{{end}}{{if .HasMore}} match{{if eq .Total 1}}es{{end}} your filter{{else}} stored{{end}}.</p>
 {{template "setup" $}}
 {{if .Undo}}
 <section class="notice" id="undo-notice" role="status">
@@ -18,26 +18,36 @@
 {{end}}
 {{if .WasRestored}}<p class="notice" role="status">{{if .Restored}}Restored {{.Restored}} {{if eq .Restored 1}}memory{{else}}memories{{end}}.{{else}}Restored.{{end}}</p>{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
-<form method="get" action="/memories" class="search">
+<form method="get" action="/memories" class="search" aria-label="Find memories">
   <div class="search-row">
     <label>Search <input name="q" type="search" value="{{.Q}}"></label>
     <label>Written by
       <select name="by"><option value="">Anyone</option>
         {{range .ConnOpts}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
-    <button class="btn-secondary" data-pending="Searching&hellip;">Search</button>
   </div>
-  <details class="more"{{if or .From .To}} open{{end}}>
-    <summary>More filters</summary>
-    <div class="search-row">
-      <label>From <input name="from" type="date" value="{{.From}}"></label>
-      <label>To <input name="to" type="date" value="{{.To}}"></label>
-    </div>
-  </details>
+  <div class="search-row dates">
+    <label>From <input name="from" type="date" value="{{.From}}"{{if .RangeErr}} aria-invalid="true" aria-describedby="err-range"{{end}}></label>
+    <label>To <input name="to" type="date" value="{{.To}}"{{if .RangeErr}} aria-invalid="true" aria-describedby="err-range"{{end}}></label>
+    <label>Sort
+      <select name="sort">
+        <option value="newest"{{if eq .Sort "newest"}} selected{{end}}>Newest first</option>
+        <option value="oldest"{{if eq .Sort "oldest"}} selected{{end}}>Oldest first</option>
+      </select></label>
+    <label>Per page
+      <select name="size">{{range .Sizes}}<option value="{{.}}"{{if eq . $.Data.Size}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <button class="btn-secondary" data-pending="Applying&hellip;">Apply</button>
+  </div>
+  <p class="field-error" id="err-range" role="alert">{{.RangeErr}}</p>
+  <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included. The offset is fixed, so a day near a daylight saving change can be off by an hour.</p>
+  <nav class="presets" aria-label="Date presets"><span class="note">Quick range:</span>
+    {{range .Presets}}<a href="{{.Href}}"{{if .Current}} aria-current="true" class="on"{{end}}>{{.Label}}</a>{{end}}
+  </nav>
 </form>
 <form method="post" action="/memories/delete" id="memform">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="scope" value="selected">
+  <input type="hidden" name="view" value="{{.ViewQuery}}">
   <div class="seltoolbar" id="seltoolbar">
     <span id="selcount" aria-live="polite" class="selcount">{{if .SelectPage}}{{.SelCount}} selected{{end}}</span>
     <button class="btn-danger-quiet">Delete selected&hellip;</button>
@@ -56,14 +66,21 @@
   </ul>
   <p class="field-error" id="err-ids" role="alert">{{if eq .ErrField "ids"}}{{.Error}}{{end}}</p>
 </form>
-{{if or .PrevPage .NextPage}}<p class="pager">{{if .PrevPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.PrevPage}}">Newer</a>{{end}}
-{{if .NextPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.NextPage}}">Older</a>{{end}}</p>{{end}}
+{{if .Memories}}<nav class="pager" aria-label="Pagination">
+  <p class="showing">Showing {{.ShowFmt}} of {{.TotalFmt}}</p>
+  {{if .Pages}}<ul class="pages">
+    <li>{{if .PrevPage}}<a class="pg-step" rel="prev" href="{{.PrevHref}}">Previous</a>{{else}}<span class="pg-step off" aria-disabled="true">Previous</span>{{end}}</li>
+    {{range .Pages}}{{if .Gap}}<li class="gap" aria-hidden="true">&hellip;</li>{{else if .Current}}<li><span class="pg on" aria-current="page"><span class="sr-only">Page </span>{{.N}}</span></li>{{else}}<li><a class="pg" href="{{.Href}}"><span class="sr-only">Page </span>{{.N}}</a></li>{{end}}{{end}}
+    <li>{{if .NextPage}}<a class="pg-step" rel="next" href="{{.NextHref}}">Next</a>{{else}}<span class="pg-step off" aria-disabled="true">Next</span>{{end}}</li>
+  </ul>{{end}}
+</nav>{{end}}
 <details class="cleanup section"{{if or (eq .ErrField "older_than") (eq .ErrField "match")}} open{{end}}>
   <summary>Clean up</summary>
   <p class="note">Deleted memories can be restored for 30 days from <a href="/memories/deleted">Recently deleted</a>. You always see the exact count before anything is deleted.</p>
   <form method="post" action="/memories/delete" class="cleanup-form">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="scope" value="matching">
+    <input type="hidden" name="view" value="{{.ViewQuery}}">
     <h2>Delete by rule</h2>
     <label>Written by
       <select name="by"><option value="">Anyone</option>
@@ -78,6 +95,7 @@
   <form method="post" action="/memories/delete" class="cleanup-form">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="scope" value="all">
+    <input type="hidden" name="view" value="{{.ViewQuery}}">
     <input type="hidden" name="all" value="1">
     <h2>Delete everything</h2>
     <p class="note">Clears all {{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}. You type a phrase to confirm.</p>
@@ -85,6 +103,18 @@
   </form>
 </details>
 <script>
+(function(){
+  // Tell the server our UTC offset so date filters mean the viewer's local days.
+  try{
+    var off=String(new Date().getTimezoneOffset()), m=document.cookie.match(/(?:^|; )cortex_tz=([^;]*)/);
+    if(!m||m[1]!==off){
+      document.cookie="cortex_tz="+off+"; path=/; max-age=31536000; SameSite=Lax";
+      // Reload only if the cookie actually stuck, so blocked cookies cannot loop.
+      var back=document.cookie.match(/(?:^|; )cortex_tz=([^;]*)/);
+      if(back&&back[1]===off&&/[?&](from|to|range)=/.test(location.search)) location.reload();
+    }
+  }catch(e){}
+})();
 (function(){
   var f=document.getElementById("memform"); if(!f) return;
   var bar=document.getElementById("seltoolbar"), out=document.getElementById("selcount");
