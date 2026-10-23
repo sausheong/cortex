@@ -14,10 +14,35 @@ import (
 // connectionInstructions is the custom-instruction text shown on the page.
 const connectionInstructions = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me — a preference, a person or organisation I know, a capability, my background — save it with cortex `remember`."
 
+// ago renders an elapsed duration the way people say it.
+func ago(d time.Duration) string {
+	plural := func(n int, unit string) string {
+		if n == 1 {
+			return "1 " + unit + " ago"
+		}
+		return strconv.Itoa(n) + " " + unit + "s ago"
+	}
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return plural(int(d.Minutes()), "minute")
+	case d < 24*time.Hour:
+		return plural(int(d.Hours()), "hour")
+	case d < 30*24*time.Hour:
+		return plural(int(d.Hours()/24), "day")
+	case d < 365*24*time.Hour:
+		return plural(int(d.Hours()/24/30), "month")
+	}
+	return plural(int(d.Hours()/24/365), "year")
+}
+
 type connView struct {
 	ID, Name, LastUsed string
-	Written            int
-	Revoked            bool
+	// LastUsedAgo is the friendly form of LastUsed ("3 days ago"); empty when never used.
+	LastUsedAgo string
+	Written     int
+	Revoked     bool
 	// DeleteCount is how many items "Revoke and delete" would remove.
 	DeleteCount int
 	CSRF        string
@@ -85,6 +110,7 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 		}
 		if c.LastUsed != nil {
 			cv.LastUsed = c.LastUsed.UTC().Format(time.RFC3339)
+			cv.LastUsedAgo = ago(time.Since(*c.LastUsed))
 		}
 		if c.Kind == "agent" {
 			v.Agents = append(v.Agents, cv)

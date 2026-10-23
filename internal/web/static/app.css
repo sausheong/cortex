@@ -5,7 +5,7 @@
 --danger:oklch(0.68 0.16 25);--on-danger:oklch(0.2 0.02 25);--danger-bg:oklch(0.27 0.04 25);--danger-line:oklch(0.5 0.1 25);
 --info-bg:oklch(0.26 0.03 165);--info-line:oklch(0.45 0.06 165)}}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
-.top{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;border-bottom:1px solid var(--line)}
 .top nav{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.top form{margin:0}
 .brand{font-weight:700;color:var(--fg);text-decoration:none}
 main{max-width:640px;margin:0 auto;padding:24px 16px;overflow-wrap:anywhere}
@@ -22,7 +22,7 @@ input[aria-invalid=true]{border-color:var(--danger);border-width:2px}
 .btn-danger{background:var(--danger);color:var(--on-danger);font-weight:600}
 .btn-danger-quiet{background:transparent;color:var(--danger);border-color:var(--danger-line)}
 .btn[disabled],.btn-secondary[disabled],.btn-danger[disabled],.btn-danger-quiet[disabled]{opacity:.55;cursor:not-allowed}
-.link{background:none;border:0;color:var(--accent);font:inherit;cursor:pointer;padding:0;min-height:24px}
+.link{background:none;border:0;color:var(--accent);font:inherit;cursor:pointer;padding:8px 4px;min-height:40px}
 .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:16px}
 .stack form,form.stack{margin:0}
 
@@ -40,15 +40,40 @@ input[aria-invalid=true]{border-color:var(--danger);border-width:2px}
 .confirm dl{margin:16px 0}.confirm dt{font-size:14px;color:var(--muted)}.confirm dd{margin:0 0 8px}
 
 /* Revoke: inline two-choice step */
-details.revoke{margin-top:8px}
-details.revoke>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:0 16px;border:1px solid var(--danger-line);border-radius:6px;color:var(--danger);cursor:pointer}
+details.revoke>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 16px;border:1px solid var(--danger-line);border-radius:6px;color:var(--danger);cursor:pointer}
 details.revoke>summary::-webkit-details-marker{display:none}
 details.revoke[open]>summary{background:var(--danger-bg)}
 .revoke-panel{margin-top:8px;padding:12px 16px;border:1px solid var(--line);border-radius:8px}
 .revoke-panel p{margin:0 0 8px}
 
-.conns{list-style:none;padding:0}.conns li{padding:12px 0;border-top:1px solid var(--line)}
-.conns span{margin-right:12px}
+/* Rhythm: 8px within a group, 16px between related blocks, 40px between sections. */
+:root{--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:40px}
+main h1{margin:0 0 var(--s2)}
+main h2{margin:0 0 var(--s3);font-size:1.15rem}
+main h3{margin:var(--s5) 0 var(--s2);font-size:1rem}
+.lede{margin:0 0 var(--s5);color:var(--muted)}
+.section{margin-top:var(--s6)}
+.section>h3:first-of-type{margin-top:0}
+
+/* Connections */
+.conns{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:10px}
+.conn,.conn-empty{padding:var(--s3) var(--s4)}
+.conn+.conn,.conn-empty+.conn{border-top:1px solid var(--line)}
+.conn-empty{color:var(--muted)}
+.conn-row{display:grid;grid-template-columns:minmax(0,1fr) 6.75rem 10.5rem 10.5rem;gap:var(--s2) var(--s3);align-items:center}
+.conn-meta{color:var(--muted);font-size:14px}
+.status{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600}
+.status-active{color:var(--accent)}.status-revoked{color:var(--danger)}.status-unverified{color:var(--muted)}
+.conn-hint{margin:var(--s2) 0 0}
+.is-revoked .conn-name{color:var(--muted)}
+details.revoke{margin-top:var(--s3)}
+.add-connection textarea{margin:0 0 var(--s2);line-height:1.5}
+.add-connection .notice{margin:0 0 var(--s4)}
+.add-connection .notice h3{margin-top:0}
+.add-connection .notice code{display:block;padding:var(--s2) var(--s3);background:var(--bg);border:1px solid var(--info-line);border-radius:6px;overflow-wrap:anywhere}
+.token-form label{margin:0 0 var(--s2)}.token-form .field-error{min-height:0}.token-form .field-error:empty{display:none}
+.copy-status{margin-left:var(--s3)}
+@media (max-width:560px){.conn-row{grid-template-columns:1fr auto;}.conn-name{grid-column:1}.status{grid-column:2;justify-self:end}.conn-meta{grid-column:1/-1}}
 .memlist{list-style:none;padding:0}.memlist li{padding:8px 0;border-top:1px solid var(--line)}
 .change{padding:12px 0;border-top:1px solid var(--line)}
 .change ul{margin:4px 0 8px}

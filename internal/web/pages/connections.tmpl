@@ -1,9 +1,14 @@
 {{define "title"}}Connections{{end}}
-{{define "conn"}}<li>
-  <strong>{{.Name}}</strong>
-  {{if .Revoked}}<span class="note">Revoked: cannot connect any more</span>{{else}}<span class="note">Active</span>{{end}}
-  <span class="note">last used: {{if .LastUsed}}{{.LastUsed}}{{else}}never{{end}}</span>
-  <span class="note">written: {{.Written}}</span>
+{{define "conn"}}<li class="conn{{if .Revoked}} is-revoked{{end}}">
+  <div class="conn-row">
+    <strong class="conn-name">{{.Name}}</strong>
+    {{if .Revoked}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>
+    {{else if .LastUsed}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>
+    {{else}}<span class="status status-unverified"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Unverified</span>{{end}}
+    <span class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else}}Never used{{end}}</span>
+    <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span>
+  </div>
+  {{if .Revoked}}<p class="note conn-hint">Cannot connect any more.</p>{{else if not .LastUsed}}<p class="note conn-hint">Not connected yet. It shows as Active after its first use.</p>{{end}}
   {{if not .Revoked}}
   <details class="revoke">
     <summary>Revoke&hellip;</summary>
@@ -23,7 +28,7 @@
 {{define "content"}}
 {{with .Data}}
 <h1>Connections</h1>
-<p>Assistants and agents that can read and write your memory.</p>
+<p class="lede">Assistants and agents that can read and write your memory.</p>
 {{if .Revoked}}
 <section class="notice" id="revoke-notice" role="status">
   <p><strong>Revoked {{.Revoked.Name}}.</strong> It can no longer read or write your memory.{{if .Revoked.BatchID}} Deleted {{.Revoked.Items}} {{if eq .Revoked.Items 1}}item{{else}}items{{end}} it wrote. You can restore {{if eq .Revoked.Items 1}}it{{else}}them{{end}} for 30 days; the connection stays revoked.{{end}}</p>
@@ -35,36 +40,51 @@
 </section>
 {{end}}
 {{if .WasRestored}}<p class="notice" role="status">Restored what it wrote. The connection stays revoked.</p>{{end}}
-{{if .NewToken}}
-<section class="notice" id="new-token">
-  <h2>New token for {{.NewName}}</h2>
-  <p>Copy it now. It is shown only once.</p>
-  <p><code id="new-token-value">{{.NewToken}}</code></p>
-</section>
-{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
-<h2>Assistants</h2>
-<ul class="conns">
-{{range .Assistants}}{{template "conn" .}}{{else}}<li>None yet.</li>{{end}}
-</ul>
-<h2>Agent tokens</h2>
-<ul class="conns">
-{{range .Agents}}{{template "conn" .}}{{else}}<li>None yet.</li>{{end}}
-</ul>
-<form method="post" action="/connections/tokens" autocomplete="off">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <label>Token name <input name="name" required maxlength="80" placeholder="my agent" value="{{.FormName}}" aria-describedby="err-name"{{if eq .ErrField "name"}} aria-invalid="true"{{end}}></label>
-  <p class="field-error" id="err-name" role="alert">{{if eq .ErrField "name"}}{{.Error}}{{end}}</p>
-  <button class="btn">Create token</button>
-</form>
-<h2>Recommended custom instructions</h2>
-<p>Paste this into your assistant's custom instructions.</p>
-<textarea id="instructions" readonly rows="5">{{.Instructions}}</textarea>
-<p><button class="btn-secondary" type="button" id="copy-instructions">Copy</button></p>
+<section class="section" aria-labelledby="h-assistants">
+  <h2 id="h-assistants">Assistants</h2>
+  <ul class="conns">
+  {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty">None yet.</li>{{end}}
+  </ul>
+</section>
+<section class="section" aria-labelledby="h-agents">
+  <h2 id="h-agents">Agent tokens</h2>
+  <ul class="conns">
+  {{range .Agents}}{{template "conn" .}}{{else}}<li class="conn-empty">None yet.</li>{{end}}
+  </ul>
+</section>
+<section class="section add-connection" aria-labelledby="h-add">
+  <h2 id="h-add">Add a connection</h2>
+  {{if .NewToken}}
+  <div class="notice" id="new-token">
+    <h3>New token for {{.NewName}}</h3>
+    <p>Copy it now. It is shown only once.</p>
+    <p><code id="new-token-value">{{.NewToken}}</code></p>
+    <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy token">Copy token</button></p>
+  </div>
+  {{end}}
+  <h3>Create an agent token</h3>
+  <form method="post" action="/connections/tokens" autocomplete="off" class="token-form">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Token name <input name="name" required maxlength="80" placeholder="my agent" value="{{.FormName}}" aria-describedby="err-name"{{if eq .ErrField "name"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-name" role="alert">{{if eq .ErrField "name"}}{{.Error}}{{end}}</p>
+    <button class="btn">Create token</button>
+  </form>
+  <h3>Connect an assistant</h3>
+  <p>Paste this into your assistant's custom instructions.</p>
+  <textarea id="instructions" readonly rows="5">{{.Instructions}}</textarea>
+  <p><button class="btn-secondary js-only" type="button" data-copy="instructions" data-copy-label="Copy">Copy</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
+</section>
 <script>
-document.getElementById('copy-instructions').addEventListener('click',function(){
-var t=document.getElementById('instructions');t.select();
-if(navigator.clipboard){navigator.clipboard.writeText(t.value)}else{document.execCommand('copy')}});
+document.querySelectorAll('[data-copy]').forEach(function(b){
+b.addEventListener('click',function(){
+var el=document.getElementById(b.dataset.copy);
+var text=el.value!==undefined?el.value:el.textContent;
+function done(){b.textContent='Copied';var s=b.parentNode.querySelector('.copy-status');if(s)s.textContent='Copied to clipboard';
+setTimeout(function(){b.textContent=b.dataset.copyLabel;if(s)s.textContent=''},2000)}
+function fallback(){var r=document.createRange();if(el.select){el.select()}else{r.selectNodeContents(el);var g=getSelection();g.removeAllRanges();g.addRange(r)}
+try{document.execCommand('copy');done()}catch(e){}}
+if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(done,fallback)}else{fallback()}})});
 </script>
 {{end}}
 {{end}}

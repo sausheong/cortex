@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sausheong/cortex"
 )
@@ -202,5 +203,16 @@ func TestTokenNameErrorTiedToField(t *testing.T) {
 	resp, body := e.post("/connections/tokens", url.Values{"csrf": {e.connCSRF()}, "name": {"   "}})
 	if resp.StatusCode != 200 || !strings.Contains(body, `aria-describedby="err-name"`) || !strings.Contains(body, `aria-invalid="true"`) || !strings.Contains(body, "Enter a name for the token") {
 		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+}
+
+func TestAgo(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		10 * time.Second: "just now", time.Minute: "1 minute ago", 3 * time.Hour: "3 hours ago",
+		72 * time.Hour: "3 days ago", 24 * time.Hour: "1 day ago", 70 * 24 * time.Hour: "2 months ago", 800 * 24 * time.Hour: "2 years ago",
+	} {
+		if got := ago(d); got != want {
+			t.Errorf("ago(%v) = %q, want %q", d, got, want)
+		}
 	}
 }
