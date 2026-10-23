@@ -18,10 +18,8 @@
 <div class="breakout">
   <form method="get" action="/vault" class="vault-filter" role="search">
     <label>Find a page <input id="vault-q" name="q" type="search" value="{{.Q}}" autocomplete="off" placeholder="Name"></label>
-    {{if .Folder}}<input type="hidden" name="folder" value="{{.Folder}}">{{end}}
-    <label>Sort by
-      <select name="sort"><option value="name"{{if eq .Sort "name"}} selected{{end}}>Name</option><option value="updated"{{if eq .Sort "updated"}} selected{{end}}>Last updated</option></select></label>
-    <button class="btn-secondary">Apply</button>
+    {{if .Folder}}<input type="hidden" name="folder" value="{{.Folder}}">{{end}}{{if ne .Sort "name"}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
+    <button class="btn-secondary">Search</button>
   </form>
   <section class="vault-main" id="vault-results" aria-label="Pages">
     {{template "vaultrows" $}}
@@ -42,7 +40,6 @@ function run(){
   }).catch(function(){});
 }
 q.addEventListener("input",function(){clearTimeout(t);t=setTimeout(run,200)});
-form.querySelector("select").addEventListener("change",run);
 form.addEventListener("submit",function(e){e.preventDefault();run()});
 })();
 </script>

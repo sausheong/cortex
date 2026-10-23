@@ -240,7 +240,6 @@ main h1{font-size:1.5rem}
 /* Graph: a map of the neighbourhood plus the same entities as a list. Flat, hairline-divided, shape-coded. */
 /* Heading and lede keep the 42rem column on every page; only a map, panel or list beneath breaks out. */
 .breakout{--wide:64rem;position:relative;left:50%;width:min(var(--wide),calc(100vw - 2 * var(--s4)));transform:translateX(-50%)}
-.graph-layout.breakout{--wide:72rem}
 @media (max-width:48rem){.breakout{left:0;width:100%;transform:none}}
 .graph-search label{margin:0 0 var(--s1)}
 .graph-search-row{display:grid;justify-content:start;grid-template-columns:minmax(0,28rem) auto;gap:var(--s3);align-items:end}

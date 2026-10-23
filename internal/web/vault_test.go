@@ -100,8 +100,8 @@ func TestVaultSortAndPaging(t *testing.T) {
 	if !strings.Contains(body, "concepts/topic-129.md") || strings.Contains(body, "concepts/topic-000.md") {
 		t.Fatalf("page 2 wrong")
 	}
-	if _, body = e.get("/vault?sort=updated"); !strings.Contains(body, "Last updated") {
-		t.Fatal("sort control missing")
+	if _, body = e.get("/vault"); strings.Contains(body, "Sort by") {
+		t.Fatal("vault should not offer a sort control")
 	}
 }
 
