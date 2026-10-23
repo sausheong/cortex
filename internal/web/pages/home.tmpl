@@ -5,13 +5,15 @@
 <p class="lede">What cortex knows about you, and what has changed.</p>
 {{template "setup" $}}
 
+{{$first := and $.Setup (not $.Setup.Memory)}}
 {{if and (not $.Setup) .Strip}}<p class="home-strip">{{range $i, $p := .Strip}}{{if $i}} <span aria-hidden="true">&middot;</span> {{end}}<span>{{$p}}</span>{{end}}</p>{{end}}
 
-<section class="home-section" aria-labelledby="assist-h">
+{{if or (not $first) .Assistants.Rows}}<section class="home-section" aria-labelledby="assist-h">
   <h2 id="assist-h">Assistants</h2>
   {{if .Assistants.Err}}<p class="note" role="status">This could not be loaded just now. Reload to try again.</p>
   {{else if not .Assistants.Rows}}
-  <p>No assistants are connected yet. <a href="/connections">Connect one</a></p>
+  <p>No assistants are connected yet.</p>
+  <p class="act"><a href="/connections">Connect an assistant</a></p>
   {{else}}
   <ul class="home-rows">
     {{range .Assistants.Rows}}<li>
@@ -23,11 +25,11 @@
       </span>
     </li>{{end}}
   </ul>
-  <p><a href="/connections">Manage connections</a></p>
+  <p class="act"><a href="/connections">Manage connections</a></p>
   {{end}}
-</section>
+</section>{{end}}
 
-<section class="home-section" aria-labelledby="health-h">
+{{if not $first}}<section class="home-section" aria-labelledby="health-h">
   <h2 id="health-h">Health</h2>
   {{if .Health.Err}}<p class="note" role="status">Some of this could not be loaded just now. Reload to try again.</p>{{end}}
   <ul class="home-rows">
@@ -51,14 +53,14 @@
       <span class="row-meta">{{.Health.DeletedText}}{{if .Health.DeletedCount}} <a href="/memories/deleted">Review</a>{{end}}</span>
     </li>
   </ul>
-</section>
+</section>{{end}}
 
-<section class="home-section" aria-labelledby="new-h">
+{{if not $first}}<section class="home-section" aria-labelledby="new-h">
   <h2 id="new-h">{{.New.Heading}}</h2>
   {{if .New.Err}}<p class="note" role="status">This could not be loaded just now. Reload to try again.</p>
   {{else if .New.Empty}}
   <p>{{if and $.Setup (not $.Setup.Memory)}}Nothing yet. Memories your assistants save will appear here, grouped by who saved them.{{else}}{{.New.Empty}}{{end}}</p>
-  {{if $.Setup}}{{if $.Setup.Memory}}<p><a href="/memories">All memories</a></p>{{end}}{{else}}<p><a href="/memories">All memories</a></p>{{end}}
+  {{if $.Setup}}{{if $.Setup.Memory}}<p class="act"><a href="/memories">All memories</a></p>{{end}}{{else}}<p class="act"><a href="/memories">All memories</a></p>{{end}}
   {{else}}
   <ul class="home-rows">
     {{range .New.Groups}}<li>
@@ -66,9 +68,9 @@
       <span class="row-meta">{{range .Items}}<span class="line-text">{{.Text}}</span> <time class="note" datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</span>
     </li>{{end}}
   </ul>
-  <p><a href="/memories">All memories</a></p>
+  <p class="act"><a href="/memories">All memories</a></p>
   {{end}}
-</section>
+</section>{{end}}
 
 {{if not $.Setup}}<section class="home-section" aria-labelledby="about-h">
   <h2 id="about-h">About you</h2>
@@ -85,7 +87,7 @@
   {{else}}
   <p>{{if and $.Setup (not $.Setup.Memory)}}Once your assistants have saved a few things, cortex writes a short summary of you here.{{else}}Your summary builds overnight, once cortex has enough saved to go on.{{end}}</p>
   {{end}}
-  <p><a href="/graph">Explore your graph</a></p>
+  <p class="act"><a href="/graph">Explore your graph</a></p>
 </section>{{end}}
 
 {{end}}

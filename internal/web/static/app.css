@@ -375,3 +375,4 @@ details.more .home-bullets{margin-top:var(--s1)}
 .doc-foot{margin:var(--s5) 0 0;padding-top:var(--s3);border-top:1px solid var(--line)}
 .conn-actions form:has(>[aria-describedby]){display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s3)}
 .conn-actions form:not(.revoke-panel):not(.rename-panel)>.note{margin:0;min-width:0;overflow-wrap:anywhere}
+.act a,.actions a{display:inline-flex;align-items:center;min-height:44px}

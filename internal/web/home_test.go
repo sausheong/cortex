@@ -66,7 +66,7 @@ func TestHomeSignedInRendersHomeWithNav(t *testing.T) {
 	if r.StatusCode != 200 {
 		t.Fatalf("status %d", r.StatusCode)
 	}
-	for _, want := range []string{"<h1>Home</h1>", `href="/" aria-current="page">Home`, "Assistants", "Health", "Recently deleted"} {
+	for _, want := range []string{"<h1>Home</h1>", `href="/" aria-current="page">Home`, "Get started"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -84,15 +84,15 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	_, body := e.get("/")
-	if !strings.Contains(body, "Get started") || strings.Index(body, "Get started") > strings.Index(body, "Assistants") {
+	if !strings.Contains(body, "Get started") {
 		t.Fatal("checklist should lead")
 	}
-	for _, hidden := range []string{"About you", "Nightly maintenance", "Has not run yet", `class="home-strip"`} {
+	for _, hidden := range []string{"About you", "Nightly maintenance", "Has not run yet", `class="home-strip"`, "Assistants</h2>", "Health</h2>", "Recently deleted", "Recently added"} {
 		if strings.Contains(body, hidden) {
 			t.Errorf("first run should hide %q", hidden)
 		}
 	}
-	for _, want := range []string{"No assistants are connected yet", "Nothing yet. Memories your assistants save", "Not set up yet.", "Nothing waiting to be restored."} {
+	for _, want := range []string{"Set up your AI provider"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("empty state missing %q", want)
 		}

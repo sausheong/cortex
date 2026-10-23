@@ -422,7 +422,7 @@ func TestGraphDeleteConfirmAndUndo(t *testing.T) {
 		t.Fatal("relationship should be gone from the graph")
 	}
 	_, body = e.get(loc)
-	if !strings.Contains(body, "Deleted it and 2 relationships") || !strings.Contains(body, "30 days") || !strings.Contains(body, "Undo delete") {
+	if !strings.Contains(body, "Deleted this item and 2 relationships") || !strings.Contains(body, "30 days") || !strings.Contains(body, "Undo delete") {
 		t.Fatalf("undo notice: %s", body)
 	}
 	// The mention survives.
@@ -446,7 +446,7 @@ func TestGraphDeleteConfirmAndUndo(t *testing.T) {
 		t.Fatalf("relationships after undo = %d", e.graphRelCount(uid, acme))
 	}
 	_, body = e.get(resp.Header.Get("Location"))
-	if !strings.Contains(body, "Restored it with") {
+	if !strings.Contains(body, "Restored this item with") {
 		t.Fatal("no restored notice")
 	}
 }

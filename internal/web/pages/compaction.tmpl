@@ -58,7 +58,7 @@ cs.forEach(function(c){c.addEventListener('change',upd)});upd()})();
 </script>
 {{else}}<p><strong>Nothing to merge right now.</strong></p>
 <p class="note">Compaction combines memories that say the same thing. It has nothing to suggest yet; try again once your assistants have saved more.</p>
-<p><a href="/memories">Back to memories</a></p>{{end}}
+<p class="act"><a href="/memories">Back to memories</a></p>{{end}}
 {{else if eq .Status "applied"}}
 <section class="notice" role="status">
   <p><strong>Compaction applied.</strong> The originals are kept for 30 days. You can undo it now.</p>
@@ -69,7 +69,7 @@ cs.forEach(function(c){c.addEventListener('change',upd)});upd()})();
 </section>
 {{else if eq .Status "undone"}}
 <p class="notice" role="status">Compaction undone. Your memories are back as they were.</p>
-<p><a href="/memories">Back to memories</a></p>
+<p class="act"><a href="/memories">Back to memories</a></p>
 {{end}}
 {{end}}
 {{end}}

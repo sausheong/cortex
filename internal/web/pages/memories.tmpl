@@ -20,7 +20,7 @@
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 {{if .Since}}<p class="notice" role="status">Showing only memories added since <time datetime="{{.Since}}">{{.SinceAgo}}</time>. <a href="/memories">Show all memories</a></p>{{end}}
 {{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}something that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}</p>{{end}}
-<form method="get" action="/memories" class="search" aria-label="Find memories">
+{{if or .Memories .HasMore .Q .By .From .To .Since .Entity}}<form method="get" action="/memories" class="search" aria-label="Find memories">
   {{if .Entity}}<input type="hidden" name="entity" value="{{.Entity}}">{{end}}
   {{if .Since}}<input type="hidden" name="since" value="{{.Since}}">{{end}}
   <div class="search-row">
@@ -47,17 +47,17 @@
   <nav class="presets" aria-label="Date presets"><span class="note">Quick range:</span>
     {{range .Presets}}<a href="{{.Href}}"{{if .Current}} aria-current="true" class="on"{{end}}>{{.Label}}</a>{{end}}
   </nav>
-</form>
+</form>{{end}}
 <form method="post" action="/memories/delete" id="memform">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="scope" value="selected">
   <input type="hidden" name="view" value="{{.ViewQuery}}">
-  <div class="seltoolbar" id="seltoolbar">
+  {{if .Memories}}<div class="seltoolbar" id="seltoolbar">
     <span id="selcount" aria-live="polite" class="selcount">{{if .SelectPage}}{{.SelCount}} selected{{end}}</span>
     <button class="btn-danger-quiet">Delete selected&hellip;</button>
     <a id="selclear" class="selact" href="{{.PageHref}}"{{if not .SelectPage}} hidden{{end}}>Clear selection</a>
     <span class="note js-hide">Tick memories to delete. You confirm the count on the next screen.</span>
-  </div>
+  </div>{{end}}
   {{if .Memories}}<p class="selall"><a id="selall" class="selact" href="{{.SelectHref}}">Select all on this page{{if gt .SelCount 0}} ({{.SelCount}}){{end}}</a></p>{{end}}
   <ul class="memlist" id="memlist" aria-describedby="err-ids">
   {{range .Memories}}

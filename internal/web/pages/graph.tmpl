@@ -9,7 +9,7 @@
 {{if .Undo}}
 <section class="notice" id="undo-notice" role="status">
   {{if eq .Undo.Kind "merge"}}<p><strong>Merged{{if .Undo.Target}} into {{.Undo.Target}}{{end}}.</strong> You can undo this for 30 days.</p>
-  {{else}}<p><strong>Deleted it{{if .Undo.Rel}} and {{.Undo.Rel}} {{if eq .Undo.Rel 1}}relationship{{else}}relationships{{end}}{{end}}.</strong> You can restore {{if .Undo.Rel}}them{{else}}it{{end}} for 30 days.</p>{{end}}
+  {{else}}<p><strong>Deleted this item{{if .Undo.Rel}} and {{.Undo.Rel}} {{if eq .Undo.Rel 1}}relationship{{else}}relationships{{end}}{{end}}.</strong> You can restore {{if .Undo.Rel}}them{{else}}it{{end}} for 30 days.</p>{{end}}
   <form method="post" action="/graph/restore/{{.Undo.BatchID}}" class="actions">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="entity" value="{{.Undo.EntityID}}">
@@ -18,7 +18,7 @@
   </form>
 </section>
 {{end}}
-{{if .Restored}}<p class="notice" role="status">{{if eq .Restored "merge"}}Merge undone. Both are back with their relationships.{{else}}Restored it with its relationships.{{end}}</p>{{end}}
+{{if .Restored}}<p class="notice" role="status">{{if eq .Restored "merge"}}Merge undone. Both are back with their relationships.{{else}}Restored this item with its relationships.{{end}}</p>{{end}}
 {{if .Renamed}}<p class="notice" role="status">Renamed.</p>{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 
@@ -150,21 +150,21 @@
   </aside>
   {{end}}
 
-  <section class="graph-stage" aria-labelledby="stage-h">
+  {{if or .Nodes .Filtered}}<section class="graph-stage" aria-labelledby="stage-h">
     <h2 id="stage-h" class="sr-only">Map of {{.Panel.Name}} and nearby items</h2>
     <div class="graph-canvas" id="graph-canvas" data-src="{{.DataURL}}"></div>
     <p class="note js-only graph-hint">Select a shape to move the map to it. The list below has the same items.</p>
     <ul class="legend" aria-label="Shapes by type">{{range .Legend}}<li>{{.Shape}}{{.Label}}</li>{{end}}</ul>
-  </section>
+  </section>{{end}}
 
 
-  <section class="graph-list" aria-labelledby="near-h">
+  {{if or .Nodes .Filtered}}<section class="graph-list" aria-labelledby="near-h">
     <h2 id="near-h">Near {{.Panel.Name}}</h2>
     <p class="note">{{if .Nodes}}Showing {{len .Nodes}} of the closest items{{if .Truncated}}; more exist than fit, so these are the ones with the most relationships and the newest links{{end}}. Choose one to centre the map on it.{{else}}{{if .Filtered}}Nothing near it matches your filters.{{else}}It has no relationships yet.{{end}}{{end}}</p>
     {{if .Nodes}}<ul class="entlist" id="node-list">{{range .Nodes}}
       <li><a href="{{.Href}}" data-node="{{.ID}}">{{.Shape}}<span class="ent-name">{{.Name}}</span> <span class="note">{{.TypeLabel}} &middot; {{.Rels}} {{if eq .Rels 1}}relationship{{else}}relationships{{end}} with {{$.Data.Panel.Name}}</span></a></li>{{end}}</ul>{{end}}
     {{if and .Filtered (not .Nodes)}}<p><a href="/graph?center={{.CenterID}}">Clear filters</a></p>{{end}}
-  </section>
+  </section>{{end}}
 </div>
 {{else}}<p class="note">Search above to see how something connects.</p>
 {{end}}
