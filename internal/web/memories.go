@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	maxPageParam     = 1 << 24 // beyond this the clamp-to-last logic applies; avoids offset overflow
 	defaultPageSize  = 50
 	tzCookie         = "cortex_tz"
 	clearAllPhrase   = "delete everything"
@@ -219,7 +220,11 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		q = cleanView(r.PostFormValue("view"))
 	}
 	v := memoriesView{Q: q.Get("q"), By: q.Get("by"), From: q.Get("from"), To: q.Get("to"), Error: msg, ErrField: field}
-	v.Page, _ = strconv.Atoi(q.Get("page"))
+	pg, perr := strconv.Atoi(q.Get("page"))
+	if perr != nil && errors.Is(perr, strconv.ErrRange) && !strings.HasPrefix(q.Get("page"), "-") {
+		pg = maxPageParam
+	}
+	v.Page = min(pg, maxPageParam)
 	if v.Page < 1 {
 		v.Page = 1
 	}

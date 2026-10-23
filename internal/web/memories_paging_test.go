@@ -65,6 +65,12 @@ func TestMemoriesPagingBoundaries(t *testing.T) {
 	if !strings.Contains(body, "Showing 101–120 of 120") {
 		t.Fatal("page beyond last not clamped")
 	}
+	for _, pg := range []string{"99999999999999999999", "9223372036854775807", "16777217"} {
+		resp, b := e.get("/memories?page=" + pg)
+		if resp.StatusCode != 200 || !strings.Contains(b, "Showing 101–120 of 120") {
+			t.Fatalf("page=%s: code %d not clamped", pg, resp.StatusCode)
+		}
+	}
 	_, body = e.get("/memories?page=-4")
 	if !strings.Contains(body, "Showing 1–50 of 120") {
 		t.Fatal("page below 1 not clamped")

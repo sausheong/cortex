@@ -162,7 +162,7 @@ a.pg,a.pg-step{color:var(--accent)}
 .search .field-error:empty{display:none}
 .presets{display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--s3)}
 .presets a{display:inline-flex;align-items:center;min-height:44px;color:var(--accent)}
-.presets a.on{color:var(--fg);font-weight:var(--w-strong);text-decoration:none}
+.presets a.on{color:var(--fg);font-weight:var(--w-strong);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:6px}
 details.cleanup{border-top:1px solid var(--line);padding-top:var(--s2)}
 .cleanup-form{margin:var(--s5) 0 0;max-width:28rem}
 .cleanup-form h2{font-size:var(--text-base);letter-spacing:0;margin:0 0 var(--s2)}
