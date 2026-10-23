@@ -22,5 +22,10 @@ coverage.html
 /openspec
 
 # Exported vault (regenerable via: cortex export --vault ./vault)
-/vault
+# Local `cortex export` output lands in vault/, which is also the Go package:
+# ignore the generated pages but keep the package sources and test fixtures.
+/vault/*
+!/vault/*.go
+!/vault/testdata/
 .superpowers/
+.playwright-mcp/
