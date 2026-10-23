@@ -307,3 +307,34 @@ func TestVaultCacheInvalidatesOnNewMemory(t *testing.T) {
 		t.Fatal("new entity missing from list")
 	}
 }
+
+func TestRenderMarkdownEncodedSchemesAndImages(t *testing.T) {
+	none := func(string) (string, bool) { return "", false }
+	for _, src := range []string{
+		"[y](&#106;avascript:1)", "[y](&#x6A;avascript:1)", "[y](jav&#x09;ascript:1)",
+		"[y](JaVaScRiPt:1)", "[y](&#x64;ata:text/html,x)", "[y](vbscript:1)", "![y](&#106;avascript:1)",
+	} {
+		out := strings.ToLower(string(renderMarkdown(src, none)))
+		for _, bad := range []string{"javascript", "jav&", "data:", "vbscript", "<img"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("%q rendered %q (contains %q)", src, out, bad)
+			}
+		}
+	}
+	out := string(renderMarkdown("![x](https://evil.test/a.png?q=1)", none))
+	if strings.Contains(out, "<img") || !strings.Contains(out, `href="https://evil.test/a.png?q=1"`) {
+		t.Fatalf("image not turned into a link: %s", out)
+	}
+	if out := string(renderMarkdown("[a](/vault/x.md) [m](mailto:a@b.test)", none)); !strings.Contains(out, `href="/vault/x.md"`) || !strings.Contains(out, "mailto:") {
+		t.Fatalf("safe links lost: %s", out)
+	}
+}
+
+func TestSafeZipName(t *testing.T) {
+	for n, want := range map[string]bool{"people/a.md": true, "index.md": true, "../x/a.md": false, "/a.md": false,
+		"a\\b.md": false, "a/../b.md": false, "a\x00.md": false, "a//b.md": false} {
+		if safeZipName(n) != want {
+			t.Errorf("safeZipName(%q) != %v", n, want)
+		}
+	}
+}

@@ -2,7 +2,6 @@ package web
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"fmt"
 	"html/template"
@@ -20,7 +19,8 @@ import (
 
 const (
 	vaultPerPage   = 100
-	vaultCacheMax  = 64
+	vaultCacheMax  = 8
+	vaultCacheByte = 24 << 20 // approximate rendered bytes across all cached vaults
 	vaultCacheTTL  = 10 * time.Minute
 	vaultZipPerMin = 6
 )
@@ -34,6 +34,7 @@ type vaultSet struct {
 	backlinks map[string][]backlink
 	folders   []folderCount
 	builtAt   time.Time
+	bytes     int
 }
 
 type backlink struct{ Path, Name, Rel string }
@@ -63,6 +64,9 @@ func folderLabel(k string) string {
 func newVaultSet(set *vault.Set, now time.Time) *vaultSet {
 	v := &vaultSet{set: set, byPath: map[string]int{}, byKey: map[string]string{}, byBase: map[string]string{},
 		backlinks: map[string][]backlink{}, builtAt: now}
+	for _, f := range set.Files {
+		v.bytes += 2*len(f.Content) + len(f.Path) + 256
+	}
 	counts := map[string]int{}
 	for i, f := range set.Files {
 		v.byPath[f.Path] = i
@@ -197,24 +201,49 @@ func (c *vaultCache) entry(user string) *vaultEntry {
 	return e
 }
 
+// trim evicts the oldest vaults (never keep) until the cache fits its byte
+// budget. Evicted users simply rebuild on their next visit.
+func (c *vaultCache) trim(keep string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for {
+		total := 0
+		var oldest string
+		var ot time.Time
+		for k, o := range c.m {
+			if o.v == nil {
+				continue
+			}
+			total += o.v.bytes
+			if k != keep && (oldest == "" || o.v.builtAt.Before(ot)) {
+				oldest, ot = k, o.v.builtAt
+			}
+		}
+		if total <= vaultCacheByte || oldest == "" {
+			return
+		}
+		delete(c.m, oldest)
+	}
+}
+
 // vaultVersion is a cheap fingerprint of everything a vault page is built
 // from: counts and latest change times of the user's live entities,
 // relationships, memories and memory links.
 func (s *server) vaultVersion(ctx context.Context, userID string) (string, error) {
-	var e, r, m, me int64
-	var et, mt string
+	var e, m int64
+	var et, mt, rh, mh string
 	err := s.st.DB.QueryRowContext(ctx, `
 SELECT
  (SELECT count(*) FROM entities WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT coalesce(max(updated_at)::text,'') FROM entities WHERE user_id=$1 AND deleted_at IS NULL),
- (SELECT count(*) FROM relationships WHERE user_id=$1 AND deleted_at IS NULL),
+ (SELECT coalesce(md5(string_agg(id||'|'||source_id||'|'||target_id||'|'||type, ',' ORDER BY id)),'') FROM relationships WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT count(*) FROM memories WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT coalesce(max(updated_at)::text,'') FROM memories WHERE user_id=$1 AND deleted_at IS NULL),
- (SELECT count(*) FROM memory_entities WHERE user_id=$1)`, userID).Scan(&e, &et, &r, &m, &mt, &me)
+ (SELECT coalesce(md5(string_agg(memory_id||'|'||entity_id, ',' ORDER BY memory_id, entity_id)),'') FROM memory_entities WHERE user_id=$1)`, userID).Scan(&e, &et, &rh, &m, &mt, &mh)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%d|%s|%d|%d|%s|%d", e, et, r, m, mt, me), nil
+	return fmt.Sprintf("%d|%s|%s|%d|%s|%s", e, et, rh, m, mt, mh), nil
 }
 
 // vaultFor returns the user's vault, rebuilding it when their data changed.
@@ -239,6 +268,7 @@ func (s *server) vaultFor(ctx context.Context, userID string) (*vaultSet, error)
 		s.cfg.Logger.Warn("vault build", "err", werr)
 	}
 	e.v, e.version = newVaultSet(set, now), ver
+	s.vcache.trim(userID)
 	return e.v, nil
 }
 
@@ -391,6 +421,10 @@ func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser
 		title, body = strings.TrimPrefix(t, "# "), rest
 	}
 	body = dropSection(body, "Backlinks")
+	if _, ok := vs.resolve("log"); !ok {
+		// The exporter's index points at a log page this vault does not have.
+		body = strings.ReplaceAll(body, "See also: [[log]]\n", "")
+	}
 	v := vaultPageView{
 		Path: f.Path, Title: title, Folder: f.Folder, FolderLabel: folderLabel(f.Folder), Kind: string(f.Kind),
 		Props:      parseProps(front),
@@ -436,27 +470,44 @@ func (s *server) vaultDownload(w http.ResponseWriter, r *http.Request, u Session
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	h := w.Header()
+	h.Set("Content-Type", "application/zip")
+	h.Set("Content-Disposition", `attachment; filename="cortex-vault-`+s.now().UTC().Format("2006-01-02")+`.zip"`)
+	h.Set("Cache-Control", "private, no-store")
+	zw := zip.NewWriter(w)
 	for _, f := range vs.set.Files {
-		hdr := &zip.FileHeader{Name: f.Path, Method: zip.Deflate, Modified: f.Updated}
-		fw, err := zw.CreateHeader(hdr)
+		if !safeZipName(f.Path) {
+			continue
+		}
+		fw, err := zw.CreateHeader(&zip.FileHeader{Name: f.Path, Method: zip.Deflate, Modified: f.Updated})
 		if err == nil {
 			_, err = fw.Write([]byte(f.Content))
 		}
 		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			s.cfg.Logger.Warn("vault zip", "err", err)
 			return
 		}
 	}
 	if err := zw.Close(); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		s.cfg.Logger.Warn("vault zip", "err", err)
 	}
-	h := w.Header()
-	h.Set("Content-Type", "application/zip")
-	h.Set("Content-Disposition", `attachment; filename="cortex-vault-`+s.now().UTC().Format("2006-01-02")+`.zip"`)
-	h.Set("Content-Length", strconv.Itoa(buf.Len()))
-	h.Set("Cache-Control", "private, no-store")
-	_, _ = w.Write(buf.Bytes())
+}
+
+// safeZipName rejects entry names that could extract outside the target
+// folder or carry control characters.
+func safeZipName(n string) bool {
+	if n == "" || strings.HasPrefix(n, "/") || strings.ContainsAny(n, "\\") {
+		return false
+	}
+	for _, r := range n {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	for _, seg := range strings.Split(n, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }

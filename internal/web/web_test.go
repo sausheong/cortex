@@ -455,7 +455,7 @@ func TestSecurityHeadersOnAllPages(t *testing.T) {
 	e := newEnv(t)
 	check := func(name string, r *http.Response) {
 		t.Helper()
-		if r.Header.Get("Content-Security-Policy") != "frame-ancestors 'none'" || r.Header.Get("X-Frame-Options") != "DENY" {
+		if r.Header.Get("Content-Security-Policy") != "frame-ancestors 'none'; img-src 'self' data:" || r.Header.Get("X-Frame-Options") != "DENY" {
 			t.Errorf("%s: missing headers: %v", name, r.Header)
 		}
 	}

@@ -87,3 +87,11 @@ func TestPageFilename_EmptySlugFallsBackToID(t *testing.T) {
 		t.Errorf("got %q, want ent_01h9.md", got)
 	}
 }
+
+func TestFolderForType_Unsafe(t *testing.T) {
+	for in, want := range map[string]string{"../x": "xs", "a b?#": "a-bs", "///": "others", "": "others"} {
+		if got := folderForType(in); got != want {
+			t.Errorf("folderForType(%q)=%q want %q", in, got, want)
+		}
+	}
+}

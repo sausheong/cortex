@@ -51,7 +51,12 @@ func folderForType(t string) string {
 	if f, ok := typeFolderMap[lc]; ok {
 		return f
 	}
-	return lc + "s"
+	// The type is free text: slug it so it can never carry path separators,
+	// "..", control characters or URL metacharacters into a file path.
+	if sl := slug(lc); sl != "" {
+		return sl + "s"
+	}
+	return "others"
 }
 
 // pageFilename builds the markdown filename for an entity.
