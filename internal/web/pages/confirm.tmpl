@@ -13,7 +13,7 @@
   {{if .Phrase}}
   <label for="confirm-phrase">Type <strong>{{.Phrase}}</strong> to confirm
     <input id="confirm-phrase" name="confirm" required autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="confirm-phrase-err"{{if .PhraseErr}} aria-invalid="true"{{end}}></label>
-  <p class="field-error" id="confirm-phrase-err">{{.PhraseErr}}</p>
+  <p class="field-error" id="confirm-phrase-err" role="alert">{{.PhraseErr}}</p>
   {{end}}
   <div class="actions">
     <button class="btn-danger">{{.Button}}</button>

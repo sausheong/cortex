@@ -1,11 +1,12 @@
 {{define "title"}}Compaction{{end}}
+{{define "head"}}{{if eq .Data.Status "proposing"}}<noscript><meta http-equiv="refresh" content="3"></noscript>{{end}}{{end}}
 {{define "retry"}}<form method="post" action="/memories/compact" class="actions">
   <input type="hidden" name="csrf" value="{{.}}">
   <button class="btn-secondary">Start a new compaction</button>
 </form>{{end}}
 {{define "content"}}
 {{with .Data}}
-<h1>Compact memories</h1>
+<h1>Compaction</h1>
 {{if .Error}}
 <div class="error" role="alert">
   <p><strong>{{.Error}}</strong></p>
@@ -14,11 +15,17 @@
 {{if .CanRetry}}{{template "retry" $.CSRF}}{{end}}
 {{end}}
 {{if eq .Status "proposing"}}
-<p>Looking for memories to merge. This page refreshes on its own.</p>
-<meta http-equiv="refresh" content="3">
+<p class="lede" id="proposing" role="status">Looking for memories to merge. This page refreshes on its own.</p>
+<script>
+(function(){var t=setInterval(function(){fetch(location.href,{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(h){
+var d=new DOMParser().parseFromString(h,"text/html");if(d.getElementById("proposing"))return;
+clearInterval(t);document.getElementById("main").innerHTML=d.getElementById("main").innerHTML;
+var s=document.getElementById("main").querySelectorAll("script");s.forEach(function(o){var n=document.createElement("script");n.textContent=o.textContent;o.replaceWith(n)});
+document.getElementById("main").focus()}).catch(function(){})},3000)})();
+</script>
 {{else if eq .Status "ready"}}
 {{if .Changes}}
-<p>Review the proposed changes. Nothing changes until you confirm, and the originals are kept for 30 days.</p>
+<p class="lede">Review the proposed changes. Nothing changes until you confirm, and the originals are kept for 30 days.</p>
 <form method="post" action="/compaction/{{.ID}}/apply">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="toolbar">
@@ -60,7 +67,8 @@ cs.forEach(function(c){c.addEventListener('change',upd)});upd()})();
   </form>
 </section>
 {{else if eq .Status "undone"}}
-<p>Compaction undone. Your memories are back as they were.</p>
+<p class="notice" role="status">Compaction undone. Your memories are back as they were.</p>
+<p><a href="/memories">Back to memories</a></p>
 {{end}}
 {{end}}
 {{end}}

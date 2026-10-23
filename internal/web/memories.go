@@ -292,7 +292,22 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 
 type deletedRow struct {
 	ID, Kind, Ago, Abs, ISO string
-	Memories, Entities      int
+	Memories, Other         int
+}
+
+// deletedKind turns a delete-batch kind into plain words.
+func deletedKind(k string) string {
+	switch k {
+	case "memories":
+		return "Memories"
+	case "connection":
+		return "Revoked connection"
+	case "compaction":
+		return "Compaction"
+	case "forget", "entity":
+		return "Forgotten item"
+	}
+	return "Deletion"
 }
 
 type deletedView struct {
@@ -308,7 +323,7 @@ func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u Sessi
 	now := s.now()
 	v := deletedView{}
 	for _, b := range bs {
-		v.Batches = append(v.Batches, deletedRow{ID: b.ID, Kind: b.Kind, Memories: b.Memories, Entities: b.Entities,
+		v.Batches = append(v.Batches, deletedRow{ID: b.ID, Kind: deletedKind(b.Kind), Memories: b.Memories, Other: b.Entities + b.Relationships,
 			Ago: relTime(now, b.CreatedAt), Abs: absTime(b.CreatedAt), ISO: b.CreatedAt.UTC().Format(time.RFC3339)})
 	}
 	s.render(w, r, http.StatusOK, "deleted", v)

@@ -40,7 +40,6 @@ input[aria-invalid=true]{border-color:var(--danger);border-width:2px}
 .btn[disabled],.btn-secondary[disabled],.btn-danger[disabled],.btn-danger-quiet[disabled]{opacity:.55;cursor:not-allowed}
 .link{background:none;border:0;color:var(--accent);font:inherit;cursor:pointer;padding:8px 4px;min-height:40px}
 .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:16px}
-.stack form,form.stack{margin:0}
 
 /* Messages */
 .error{color:var(--fg);background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:12px 16px;margin:16px 0}
@@ -78,7 +77,7 @@ main :is(p,li,dd,.lede,.note){max-width:var(--measure)}
 .top nav a:hover{color:var(--fg)}
 .top nav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}
 .top .link{color:var(--muted)}.top .link:hover{color:var(--fg)}
-code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums}
 .confirm h1,.consent h1{margin-bottom:var(--s3)}
 .consent ul{margin:var(--s4) 0;padding-left:var(--s5)}
@@ -108,13 +107,11 @@ details.revoke{margin-top:var(--s3)}
 .new-token code{display:block;padding:var(--s2) var(--s3);background:var(--bg);border:1px solid var(--info-line);border-radius:6px;overflow-wrap:anywhere}
 .token-form label{margin:0 0 var(--s2)}.token-form .field-error{min-height:0}.token-form .field-error:empty{display:none}
 .copy-status{margin-left:var(--s3)}
-.conn-metas{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:0 var(--s5)}
-.memlist{list-style:none;padding:0}.memlist li{padding:8px 0;border-top:1px solid var(--line)}
+.memlist{list-style:none;padding:0}.memlist li{border-top:1px solid var(--line)}
 .change{padding:12px 0;border-top:1px solid var(--line)}
 .change ul{margin:4px 0 8px}
 .toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:16px 0}
 .js-only{display:none}.js .js-only{display:inline-flex}
-.no-js-only{display:inline-flex}.js .no-js-only{display:none}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 
 /* Memories: list first, quiet metadata, selection toolbar only when needed. */
@@ -134,7 +131,7 @@ details.more .search-row{grid-template-columns:repeat(2,minmax(0,12rem));margin-
 .mem-meta{display:block;margin-top:2px;font-size:var(--text-sm);color:var(--muted)}
 .mem-meta .new{color:var(--accent)}
 .memlist .empty{padding:var(--s5) 0}
-.memlist.batches li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s2) var(--s4);padding:var(--s3) var(--s1)}
+.memlist.batches li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s2) var(--s4);padding:var(--s3) 0}
 .seltoolbar{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);padding:var(--s2) 0;margin-top:var(--s3);background:var(--bg);border-bottom:1px solid var(--line)}
 .js .seltoolbar:not(.has-sel){display:none}
 .js .js-hide{display:none}
@@ -180,3 +177,24 @@ legend{padding:0;margin:0 0 var(--s2);font-size:var(--text-lg);font-weight:var(-
 .empty-state strong{display:block}
 .conn-empty strong{color:var(--fg);font-weight:var(--w-label)}
 .job h2{font-size:var(--text-base);letter-spacing:0;margin:0 0 var(--s2)}.job p{margin:0}
+
+/* Polish */
+.skip{position:absolute;left:var(--s4);top:-60px;z-index:2;padding:var(--s2) var(--s3);background:var(--bg);border:1px solid var(--line-strong);border-radius:6px;color:var(--fg)}
+.skip:focus{top:var(--s2)}
+main:focus{outline:none}
+.facts{margin:0 0 var(--s5);max-width:var(--measure)}
+.facts>div{display:flex;justify-content:space-between;gap:var(--s4);padding:var(--s2) 0;border-top:1px solid var(--line)}
+.facts>div:last-child{border-bottom:1px solid var(--line)}
+.facts dt{color:var(--muted)}.facts dd{margin:0;font-weight:var(--w-label)}
+.btn,.btn-secondary,.btn-danger,.btn-danger-quiet,.link{transition:background-color .15s ease-out,border-color .15s ease-out,color .15s ease-out}
+.btn:active,.btn-secondary:active,.btn-danger:active,.btn-danger-quiet:active{transform:translateY(1px)}
+.notice,.error{max-width:var(--measure);box-sizing:border-box}
+.memlist.batches li>span{min-width:0}
+@media (max-width:560px){
+main{padding:var(--s5) var(--s4)}
+main h1{font-size:1.5rem}
+.actions>.btn,.actions>.btn-secondary,.actions>.btn-danger,.actions>.btn-danger-quiet{width:100%}
+.actions form{width:100%}
+.conn-row{grid-template-columns:1fr}
+.pager a{display:inline-flex;align-items:center;min-height:44px}
+}

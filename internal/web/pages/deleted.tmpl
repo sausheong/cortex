@@ -2,12 +2,12 @@
 {{define "content"}}
 {{with .Data}}
 <h1>Recently deleted</h1>
-<p class="note">Deletions can be restored for 30 days, then they are removed for good.</p>
+<p class="lede">Deletions can be restored for 30 days, then they are removed for good.</p>
 <ul class="memlist batches">
 {{range .Batches}}
-  <li><span><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time> · {{.Kind}} · {{.Memories}} {{if eq .Memories 1}}memory{{else}}memories{{end}}, {{.Entities}} {{if eq .Entities 1}}entity{{else}}entities{{end}}</span>
+  <li><span><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time> · {{.Kind}} · {{.Memories}} {{if eq .Memories 1}}memory{{else}}memories{{end}}{{if .Other}} and {{.Other}} related {{if eq .Other 1}}item{{else}}items{{end}}{{end}}</span>
     <form class="inline-form" method="post" action="/memories/restore/{{.ID}}">
-      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn-secondary">Restore</button></form></li>
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn-secondary" aria-label="Restore deletion from {{.Abs}}">Restore</button></form></li>
 {{else}}<li class="empty-state"><strong>Nothing deleted recently.</strong>
   <span class="note">When you delete memories they wait here for 30 days, so you can restore them.</span></li>{{end}}
 </ul>

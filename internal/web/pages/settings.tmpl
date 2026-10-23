@@ -42,7 +42,7 @@
     <p class="note group-help">Embeddings let cortex search by meaning instead of exact words. Optional with an OpenAI-compatible provider: the defaults reuse the chat key above. Required with Anthropic, which does not offer embeddings, so add an embedding key here.</p>
     <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
     <label>Dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric" aria-describedby="h-dims"></label>
-    <p class="note field-help" id="h-dims">How detailed each memory's fingerprint is. 512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
+    <p class="note field-help" id="h-dims">How finely cortex describes each memory for search. 512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
     <label>Base URL <input name="embed_base_url" value="{{.S.EmbedBaseURL}}" placeholder="Same as chat"></label>
     <label>API key <input name="embed_api_key" type="password" value="" placeholder="{{if .S.EmbedAPIKey}}{{.S.EmbedAPIKey}}{{else}}Same as chat{{end}}"></label>
   </fieldset>

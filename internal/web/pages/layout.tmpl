@@ -6,11 +6,13 @@
 <title>{{template "title" .}} · cortex</title>
 <link rel="stylesheet" href="/static/app.css">
 <script>document.documentElement.className="js"</script>
+{{block "head" .}}{{end}}
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="/">cortex</a>
-  {{if .SignedIn}}<nav>
+  {{if .SignedIn}}<nav aria-label="Main">
     <a href="/memories" {{.Current "/memories"}}>Memories</a>
     <a href="/connections" {{.Current "/connections"}}>Connections</a>
     <a href="/compaction" {{.Current "/compaction"}}>Compaction</a>
@@ -20,7 +22,7 @@
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
   </nav>{{end}}
 </header>
-<main>{{template "content" .}}</main>
+<main id="main" tabindex="-1">{{template "content" .}}</main>
 </body>
 </html>{{end}}
 {{define "check"}}<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>{{end}}
