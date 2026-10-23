@@ -319,3 +319,36 @@ func TestMemoriesPagingIsolation(t *testing.T) {
 		t.Fatal("totals or rows leak across users")
 	}
 }
+
+func TestMemoriesDeleteKeepsView(t *testing.T) {
+	e, _, id := memEnv(t)
+	seedN(t, e, id, 60)
+	_, body := e.get("/memories?size=25&sort=oldest&page=2&q=row")
+	if !strings.Contains(body, `name="view" value="q=row&amp;size=25&amp;sort=oldest&amp;page=2"`) {
+		t.Fatal("delete forms must carry the view")
+	}
+	ids := regexp.MustCompile(`name="ids" value="([^"]+)"`).FindAllStringSubmatch(body, 2)
+	form := url.Values{"csrf": {e.csrf()}, "scope": {"selected"}, "view": {"q=row&size=25&sort=oldest&page=2&evil=1"}, "confirm_count": {"2"}}
+	for _, m := range ids {
+		form.Add("ids", m[1])
+	}
+	resp, _ := e.post("/memories/delete", form)
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(loc, "sort=oldest") || !strings.Contains(loc, "page=2") || !strings.Contains(loc, "batch=") || strings.Contains(loc, "evil") {
+		t.Fatalf("redirect %d %q", resp.StatusCode, loc)
+	}
+	// Validation error re-render keeps the filter too.
+	resp, body = e.post("/memories/delete", url.Values{"csrf": {e.csrf()}, "scope": {"selected"}, "view": {"sort=oldest&size=25"}})
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, `<option value="oldest" selected>`) {
+		t.Fatalf("error render lost view: %d", resp.StatusCode)
+	}
+}
+
+func TestMemoriesGarbageDateIgnoredWithMessage(t *testing.T) {
+	e, _, id := memEnv(t)
+	seedN(t, e, id, 3)
+	_, body := e.get("/memories?from=garbage")
+	if !strings.Contains(body, "was not understood") || strings.Contains(body, "garbage") {
+		t.Fatal("garbage date must be cleared with a message")
+	}
+}

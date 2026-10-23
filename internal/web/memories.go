@@ -62,6 +62,7 @@ type memoriesView struct {
 	PrevPage  int
 	NextPage  int
 	Query     string // url-encoded filters for paging links
+	ViewQuery string // filters plus page, carried through delete forms
 	Size      int
 	Sizes     []int
 	Sort      string // "newest" or "oldest"
@@ -183,9 +184,40 @@ func (s *server) memoriesGet(w http.ResponseWriter, r *http.Request, u SessionUs
 	s.memoriesPage(w, r, u, http.StatusOK, "", "")
 }
 
+// viewKeys are the only parameters a carried view may hold.
+var viewKeys = []string{"q", "by", "from", "to", "range", "size", "sort", "page"}
+
+// cleanView parses a carried view string keeping only known keys, so the
+// value can never redirect elsewhere or inject other parameters.
+func cleanView(raw string) url.Values {
+	in, _ := url.ParseQuery(raw)
+	out := url.Values{}
+	for _, k := range viewKeys {
+		if v := in.Get(k); v != "" {
+			out.Set(k, v)
+		}
+	}
+	return out
+}
+
+// viewURL is /memories with the viewer's filters from a POST, optionally plus extra params.
+func viewURL(r *http.Request, extra ...string) string {
+	q := cleanView(r.PostFormValue("view"))
+	for i := 0; i+1 < len(extra); i += 2 {
+		q.Set(extra[i], extra[i+1])
+	}
+	if len(q) == 0 {
+		return "/memories"
+	}
+	return "/memories?" + q.Encode()
+}
+
 func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, field, msg string) {
 	ctx := r.Context()
 	q := r.URL.Query()
+	if r.Method == http.MethodPost {
+		q = cleanView(r.PostFormValue("view"))
+	}
 	v := memoriesView{Q: q.Get("q"), By: q.Get("by"), From: q.Get("from"), To: q.Get("to"), Error: msg, ErrField: field}
 	v.Page, _ = strconv.Atoi(q.Get("page"))
 	if v.Page < 1 {
@@ -218,13 +250,21 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.From, v.To = from.Format("2006-01-02"), today.Format("2006-01-02")
 	}
 	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, Oldest: v.Sort == "oldest"}
+	badDate := false
 	if t := parseDay(v.From); t != nil {
 		start := t.Add(shift)
 		f.From = &start
+	} else if v.From != "" {
+		v.From, badDate = "", true
 	}
 	if t := parseDay(v.To); t != nil {
 		end := t.AddDate(0, 0, 1).Add(shift)
 		f.To = &end
+	} else if v.To != "" {
+		v.To, badDate = "", true
+	}
+	if badDate {
+		v.RangeErr = "A date was not understood, so it was ignored. Pick dates with the date fields."
 	}
 	if f.From != nil && f.To != nil && !f.From.Before(*f.To) {
 		v.RangeErr = "From is after To, so no memories can match. Change one of the dates."
@@ -366,6 +406,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.PageHref += "&"
 	}
 	v.PageHref += "page=" + strconv.Itoa(v.Page)
+	v.ViewQuery = strings.TrimPrefix(v.PageHref, "/memories?")
 	v.SelectHref = v.PageHref + "&select=page"
 	s.render(w, r, status, "memories", v)
 }
@@ -448,7 +489,7 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 		Action:     "/memories/delete",
 		Count:      n,
 		Button:     "Delete " + plural(n, "memory", "memories"),
-		CancelHref: "/memories",
+		CancelHref: viewURL(r),
 	}
 	if f.All && f.WrittenBy == "" && f.Query == "" && f.OlderThan == nil && len(f.IDs) == 0 {
 		cv.Title = "Delete all " + plural(n, "memory", "memories") + "?"
@@ -471,6 +512,9 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 	}
 	cv.Details = append(cv.Details, "Restore from Recently deleted. After 30 days they are removed for good.")
 	cv.Fields = []confirmField{{"scope", scope}}
+	if vq := cleanView(r.PostFormValue("view")).Encode(); vq != "" {
+		cv.Fields = append(cv.Fields, confirmField{"view", vq})
+	}
 	for _, id := range f.IDs {
 		cv.Fields = append(cv.Fields, confirmField{"ids", id})
 	}
@@ -509,7 +553,7 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 		s.memoriesPage(w, r, u, http.StatusConflict, "", "Those memories were already gone, so nothing was deleted.")
 		return
 	}
-	http.Redirect(w, r, "/memories?batch="+url.QueryEscape(batch), http.StatusSeeOther)
+	http.Redirect(w, r, viewURL(r, "batch", batch), http.StatusSeeOther)
 }
 
 type deletedRow struct {

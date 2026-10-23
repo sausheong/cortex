@@ -39,7 +39,7 @@
     <button class="btn-secondary" data-pending="Applying&hellip;">Apply</button>
   </div>
   <p class="field-error" id="err-range" role="alert">{{.RangeErr}}</p>
-  <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included.</p>
+  <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included. The offset is fixed, so a day near a daylight saving change can be off by an hour.</p>
   <nav class="presets" aria-label="Date presets"><span class="note">Quick range:</span>
     {{range .Presets}}<a href="{{.Href}}"{{if .Current}} aria-current="true" class="on"{{end}}>{{.Label}}</a>{{end}}
   </nav>
@@ -47,6 +47,7 @@
 <form method="post" action="/memories/delete" id="memform">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="scope" value="selected">
+  <input type="hidden" name="view" value="{{.ViewQuery}}">
   <div class="seltoolbar" id="seltoolbar">
     <span id="selcount" aria-live="polite" class="selcount">{{if .SelectPage}}{{.SelCount}} selected{{end}}</span>
     <button class="btn-danger-quiet">Delete selected&hellip;</button>
@@ -79,6 +80,7 @@
   <form method="post" action="/memories/delete" class="cleanup-form">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="scope" value="matching">
+    <input type="hidden" name="view" value="{{.ViewQuery}}">
     <h2>Delete by rule</h2>
     <label>Written by
       <select name="by"><option value="">Anyone</option>
@@ -93,6 +95,7 @@
   <form method="post" action="/memories/delete" class="cleanup-form">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="scope" value="all">
+    <input type="hidden" name="view" value="{{.ViewQuery}}">
     <input type="hidden" name="all" value="1">
     <h2>Delete everything</h2>
     <p class="note">Clears all {{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}. You type a phrase to confirm.</p>
@@ -106,7 +109,9 @@
     var off=String(new Date().getTimezoneOffset()), m=document.cookie.match(/(?:^|; )cortex_tz=([^;]*)/);
     if(!m||m[1]!==off){
       document.cookie="cortex_tz="+off+"; path=/; max-age=31536000; SameSite=Lax";
-      if(/[?&](from|to|range)=/.test(location.search)) location.reload();
+      // Reload only if the cookie actually stuck, so blocked cookies cannot loop.
+      var back=document.cookie.match(/(?:^|; )cortex_tz=([^;]*)/);
+      if(back&&back[1]===off&&/[?&](from|to|range)=/.test(location.search)) location.reload();
     }
   }catch(e){}
 })();
