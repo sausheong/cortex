@@ -163,6 +163,37 @@ func TestServeRouteInventory(t *testing.T) {
 		if rec = do("GET", "/", "", true, nil); rec.Code != 200 || !strings.Contains(rec.Body.String(), "<h1>Home</h1>") {
 			t.Errorf("/ signed in: %d %.120s", rec.Code, rec.Body)
 		}
+		// Graph and Vault: signed out they go to sign-in (the data endpoint
+		// answers 401 JSON); signed in they render.
+		for _, p := range []string{"/graph", "/vault", "/vault/download", "/vault/index.md"} {
+			rec = do("GET", p, "", false, nil)
+			if rec.Code != 302 || !strings.HasPrefix(rec.Header().Get("Location"), "/auth/google/start") {
+				t.Errorf("%s signed out: %d %s", p, rec.Code, rec.Header().Get("Location"))
+			}
+			secHeaders(t, p, rec)
+		}
+		if rec = do("GET", "/graph/data", "", false, nil); rec.Code != 401 {
+			t.Errorf("/graph/data signed out: %d, want 401", rec.Code)
+		}
+		for _, p := range []string{"/graph", "/vault", "/vault/index.md"} {
+			rec = do("GET", p, "", true, nil)
+			if rec.Code != 200 {
+				t.Errorf("%s signed in: %d %.120s", p, rec.Code, rec.Body)
+			}
+			secHeaders(t, p, rec)
+		}
+		rec = do("GET", "/graph/data", "", true, nil)
+		var gd map[string]any
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &gd) != nil || gd["nodes"] == nil {
+			t.Errorf("/graph/data signed in: %d %.120s", rec.Code, rec.Body)
+		}
+		rec = do("GET", "/vault/download", "", true, nil)
+		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Content-Type"), "zip") {
+			t.Errorf("/vault/download signed in: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+		}
+		if rec = do("GET", "/vault/no-such-page.md", "", true, nil); rec.Code != 404 {
+			t.Errorf("/vault/no-such-page.md signed in: %d, want 404", rec.Code)
+		}
 		// POST-only routes exist and demand a session (401, not 404/405).
 		for _, p := range []string{"/memories/compact", "/compaction/" + cid + "/apply", "/compaction/" + cid + "/undo",
 			"/connections/tokens", "/connections/x/revoke", "/memories/delete", "/settings"} {
