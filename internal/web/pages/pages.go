@@ -61,10 +61,10 @@ func within(path, href string) bool {
 }
 
 // Load parses every page template together with the layout, keyed by page
-// name ("signin", "settings", "notice").
+// name ("signin", "home", "settings", "notice").
 func Load() map[string]*Template {
 	out := map[string]*Template{}
-	for _, n := range []string{"signin", "settings", "notice", "consent", "connections", "memories", "deleted", "account", "compaction", "compaction_start", "confirm"} {
+	for _, n := range []string{"signin", "home", "settings", "notice", "consent", "connections", "memories", "deleted", "account", "compaction", "compaction_start", "confirm"} {
 		out[n] = template.Must(template.ParseFS(files, "layout.tmpl", n+".tmpl"))
 	}
 	return out

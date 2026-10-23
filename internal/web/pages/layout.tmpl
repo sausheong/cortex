@@ -13,7 +13,9 @@
 <header class="top">
   <a class="brand" href="/">cortex</a>
   {{if .SignedIn}}<nav aria-label="Main">
+    <a href="/" {{.Current "/"}}>Home</a>
     <a href="/memories" {{.Current "/memories"}}>Memories</a>
+    {{/* Graph nav item goes here (feat/graph-page), between Memories and Connections. */}}
     <a href="/connections" {{.Current "/connections"}}>Connections</a>
     <a href="/settings" {{.Current "/settings"}}>Settings</a>
     <a href="/account" {{.Current "/account"}}>Account</a>

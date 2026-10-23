@@ -159,9 +159,9 @@ func TestServeRouteInventory(t *testing.T) {
 			}
 			secHeaders(t, p, rec)
 		}
-		// Signed in, / goes to the memories page.
-		if rec = do("GET", "/", "", true, nil); rec.Code != 302 || rec.Header().Get("Location") != "/memories" {
-			t.Errorf("/ signed in: %d %s", rec.Code, rec.Header().Get("Location"))
+		// Signed in, / is the Home dashboard.
+		if rec = do("GET", "/", "", true, nil); rec.Code != 200 || !strings.Contains(rec.Body.String(), "<h1>Home</h1>") {
+			t.Errorf("/ signed in: %d %.120s", rec.Code, rec.Body)
 		}
 		// POST-only routes exist and demand a session (401, not 404/405).
 		for _, p := range []string{"/memories/compact", "/compaction/" + cid + "/apply", "/compaction/" + cid + "/undo",

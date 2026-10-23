@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -62,20 +63,96 @@ func (c *Cortex) RefreshUsage(ctx context.Context) (Usage, error) {
 	return u, nil
 }
 
+// CachedUsage returns the figures stored by the nightly job. ok is false
+// when none are cached yet; it never measures, so it is cheap on a page load.
+func (c *Cortex) CachedUsage(ctx context.Context) (u Usage, ok bool, err error) {
+	var raw sql.NullString
+	err = c.db.QueryRowContext(ctx, `SELECT usage_json::text FROM users WHERE id = ?`, c.userID).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Usage{}, false, fmt.Errorf("cortex: read usage: %w", err)
+	}
+	if raw.Valid && json.Unmarshal([]byte(raw.String), &u) == nil {
+		return u, true, nil
+	}
+	return Usage{}, false, nil
+}
+
 // Usage returns the cached figures, or computes them live when none are cached.
 func (c *Cortex) Usage(ctx context.Context) (Usage, error) {
-	var raw sql.NullString
-	err := c.db.QueryRowContext(ctx, `SELECT usage_json::text FROM users WHERE id = ?`, c.userID).Scan(&raw)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Usage{}, fmt.Errorf("cortex: read usage: %w", err)
-	}
-	if raw.Valid {
-		var u Usage
-		if json.Unmarshal([]byte(raw.String), &u) == nil {
-			return u, nil
-		}
+	if u, ok, err := c.CachedUsage(ctx); err != nil || ok {
+		return u, err
 	}
 	return c.ComputeUsage(ctx)
+}
+
+// ConnectionNew is a connection's memories created after a point in time.
+type ConnectionNew struct {
+	ConnectionID string // "" for memories no connection wrote
+	Count        int
+	Latest       []Memory // newest first, at most the requested number
+}
+
+// NewMemoriesSince groups this user's live memories created after since by
+// the connection that wrote them, with each group's newest perGroup
+// memories. Groups are ordered by their newest memory, newest first. It is
+// one indexed query and never calls a model.
+func (c *Cortex) NewMemoriesSince(ctx context.Context, since time.Time, perGroup int) ([]ConnectionNew, error) {
+	if perGroup < 1 {
+		perGroup = 3
+	}
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT conn, n, id, content, created_at FROM (
+		   SELECT COALESCE(written_by_connection_id,'') AS conn, id, content, created_at,
+		     count(*) OVER (PARTITION BY COALESCE(written_by_connection_id,'')) AS n,
+		     row_number() OVER (PARTITION BY COALESCE(written_by_connection_id,'') ORDER BY created_at DESC, id) AS rn
+		   FROM memories WHERE user_id = ? AND deleted_at IS NULL AND created_at > ?) t
+		 WHERE rn <= ? ORDER BY conn, created_at DESC, id`, c.userID, since, perGroup)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: new memories: %w", err)
+	}
+	defer rows.Close()
+	var out []ConnectionNew
+	for rows.Next() {
+		var conn string
+		var n int
+		var m Memory
+		if err := rows.Scan(&conn, &n, &m.ID, &m.Content, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("cortex: scan new memory: %w", err)
+		}
+		m.WrittenBy = conn
+		if len(out) == 0 || out[len(out)-1].ConnectionID != conn {
+			out = append(out, ConnectionNew{ConnectionID: conn, Count: n})
+		}
+		g := &out[len(out)-1]
+		g.Latest = append(g.Latest, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Latest[0].CreatedAt.After(out[j].Latest[0].CreatedAt) })
+	return out, nil
+}
+
+// WrittenSince counts this user's live memories created after since, per
+// writing connection ID ("" for none).
+func (c *Cortex) WrittenSince(ctx context.Context, since time.Time) (map[string]int, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT COALESCE(written_by_connection_id,''), count(*) FROM memories
+		 WHERE user_id = ? AND deleted_at IS NULL AND created_at > ? GROUP BY 1`, c.userID, since)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: written since: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }
 
 // MemoryListFilter narrows ListMemories. Zero fields are ignored.

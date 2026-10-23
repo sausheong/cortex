@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -237,6 +238,32 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 	}
 	p, _, err := c.buildProfile(ctx, e, mems, cfg, now)
 	return p, err
+}
+
+// CachedProfile returns the owner entity's stored digest without ever
+// building one or calling a model. ok is false when the user has no owner
+// entity or no digest has been built yet.
+func (c *Cortex) CachedProfile(ctx context.Context) (Profile, bool, error) {
+	id, err := c.OwnerEntityID(ctx)
+	if errors.Is(err, ErrNotFound) {
+		return Profile{}, false, nil
+	}
+	if err != nil {
+		return Profile{}, false, err
+	}
+	e, err := c.GetEntity(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return Profile{}, false, nil
+	}
+	if err != nil {
+		return Profile{}, false, err
+	}
+	cp, ok := readCachedProfile(e)
+	if !ok {
+		return Profile{}, false, nil
+	}
+	return Profile{EntityID: e.ID, Name: e.Name, Static: cp.Static, Dynamic: cp.Dynamic,
+		BuiltAt: cp.BuiltAt, Distilled: cp.Distilled, Cached: true}, true, nil
 }
 
 // buildProfileFromMemories partitions + distills the given memories, persists
