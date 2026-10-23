@@ -13,6 +13,8 @@
   {{if .SignedIn}}<nav>
     <a href="/memories">Memories</a>
     <a href="/connections">Connections</a>
+    <a href="/compaction">Compaction</a>
+    <a href="/memories/deleted">Recently deleted</a>
     <a href="/settings">Settings</a>
     <a href="/account">Account</a>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>

@@ -373,3 +373,17 @@ func TestAccountDeleteThenSigninRestores(t *testing.T) {
 }
 
 var regexpBatch = regexp.MustCompile(`/memories/restore/([^"]+)"`)
+
+func TestMemoriesListFirstWithRelativeTimeAndCleanUpCollapsed(t *testing.T) {
+	e, c, _ := memEnv(t)
+	putMem(t, c, "a quiet fact")
+	_, body := e.get("/memories")
+	for _, want := range []string{"just now", `title="`, "<summary>More filters</summary>", "<summary>Clean up</summary>", `href="/compaction"`, `href="/memories/deleted"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "<details class=\"cleanup section\" open") {
+		t.Fatal("Clean up must start collapsed")
+	}
+}

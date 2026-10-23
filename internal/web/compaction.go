@@ -67,6 +67,7 @@ func CompactionMount(enqueue func(ctx context.Context, userID, kind string) (str
 func compactionMount(enqueue func(ctx context.Context, userID, kind string) (string, error), resolve func(ctx context.Context, userID string) (*cortex.Cortex, error)) func(mux *http.ServeMux, d Deps) {
 	return func(mux *http.ServeMux, d Deps) {
 		h := &compactionHandlers{d: d, enqueue: enqueue, resolve: resolve}
+		mux.HandleFunc("GET /compaction", d.Auth(h.index))
 		mux.HandleFunc("POST /memories/compact", d.Auth(h.start))
 		mux.HandleFunc("GET /compaction/{id}", d.Auth(h.show))
 		mux.HandleFunc("POST /compaction/{id}/apply", d.Auth(h.apply))
@@ -113,6 +114,11 @@ func (h *compactionHandlers) fail(w http.ResponseWriter, r *http.Request, err er
 	}
 	h.d.Cfg.Logger.Error("compaction", "err", err)
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+// index is the Compaction landing page, the entry point from the nav.
+func (h *compactionHandlers) index(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	h.d.Render(w, r, "compaction_start", struct{ Available bool }{h.enqueue != nil})
 }
 
 func (h *compactionHandlers) start(w http.ResponseWriter, r *http.Request, u SessionUser) {

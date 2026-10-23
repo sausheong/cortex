@@ -83,3 +83,31 @@ details.revoke{margin-top:var(--s3)}
 .js-only{display:none}.js .js-only{display:inline-flex}
 .no-js-only{display:inline-flex}.js .no-js-only{display:none}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* Memories: list first, quiet metadata, selection toolbar only when needed. */
+.search-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,12rem) auto;gap:var(--s3);align-items:end}
+.search-row label{margin:0}
+.search-row .btn-secondary{min-height:44px}
+.search-row input,.search-row select{min-height:44px}
+details.more,details.cleanup{margin-top:var(--s2)}
+details.more>summary,details.cleanup>summary{display:flex;align-items:center;width:fit-content;min-height:44px;color:var(--accent);cursor:pointer}
+details.more .search-row{grid-template-columns:repeat(2,minmax(0,12rem));margin-bottom:var(--s2)}
+.memlist{margin:var(--s4) 0 0}
+.memlist li{padding:0}
+.mem{display:flex;align-items:flex-start;gap:var(--s3);margin:0;padding:var(--s3) var(--s1);font-size:inherit;color:var(--fg);cursor:pointer}
+.mem input[type=checkbox]{flex:none;margin:3px 0 0;width:20px;height:20px}
+.mem-body{display:block;min-width:0}
+.mem-text{display:block}
+.mem-meta{display:block;margin-top:2px;font-size:14px;color:var(--muted)}
+.mem-meta .new{color:var(--accent)}
+.memlist .empty{padding:var(--s5) 0}
+.seltoolbar{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);padding:var(--s2) 0;margin-top:var(--s3);background:var(--bg);border-bottom:1px solid var(--line)}
+.js .seltoolbar:not(.has-sel){display:none}
+.js .js-hide{display:none}
+.selcount{font-weight:600}
+.pager{display:flex;gap:var(--s5);margin:var(--s4) 0 0}
+details.cleanup{border-top:1px solid var(--line);padding-top:var(--s2)}
+.cleanup-form{margin:var(--s5) 0 0;max-width:28rem}
+.cleanup-form h2{font-size:1rem;margin:0 0 var(--s2)}
+.cleanup-form .field-error:empty{display:none}
+@media (max-width:560px){.search-row,details.more .search-row{grid-template-columns:1fr}}

@@ -1,0 +1,16 @@
+{{define "title"}}Compaction{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Compaction</h1>
+<p class="lede">Finds memories that repeat or overlap and proposes merging them.</p>
+{{if .Available}}
+<p>You review every proposed change first. Nothing changes until you confirm, and the originals are kept for 30 days.</p>
+<form method="post" action="/memories/compact" class="actions">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <button class="btn">Look for memories to merge</button>
+</form>
+{{else}}
+<p class="note">Compaction is not available on this server.</p>
+{{end}}
+{{end}}
+{{end}}

@@ -34,8 +34,18 @@ type undoNotice struct {
 	Next    string // where Undo returns to
 }
 
+// memoryRow is one memory prepared for display: relative time with the
+// absolute time kept for a tooltip.
+type memoryRow struct {
+	ID, Content string
+	Ago, Abs    string
+	ISO         string
+	Who         string // connection name, or "" when written by hand
+	New         bool   // written since the viewer's previous visit
+}
+
 type memoriesView struct {
-	Memories  []cortex.Memory
+	Memories  []memoryRow
 	Conns     []accounts.Connection
 	ConnNames map[string]string
 	Q, By     string
@@ -51,6 +61,7 @@ type memoriesView struct {
 	Undo            *undoNotice
 	Restored        int // memories restored by the last Undo
 	WasRestored     bool
+	HasMore         bool // a filter is active, so the filter row shows it
 }
 
 func parseDay(v string) *time.Time {
@@ -104,11 +115,19 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 			}
 		}
 	}
-	v.Memories, v.Total, v.Conns = ms, total, conns
+	v.Total, v.Conns = total, conns
 	v.ConnNames = map[string]string{}
 	for _, c := range conns {
 		v.ConnNames[c.ID] = c.Name
 	}
+	now := s.now()
+	seen := s.lastVisit(w, r, now, v.Page == 1 && r.Method == http.MethodGet)
+	for _, m := range ms {
+		v.Memories = append(v.Memories, memoryRow{ID: m.ID, Content: m.Content,
+			Ago: relTime(now, m.CreatedAt), Abs: absTime(m.CreatedAt), ISO: m.CreatedAt.UTC().Format(time.RFC3339),
+			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
+	}
+	v.HasMore = v.Q != "" || v.By != "" || v.From != "" || v.To != ""
 	if v.Page > 1 {
 		v.PrevPage = v.Page - 1
 	}
@@ -271,8 +290,13 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 	http.Redirect(w, r, "/memories?batch="+url.QueryEscape(batch), http.StatusSeeOther)
 }
 
+type deletedRow struct {
+	ID, Kind, Ago, Abs, ISO string
+	Memories, Entities      int
+}
+
 type deletedView struct {
-	Batches []cortex.DeleteBatch
+	Batches []deletedRow
 }
 
 func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u SessionUser) {
@@ -281,7 +305,13 @@ func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u Sessi
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, r, http.StatusOK, "deleted", deletedView{Batches: bs})
+	now := s.now()
+	v := deletedView{}
+	for _, b := range bs {
+		v.Batches = append(v.Batches, deletedRow{ID: b.ID, Kind: b.Kind, Memories: b.Memories, Entities: b.Entities,
+			Ago: relTime(now, b.CreatedAt), Abs: absTime(b.CreatedAt), ISO: b.CreatedAt.UTC().Format(time.RFC3339)})
+	}
+	s.render(w, r, http.StatusOK, "deleted", v)
 }
 
 func (s *server) memoriesRestore(w http.ResponseWriter, r *http.Request, u SessionUser) {

@@ -247,3 +247,12 @@ func TestCompactionFailureLinksToSettings(t *testing.T) {
 		t.Fatalf("no next step: %s", body)
 	}
 }
+
+func TestCompactionIndexOffersStart(t *testing.T) {
+	e := compactEnv(t)
+	e.signIn(alice(), "")
+	r, body := e.get("/compaction")
+	if r.StatusCode != 200 || !strings.Contains(body, `action="/memories/compact"`) {
+		t.Fatalf("%d %.300s", r.StatusCode, body)
+	}
+}
