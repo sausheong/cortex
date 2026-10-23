@@ -9,6 +9,20 @@
     <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span></div>
   </div>
   {{if .Revoked}}<p class="note conn-hint">Cannot connect any more.</p>{{else if not .LastUsed}}<p class="note conn-hint">Not connected yet. It shows as Active after its first use.</p>{{end}}
+  <div class="conn-actions">
+  <details class="rename">
+    <summary>Rename&hellip;</summary>
+    <form method="post" action="/connections/{{.ID}}/rename" class="rename-panel">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Name <input name="name" required maxlength="80" value="{{.Name}}"></label>
+      <button class="btn-secondary" data-pending="Saving&hellip;">Save name</button>
+    </form>
+  </details>
+  {{if .Revoked}}<form method="post" action="/connections/{{.ID}}/remove">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn-secondary">Remove from list</button>
+  </form>{{end}}
+  </div>
   {{if not .Revoked}}
   <details class="revoke">
     <summary>Revoke&hellip;</summary>
@@ -21,6 +35,7 @@
         <button class="btn-danger" name="choice" value="delete">Revoke and delete {{.DeleteCount}} {{if eq .DeleteCount 1}}item{{else}}items{{end}} it wrote</button>{{end}}
       </div>
       {{if .DeleteCount}}<p class="note">Deleted items can be restored for 30 days.</p>{{else}}<p class="note">It has not written anything, so there is nothing to delete.</p>{{end}}
+      <p class="note">After revoking, you can remove it from this list.</p>
     </form>
   </details>
   {{end}}
@@ -37,6 +52,15 @@
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="next" value="/connections">
     <button class="btn-secondary">Undo delete</button>
+  </form>{{end}}
+</section>
+{{end}}
+{{if .Notice}}
+<section class="notice" role="status">
+  <p><strong>{{.Notice.Text}}</strong></p>
+  {{if .Notice.UndoID}}<form method="post" action="/connections/{{.Notice.UndoID}}/unremove" class="actions">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button class="btn-secondary">Undo</button>
   </form>{{end}}
 </section>
 {{end}}

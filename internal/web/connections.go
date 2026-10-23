@@ -48,6 +48,13 @@ type connView struct {
 	CSRF        string
 }
 
+// connNotice is a one-line status after a rename or remove.
+type connNotice struct {
+	Text string
+	// UndoID is set after a remove; Undo un-hides that connection.
+	UndoID string
+}
+
 // revokeNotice is the persistent message after a revoke.
 type revokeNotice struct {
 	Name    string
@@ -64,6 +71,7 @@ type connectionsView struct {
 	Instructions       string
 	Revoked            *revokeNotice
 	WasRestored        bool
+	Notice             *connNotice
 }
 
 // ConnectionsMount registers the connections page routes.
@@ -72,6 +80,9 @@ func ConnectionsMount(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("GET /connections", d.Auth(h.list))
 	mux.HandleFunc("POST /connections/tokens", d.Auth(h.newToken))
 	mux.HandleFunc("POST /connections/{id}/revoke", d.Auth(h.revoke))
+	mux.HandleFunc("POST /connections/{id}/rename", d.Auth(h.rename))
+	mux.HandleFunc("POST /connections/{id}/remove", d.Auth(h.remove))
+	mux.HandleFunc("POST /connections/{id}/unremove", d.Auth(h.unremove))
 }
 
 type connHandler struct{ d Deps }
@@ -88,6 +99,15 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 		v.WasRestored = true
 	}
 	for _, c := range conns {
+		if c.RemovedAt != nil {
+			if q.Get("removed") == c.ID {
+				v.Notice = &connNotice{Text: "Removed " + c.Name + ". Nothing it wrote was deleted.", UndoID: c.ID}
+			}
+			continue
+		}
+		if q.Get("renamed") == c.ID {
+			v.Notice = &connNotice{Text: "Renamed to " + c.Name + "."}
+		}
 		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil, CSRF: u.CSRF}
 		if c.RevokedAt == nil {
 			if cv.DeleteCount, err = cx.CountByConnection(r.Context(), c.ID); err != nil {
@@ -122,6 +142,10 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 }
 
 func (h *connHandler) page(w http.ResponseWriter, r *http.Request, u SessionUser, mod func(*connectionsView)) {
+	h.pageStatus(w, r, u, http.StatusOK, mod)
+}
+
+func (h *connHandler) pageStatus(w http.ResponseWriter, r *http.Request, u SessionUser, status int, mod func(*connectionsView)) {
 	v, err := h.view(r, u)
 	if err != nil {
 		h.d.Cfg.Logger.Error("connections", "err", err)
@@ -131,7 +155,7 @@ func (h *connHandler) page(w http.ResponseWriter, r *http.Request, u SessionUser
 	if mod != nil {
 		mod(&v)
 	}
-	h.d.Render(w, r, "connections", v)
+	h.d.RenderStatus(w, r, status, "connections", v)
 }
 
 func (h *connHandler) list(w http.ResponseWriter, r *http.Request, u SessionUser) {
@@ -230,4 +254,54 @@ func (h *connHandler) revoke(w http.ResponseWriter, r *http.Request, u SessionUs
 		}
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+func (h *connHandler) rename(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	id := r.PathValue("id")
+	name := strings.TrimSpace(r.PostFormValue("name"))
+	err := h.d.Accounts.RenameConnection(r.Context(), u.UserID, id, name)
+	switch {
+	case errors.Is(err, accounts.ErrBadName):
+		h.pageStatus(w, r, u, http.StatusBadRequest, func(v *connectionsView) {
+			v.Error = "Enter a name from 1 to 80 characters. The name was not changed."
+		})
+	case errors.Is(err, accounts.ErrNotFound):
+		http.NotFound(w, r)
+	case err != nil:
+		h.d.Cfg.Logger.Error("rename connection", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		http.Redirect(w, r, "/connections?renamed="+url.QueryEscape(id), http.StatusSeeOther)
+	}
+}
+
+func (h *connHandler) remove(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	id := r.PathValue("id")
+	err := h.d.Accounts.RemoveConnection(r.Context(), u.UserID, id)
+	switch {
+	case errors.Is(err, accounts.ErrConnectionActive):
+		h.pageStatus(w, r, u, http.StatusConflict, func(v *connectionsView) {
+			v.Error = "Revoke this connection before removing it. Nothing was removed."
+		})
+	case errors.Is(err, accounts.ErrNotFound):
+		http.NotFound(w, r)
+	case err != nil:
+		h.d.Cfg.Logger.Error("remove connection", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		http.Redirect(w, r, "/connections?removed="+url.QueryEscape(id), http.StatusSeeOther)
+	}
+}
+
+func (h *connHandler) unremove(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	err := h.d.Accounts.UnremoveConnection(r.Context(), u.UserID, r.PathValue("id"))
+	switch {
+	case errors.Is(err, accounts.ErrNotFound):
+		http.NotFound(w, r)
+	case err != nil:
+		h.d.Cfg.Logger.Error("unremove connection", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		http.Redirect(w, r, "/connections", http.StatusSeeOther)
+	}
 }

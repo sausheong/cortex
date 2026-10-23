@@ -44,9 +44,14 @@ type memoryRow struct {
 	New         bool   // written since the viewer's previous visit
 }
 
+type connOpt struct{ ID, Label string }
+
 type memoriesView struct {
-	Memories  []memoryRow
-	Conns     []accounts.Connection
+	Memories []memoryRow
+	Conns    []accounts.Connection
+	// ConnOpts feeds the "Written by" selects: removed connections appear
+	// only while they still have live memories.
+	ConnOpts  []connOpt
 	ConnNames map[string]string
 	Q, By     string
 	From, To  string
@@ -124,6 +129,12 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	v.ConnNames = map[string]string{}
 	for _, c := range conns {
 		v.ConnNames[c.ID] = c.Name
+		switch {
+		case c.RemovedAt == nil:
+			v.ConnOpts = append(v.ConnOpts, connOpt{c.ID, c.Name})
+		case c.Written > 0 || c.ID == v.By:
+			v.ConnOpts = append(v.ConnOpts, connOpt{c.ID, c.Name + " (removed)"})
+		}
 	}
 	now := s.now()
 	seen := s.lastVisit(w, r, now, v.Page == 1 && r.Method == http.MethodGet)

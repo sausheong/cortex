@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Connection is a way a client reaches a user's memory: an OAuth-authorized
@@ -20,6 +22,8 @@ type Connection struct {
 	LastUsed                                               *time.Time
 	Written                                                int
 	RevokedAt                                              *time.Time
+	// RemovedAt is set when the user hid the connection from their list.
+	RemovedAt *time.Time
 }
 
 // HashToken is the SHA-256 hex digest under which tokens are stored.
@@ -53,7 +57,7 @@ func (st *Store) createConnection(ctx context.Context, ex execer, userID, kind, 
 // ListConnections returns the user's connections (live and revoked), newest
 // first, with the count of memories each wrote.
 func (st *Store) ListConnections(ctx context.Context, userID string) ([]Connection, error) {
-	rows, err := st.DB.QueryContext(ctx, `SELECT c.id, c.user_id, c.kind, c.name, c.client_id, c.created_at, c.last_used, c.revoked_at,
+	rows, err := st.DB.QueryContext(ctx, `SELECT c.id, c.user_id, c.kind, c.name, c.client_id, c.created_at, c.last_used, c.revoked_at, c.removed_at,
 		(SELECT count(*) FROM memories m WHERE m.user_id = c.user_id AND m.written_by_connection_id = c.id AND m.deleted_at IS NULL)
 		FROM connections c WHERE c.user_id = $1 ORDER BY c.created_at DESC, c.id`, userID)
 	if err != nil {
@@ -63,8 +67,8 @@ func (st *Store) ListConnections(ctx context.Context, userID string) ([]Connecti
 	var out []Connection
 	for rows.Next() {
 		var c Connection
-		var lu, rv sql.NullTime
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Kind, &c.Name, &c.ClientID, &c.CreatedAt, &lu, &rv, &c.Written); err != nil {
+		var lu, rv, rm sql.NullTime
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Kind, &c.Name, &c.ClientID, &c.CreatedAt, &lu, &rv, &rm, &c.Written); err != nil {
 			return nil, err
 		}
 		if lu.Valid {
@@ -74,6 +78,10 @@ func (st *Store) ListConnections(ctx context.Context, userID string) ([]Connecti
 		if rv.Valid {
 			t := rv.Time
 			c.RevokedAt = &t
+		}
+		if rm.Valid {
+			t := rm.Time
+			c.RemovedAt = &t
 		}
 		out = append(out, c)
 	}
@@ -104,6 +112,60 @@ func (st *Store) RevokeConnection(ctx context.Context, userID, connID string) er
 		return err
 	}
 	return tx.Commit()
+}
+
+// ErrBadName means a connection name is empty or longer than 80 characters.
+var ErrBadName = errors.New("accounts: connection name must be 1-80 characters")
+
+// ErrConnectionActive means the connection must be revoked before removal.
+var ErrConnectionActive = errors.New("accounts: revoke the connection before removing it")
+
+// RenameConnection sets the display name of the user's own, non-removed
+// connection. A foreign, removed or absent ID returns ErrNotFound.
+func (st *Store) RenameConnection(ctx context.Context, userID, connID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > 80 {
+		return ErrBadName
+	}
+	res, err := st.DB.ExecContext(ctx, `UPDATE connections SET name = $3 WHERE id = $1 AND user_id = $2 AND removed_at IS NULL`, connID, userID, name)
+	if err != nil {
+		return fmt.Errorf("accounts: rename connection: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RemoveConnection hides a revoked connection from the user's list. Nothing
+// is deleted. An active connection returns ErrConnectionActive; a foreign or
+// absent ID returns ErrNotFound.
+func (st *Store) RemoveConnection(ctx context.Context, userID, connID string) error {
+	var revoked sql.NullTime
+	err := st.DB.QueryRowContext(ctx, `SELECT revoked_at FROM connections WHERE id = $1 AND user_id = $2`, connID, userID).Scan(&revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !revoked.Valid {
+		return ErrConnectionActive
+	}
+	_, err = st.DB.ExecContext(ctx, `UPDATE connections SET removed_at = COALESCE(removed_at, $3) WHERE id = $1 AND user_id = $2`, connID, userID, st.now())
+	return err
+}
+
+// UnremoveConnection undoes RemoveConnection. A foreign or absent ID returns ErrNotFound.
+func (st *Store) UnremoveConnection(ctx context.Context, userID, connID string) error {
+	res, err := st.DB.ExecContext(ctx, `UPDATE connections SET removed_at = NULL WHERE id = $1 AND user_id = $2`, connID, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CreateAgentToken creates an agent connection and returns its plaintext

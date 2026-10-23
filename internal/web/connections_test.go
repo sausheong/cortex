@@ -216,3 +216,143 @@ func TestAgo(t *testing.T) {
 		}
 	}
 }
+
+func TestRenameConnection(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	_, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "old-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "from the agent"}); err != nil {
+		t.Fatal(err)
+	}
+	csrf := e.connCSRF()
+	// No CSRF: refused.
+	if r, _ := e.post("/connections/"+conn.ID+"/rename", url.Values{"name": {"x"}}); r.StatusCode == http.StatusSeeOther {
+		t.Fatal("rename without csrf")
+	}
+	// Validation: empty, blank, too long. Name stays.
+	for _, bad := range []string{"", "   ", strings.Repeat("a", 81)} {
+		r, body := e.post("/connections/"+conn.ID+"/rename", url.Values{"csrf": {csrf}, "name": {bad}})
+		if r.StatusCode != http.StatusBadRequest || !strings.Contains(body, "1 to 80 characters") {
+			t.Fatalf("bad name %q: %d", bad, r.StatusCode)
+		}
+	}
+	// Trimmed on save.
+	r, _ := e.post("/connections/"+conn.ID+"/rename", url.Values{"csrf": {csrf}, "name": {"  new-name  "}})
+	if r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("rename: %d", r.StatusCode)
+	}
+	_, body := e.get(r.Header.Get("Location"))
+	if !strings.Contains(body, "Renamed to new-name.") || strings.Contains(body, "old-name") {
+		t.Fatalf("page after rename: %s", body)
+	}
+	_, mem := e.get("/memories")
+	if !strings.Contains(mem, "new-name") || strings.Contains(mem, "old-name") {
+		t.Fatalf("memories page does not show the new name: %s", mem)
+	}
+	// Absent id: 404.
+	if r, _ := e.post("/connections/c_absent/rename", url.Values{"csrf": {csrf}, "name": {"x"}}); r.StatusCode != 404 {
+		t.Fatalf("absent: %d", r.StatusCode)
+	}
+}
+
+func TestConnectionRenameRemoveIsolation(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent")
+	if err := e.st.RevokeConnection(t.Context(), ua.ID, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.newClient()
+	e.signIn(Identity{Sub: "g-bob", Email: "bob@x.test", Name: "Bob", EmailVerified: true}, "")
+	csrf := e.connCSRF()
+	_, absent := e.post("/connections/c_absent/rename", url.Values{"csrf": {csrf}, "name": {"x"}})
+	r1, foreign := e.post("/connections/"+conn.ID+"/rename", url.Values{"csrf": {csrf}, "name": {"hijack"}})
+	r2, _ := e.post("/connections/"+conn.ID+"/remove", url.Values{"csrf": {csrf}})
+	r3, _ := e.post("/connections/"+conn.ID+"/unremove", url.Values{"csrf": {csrf}})
+	if r1.StatusCode != 404 || r2.StatusCode != 404 || r3.StatusCode != 404 || foreign != absent {
+		t.Fatalf("foreign: %d %d %d", r1.StatusCode, r2.StatusCode, r3.StatusCode)
+	}
+	cs, _ := e.st.ListConnections(t.Context(), ua.ID)
+	if cs[0].Name != "alice-agent" || cs[0].RemovedAt != nil {
+		t.Fatalf("alice's connection changed: %+v", cs[0])
+	}
+}
+
+func TestRemoveConnection(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "gone-agent")
+	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "kept memory"}); err != nil {
+		t.Fatal(err)
+	}
+	csrf := e.connCSRF()
+	// Active: refused server-side.
+	r, body := e.post("/connections/"+conn.ID+"/remove", url.Values{"csrf": {csrf}})
+	if r.StatusCode != http.StatusConflict || !strings.Contains(body, "Revoke this connection before removing it") {
+		t.Fatalf("active remove: %d", r.StatusCode)
+	}
+	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
+		t.Fatal("token stopped working")
+	}
+	if _, page := e.get("/connections"); !strings.Contains(page, "gone-agent") || strings.Contains(page, "Remove from list") {
+		t.Fatal("active row offers remove or vanished")
+	}
+	// Revoke (keep), then remove.
+	if r, _ := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {csrf}, "choice": {"keep"}}); r.StatusCode != 303 {
+		t.Fatalf("revoke: %d", r.StatusCode)
+	}
+	if _, page := e.get("/connections"); !strings.Contains(page, "Remove from list") {
+		t.Fatal("revoked row lacks Remove")
+	}
+	r, _ = e.post("/connections/"+conn.ID+"/remove", url.Values{"csrf": {csrf}})
+	if r.StatusCode != 303 {
+		t.Fatalf("remove: %d", r.StatusCode)
+	}
+	_, page := e.get(r.Header.Get("Location"))
+	if !strings.Contains(page, "Removed gone-agent.") || !strings.Contains(page, "/unremove") {
+		t.Fatalf("no undo notice: %s", page)
+	}
+	_, page = e.get("/connections")
+	if strings.Contains(page, "gone-agent") {
+		t.Fatal("removed connection still listed")
+	}
+	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+		t.Fatal("removed connection's token still valid")
+	}
+	// Memories keep the label; filter lists it as removed while it has memories.
+	_, mem := e.get("/memories")
+	if !strings.Contains(mem, "gone-agent (removed)") || !strings.Contains(mem, "gone-agent") {
+		t.Fatalf("memories page: %s", mem)
+	}
+	// Undo restores it, still revoked.
+	if r, _ := e.post("/connections/"+conn.ID+"/unremove", url.Values{"csrf": {csrf}}); r.StatusCode != 303 {
+		t.Fatalf("unremove: %d", r.StatusCode)
+	}
+	_, page = e.get("/connections")
+	if !strings.Contains(page, "gone-agent") || !strings.Contains(page, "Revoked") {
+		t.Fatal("undo did not restore")
+	}
+	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+		t.Fatal("undo re-enabled token")
+	}
+}
+
+func TestRemovedConnectionWithoutMemoriesLeavesFilter(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "empty-agent")
+	_ = e.st.RevokeConnection(t.Context(), ua.ID, conn.ID)
+	if err := e.st.RemoveConnection(t.Context(), ua.ID, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, mem := e.get("/memories"); strings.Contains(mem, "empty-agent") {
+		t.Fatal("removed, memory-less connection still in filter")
+	}
+}

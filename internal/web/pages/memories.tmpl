@@ -23,7 +23,7 @@
     <label>Search <input name="q" type="search" value="{{.Q}}"></label>
     <label>Written by
       <select name="by"><option value="">Anyone</option>
-        {{range .Conns}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Name}}</option>{{end}}
+        {{range .ConnOpts}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
     <button class="btn-secondary" data-pending="Searching&hellip;">Search</button>
   </div>
@@ -67,7 +67,7 @@
     <h2>Delete by rule</h2>
     <label>Written by
       <select name="by"><option value="">Anyone</option>
-        {{range .Conns}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+        {{range .ConnOpts}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
       </select></label>
     <label>Older than (days) <input name="older_than" inputmode="numeric" aria-describedby="err-older"{{if eq .ErrField "older_than"}} aria-invalid="true"{{end}}></label>
     <p class="field-error" id="err-older" role="alert">{{if eq .ErrField "older_than"}}{{.Error}}{{end}}</p>
