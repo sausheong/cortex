@@ -4,6 +4,7 @@ package pages
 import (
 	"embed"
 	"html/template"
+	"net/url"
 	"strings"
 )
 
@@ -61,12 +62,24 @@ func within(path, href string) bool {
 	return path == href || strings.HasPrefix(path, href+"/")
 }
 
+// EscapePath percent-encodes each segment of a slash-separated path so names
+// containing ?, #, % or spaces survive inside an href.
+func EscapePath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, s := range parts {
+		parts[i] = url.PathEscape(s)
+	}
+	return strings.Join(parts, "/")
+}
+
+var funcs = template.FuncMap{"vpath": EscapePath}
+
 // Load parses every page template together with the layout, keyed by page
 // name ("signin", "home", "settings", "notice").
 func Load() map[string]*Template {
 	out := map[string]*Template{}
 	for _, n := range []string{"signin", "home", "settings", "notice", "consent", "connections", "memories", "graph", "deleted", "account", "compaction", "compaction_start", "confirm", "vault", "vault_page"} {
-		out[n] = template.Must(template.ParseFS(files, "layout.tmpl", n+".tmpl"))
+		out[n] = template.Must(template.New("layout.tmpl").Funcs(funcs).ParseFS(files, "layout.tmpl", n+".tmpl"))
 	}
 	return out
 }

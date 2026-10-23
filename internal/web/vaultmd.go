@@ -2,9 +2,10 @@ package web
 
 import (
 	"bytes"
+	"github.com/sausheong/cortex/internal/web/pages"
 	"html"
 	"html/template"
-	"net/url"
+
 	"regexp"
 	"strings"
 	"unicode"
@@ -63,13 +64,7 @@ func (p wikiParser) Parse(_ ast.Node, block text.Reader, _ parser.Context) ast.N
 	return n
 }
 
-func escapePath(p string) string {
-	parts := strings.Split(p, "/")
-	for i, s := range parts {
-		parts[i] = url.PathEscape(s)
-	}
-	return strings.Join(parts, "/")
-}
+func escapePath(p string) string { return pages.EscapePath(p) }
 
 type wikiRenderer struct{}
 

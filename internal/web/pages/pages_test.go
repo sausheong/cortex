@@ -77,3 +77,29 @@ func TestTemplatesInlineScriptsCarryNonce(t *testing.T) {
 		}
 	}
 }
+
+// Vault hrefs percent-encode each path segment, so a name with ?, # or %
+// still opens the right page.
+func TestVaultHrefsEscapePath(t *testing.T) {
+	const path = "people/a b?c#d%e.md"
+	const want = `/vault/people/a%20b%3Fc%23d%25e.md`
+	run := func(name string, data any) string {
+		var b strings.Builder
+		if err := Load()[name].Execute(&b, Page{Data: data, SignedIn: true}); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	list := run("vault", map[string]any{"Rows": []map[string]any{{"Path": path, "Name": "x"}}})
+	if !strings.Contains(list, `href="`+want+`"`) {
+		t.Errorf("list href not escaped: %s", list)
+	}
+	page := run("vault_page", map[string]any{"Path": path, "Title": "t",
+		"Backlinks": []map[string]any{{"Path": path, "Name": "n"}}})
+	if got := strings.Count(page, `href="`+want+`"`); got != 2 {
+		t.Errorf("page: %d escaped hrefs, want 2 (preview, backlink): %s", got, page)
+	}
+	if !strings.Contains(page, `href="`+want+`?view=source"`) {
+		t.Errorf("source href not escaped")
+	}
+}

@@ -3,7 +3,7 @@
 {{define "vaultrows"}}{{with .Data}}
 <p class="note vault-count" role="status" id="vault-count">{{if .Filtered}}{{.Total}} of {{.All}} files{{else}}{{.All}} files{{end}}{{if .FolderLabel}} &middot; {{.FolderLabel}}{{end}}</p>
 {{if .Rows}}<ul class="vault-files">
-{{range .Rows}}<li><a class="vf" href="/vault/{{.Path}}"><span class="vf-name">{{.Path}}</span>{{if ne .Name .Path}}<span class="vf-title">{{.Name}}</span>{{end}}</a>{{if .Ago}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</li>
+{{range .Rows}}<li><a class="vf" href="/vault/{{vpath .Path}}"><span class="vf-name">{{.Path}}</span>{{if ne .Name .Path}}<span class="vf-title">{{.Name}}</span>{{end}}</a>{{if .Ago}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</li>
 {{end}}</ul>{{else}}
 <div class="empty-state">{{if .Filtered}}<strong>No files match.</strong> <span class="note">Try a shorter name, or <a href="/vault">show every file</a>.</span>{{else}}<strong>The vault is empty.</strong> <span class="note">Pages appear here once an assistant has saved memories about people, organisations or topics.</span>{{end}}</div>{{end}}
 {{if or .Prev .Next}}<p class="pager" aria-label="Pages">{{if .Prev}}<a href="/vault?{{if .Query}}{{.Query}}&amp;{{end}}page={{.Prev}}">Previous</a>{{end}}

@@ -8,8 +8,8 @@
 <p class="note doc-meta"><code>{{.Path}}</code>{{if .Ago}} &middot; updated <time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</p>
 {{if or .GraphHref .MemoriesHref}}<p class="doc-links">{{if .GraphHref}}<a href="{{.GraphHref}}">See in graph</a>{{end}}{{if .MemoriesHref}}<a href="{{.MemoriesHref}}">See memories</a>{{end}}</p>{{end}}
 <nav class="subnav" aria-label="View">
-  <a href="/vault/{{.Path}}"{{if not .ShowSource}} aria-current="page"{{end}}>Preview</a>
-  <a href="/vault/{{.Path}}?view=source"{{if .ShowSource}} aria-current="page"{{end}}>View source</a>
+  <a href="/vault/{{vpath .Path}}"{{if not .ShowSource}} aria-current="page"{{end}}>Preview</a>
+  <a href="/vault/{{vpath .Path}}?view=source"{{if .ShowSource}} aria-current="page"{{end}}>View source</a>
 </nav>
 {{if .ShowSource}}
 <pre class="vault-source" tabindex="0" aria-label="Markdown source of {{.Path}}"><code>{{.Source}}</code></pre>
@@ -18,7 +18,7 @@
 <dl class="props">{{range .Props}}{{if .Value}}<div class="{{if .Nested}}nested{{end}}"><dt>{{.Key}}</dt><dd>{{.Value}}</dd></div>{{else}}<div class="group"><dt>{{.Key}}</dt><dd></dd></div>{{end}}{{end}}</dl></section>{{end}}
 <div class="prose">{{.Body}}</div>
 {{if .Backlinks}}<section class="backlinks" aria-labelledby="bl-h"><h2 id="bl-h">Backlinks</h2>
-<ul>{{range .Backlinks}}<li><a class="wikilink" href="/vault/{{.Path}}">{{.Name}}</a>{{if .Rel}} <span class="note">{{.Rel}}</span>{{end}}</li>{{end}}</ul></section>{{end}}
+<ul>{{range .Backlinks}}<li><a class="wikilink" href="/vault/{{vpath .Path}}">{{.Name}}</a>{{if .Rel}} <span class="note">{{.Rel}}</span>{{end}}</li>{{end}}</ul></section>{{end}}
 {{end}}
 </article>
 {{end}}
