@@ -70,6 +70,8 @@ type server struct {
 
 	authLimit *accounts.Limiter
 	testLimit *accounts.Limiter
+	zipLimit  *accounts.Limiter
+	vcache    vaultCache
 
 	// Seams for tests.
 	testProvider func(ctx context.Context, s accounts.Settings) error
@@ -128,6 +130,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /settings/job/{id}", s.auth(s.jobProgress))
 	s.mountMemories(mux)
 	s.mountGraph(mux)
+	s.mountVault(mux)
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(sub)))
 	if s.opts.MCP != nil {
@@ -143,7 +146,7 @@ func (s *server) handler() http.Handler {
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'; img-src 'self' data:")
 		h.Set("X-Frame-Options", "DENY")
 		next.ServeHTTP(w, r)
 	})
