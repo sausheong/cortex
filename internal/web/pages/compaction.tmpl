@@ -22,7 +22,7 @@
 <form method="post" action="/compaction/{{.ID}}/apply">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="toolbar">
-    <label class="js-only" style="margin:0"><input type="checkbox" id="select-all"> Select all {{len .Changes}}</label>
+    <label class="js-only check"><input type="checkbox" id="select-all"> Select all {{len .Changes}}</label>
     <span class="note" id="selected-count" aria-live="polite"></span>
   </div>
   <div id="changes" aria-describedby="err-select">

@@ -1,6 +1,7 @@
 {{template "layout" .}}
 {{define "title"}}Authorize{{end}}
 {{define "content"}}
+<div class="consent">
 <h1>{{.Data.ClientName}} wants to use your cortex</h1>
 <p class="note">Redirects to <strong>{{.Data.RedirectHost}}</strong>{{if .Data.CIMDHost}} &middot; app published by <strong>{{.Data.CIMDHost}}</strong>{{end}}{{if .Data.Unverified}} &middot; <strong>unverified</strong> app: it registered itself, so check that you trust the address above{{end}}.</p>
 <ul>
@@ -14,4 +15,5 @@
   <button class="btn" name="decision" value="allow">Allow</button>
   <button class="link" name="decision" value="deny">Deny</button>
 </form>
+</div>
 {{end}}

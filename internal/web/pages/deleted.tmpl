@@ -6,7 +6,7 @@
 <ul class="memlist">
 {{range .Batches}}
   <li><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time> · {{.Kind}} · {{.Memories}} memories, {{.Entities}} entities
-    <form method="post" action="/memories/restore/{{.ID}}" style="display:inline">
+    <form class="inline-form" method="post" action="/memories/restore/{{.ID}}">
       <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn-secondary">Restore</button></form></li>
 {{else}}<li class="note">Nothing to restore.</li>{{end}}
 </ul>
