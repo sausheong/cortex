@@ -1,0 +1,167 @@
+{{define "title"}}Graph{{end}}
+{{define "head"}}<script src="/static/d3-force.min.js" defer></script>
+<script src="/static/graph.js" defer></script>{{end}}
+{{define "content"}}
+{{with .Data}}
+<div class="graph-page">
+<h1>Graph</h1>
+<p class="lede">The people, organisations, projects and events your assistants have noted, and how they connect.</p>
+{{if .Undo}}
+<section class="notice" id="undo-notice" role="status">
+  {{if eq .Undo.Kind "merge"}}<p><strong>Merged{{if .Undo.Target}} into {{.Undo.Target}}{{end}}.</strong> You can undo this for 30 days.</p>
+  {{else}}<p><strong>Deleted the entity{{if .Undo.Rel}} and {{.Undo.Rel}} {{if eq .Undo.Rel 1}}relationship{{else}}relationships{{end}}{{end}}.</strong> You can restore {{if .Undo.Rel}}them{{else}}it{{end}} for 30 days.</p>{{end}}
+  <form method="post" action="/graph/restore/{{.Undo.BatchID}}" class="actions">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="entity" value="{{.Undo.EntityID}}">
+    <button class="btn" data-pending="Undoing&hellip;">Undo {{if eq .Undo.Kind "merge"}}merge{{else}}delete{{end}}</button>
+    <a href="/memories/deleted">Recently deleted</a>
+  </form>
+</section>
+{{end}}
+{{if .Restored}}<p class="notice" role="status">{{if eq .Restored "merge"}}Merge undone. Both entities are back with their relationships.{{else}}Restored the entity with its relationships.{{end}}</p>{{end}}
+{{if .Renamed}}<p class="notice" role="status">Renamed.</p>{{end}}
+{{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+
+<form method="get" action="/graph" class="graph-search" role="search">
+  <label for="graph-q">Find an entity by name</label>
+  <div class="graph-search-row">
+    <input id="graph-q" name="q" type="search" value="{{.Q}}" autocomplete="off">
+    <button class="btn-secondary" data-pending="Searching&hellip;">Search</button>
+  </div>
+</form>
+{{if .Searched}}
+<section class="graph-results" aria-labelledby="results-h">
+  <h2 id="results-h">{{if .Results}}{{len .Results}} {{if eq (len .Results) 1}}match{{else}}matches{{end}} for &ldquo;{{.Q}}&rdquo;{{else}}Nothing matches &ldquo;{{.Q}}&rdquo;{{end}}</h2>
+  {{if .Results}}<ul class="entlist">{{range .Results}}
+    <li><a href="{{.Href}}">{{.Shape}}<span class="ent-name">{{.Name}}</span> <span class="note">{{.TypeLabel}}</span></a></li>{{end}}</ul>
+  {{else}}<p class="note">Try fewer letters. Search looks for the text anywhere in an entity&rsquo;s name.</p>{{end}}
+</section>
+{{end}}
+
+{{if .Empty}}
+<p class="empty-state"><strong>Nothing in your graph yet.</strong>
+  <span class="note">People, organisations and projects appear here once an assistant saves memories that mention them. <a href="/connections">Connect an assistant</a> to get started.</span></p>
+{{else}}
+<details class="more graph-filters"{{if .Filtered}} open{{end}}>
+  <summary>Filters{{if .Filtered}} (on){{end}}</summary>
+  <form method="get" action="/graph" class="graph-filter-form">
+    {{if .CenterID}}<input type="hidden" name="center" value="{{.CenterID}}">{{end}}
+    <fieldset>
+      <legend>Show these types</legend>
+      <div class="typeopts">{{range .Types}}
+        <label class="check"><input type="checkbox" name="types" value="{{.Value}}"{{if .On}} checked{{end}}>{{.Shape}}{{.Label}}</label>{{end}}</div>
+    </fieldset>
+    <div class="graph-selects">
+      <label for="g-days">Mentioned in the last
+        <select id="g-days" name="days">
+          <option value="">Any time</option>
+          {{range $d := .DayChoices}}<option value="{{$d}}"{{if eq $d $.Data.Days}} selected{{end}}>{{$d}} days</option>{{end}}
+        </select></label>
+      <label for="g-limit">Show up to
+        <select id="g-limit" name="limit">{{range .Limits}}<option value="{{.}}"{{if eq . $.Data.Limit}} selected{{end}}>{{.}} entities</option>{{end}}</select></label>
+    </div>
+    <div class="actions"><button class="btn-secondary" data-pending="Applying&hellip;">Apply filters</button>
+      {{if .Filtered}}<a href="/graph{{if .CenterID}}?center={{.CenterID}}{{end}}">Clear filters</a>{{end}}</div>
+  </form>
+</details>
+
+{{if .CenterID}}
+<div class="graph-layout">
+  <section class="graph-stage" aria-labelledby="stage-h">
+    <h2 id="stage-h" class="sr-only">Map of {{.Panel.Name}} and nearby entities</h2>
+    <div class="graph-canvas" id="graph-canvas" data-src="{{.DataURL}}"></div>
+    <p class="note js-only graph-hint">Select a shape to move the map to it. The list below holds the same entities.</p>
+    <ul class="legend" aria-label="Shapes by type">{{range .Legend}}<li>{{.Shape}}{{.Label}}</li>{{end}}</ul>
+  </section>
+
+  {{with .Panel}}
+  <aside class="graph-panel" aria-labelledby="panel-h">
+    <h2 id="panel-h">{{.Name}}</h2>
+    <p class="panel-type">{{.Shape}}<span>{{.TypeLabel}}</span>{{if .IsOwner}} <span class="note">&middot; This is you</span>{{end}}</p>
+    <dl class="facts">
+      <div><dt>Mentioned in</dt><dd>{{.Mentions}} {{if eq .Mentions 1}}memory{{else}}memories{{end}}</dd></div>
+      <div><dt>Relationships</dt><dd>{{.RelTotal}}</dd></div>
+      {{range .Attrs}}<div><dt>{{.K}}</dt><dd>{{.V}}</dd></div>{{end}}
+    </dl>
+
+    <h3>Relationships</h3>
+    {{if .Relations}}<ul class="rels">{{range .Relations}}
+      <li>{{if .Outgoing}}<span class="rel-self">{{$.Data.Panel.Name}}</span> <span class="rel-label">{{.Label}}</span> <a href="{{.Href}}">{{.OtherName}}</a>{{else}}<a href="{{.Href}}">{{.OtherName}}</a> <span class="rel-label">{{.Label}}</span> <span class="rel-self">{{$.Data.Panel.Name}}</span>{{end}}
+        <span class="note">&middot; {{.OtherType}}</span></li>{{end}}</ul>
+      {{if gt .RelTotal (len .Relations)}}<p class="note">Showing the {{len .Relations}} newest of {{.RelTotal}}.</p>{{end}}
+    {{else}}<p class="note">No relationships yet.</p>{{end}}
+
+    <h3>Memories that mention it</h3>
+    {{if .Memories}}<ul class="mentions">{{range .Memories}}
+      <li><a href="{{$.Data.Panel.MemHref}}" class="mention-text">{{.Text}}</a> <time class="note" datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></li>{{end}}</ul>
+      {{if gt .Mentions (len .Memories)}}<p><a href="{{.MemHref}}">See all {{.Mentions}} in Memories</a></p>{{end}}
+    {{else}}<p class="note">No memory mentions it right now.</p>{{end}}
+
+    <h3>Edit</h3>
+    <details class="rename"{{if or (eq $.Data.ErrField "rename") $.Data.Offer}} open{{end}}>
+      <summary>Rename</summary>
+      <form class="rename-panel graph-edit" method="post" action="/graph/rename" autocomplete="off">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+        <label for="rename-name">New name
+          <input id="rename-name" name="name" value="{{if $.Data.RenameVal}}{{$.Data.RenameVal}}{{else}}{{.Name}}{{end}}" required maxlength="200" aria-describedby="rename-err"{{if eq $.Data.ErrField "rename"}} aria-invalid="true"{{end}}></label>
+        <button class="btn" data-pending="Saving&hellip;">Save name</button>
+        <p class="field-error" id="rename-err" role="alert">{{if eq $.Data.ErrField "rename"}}{{$.Data.Error}}{{end}}</p>
+      </form>
+      {{with $.Data.Offer}}
+      <div class="notice" role="status">
+        <p><strong>Merge instead?</strong> Merging {{.Name}} into the existing {{.TargetName}} keeps one entity and moves everything linked to {{.Name}} onto it. You review the counts first and can undo for 30 days.</p>
+        <form method="post" action="/graph/merge" class="actions">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="keep" value="{{.TargetID}}"><input type="hidden" name="drop" value="{{$.Data.Panel.ID}}">
+          <button class="btn-secondary">Review merge&hellip;</button>
+        </form>
+      </div>
+      {{end}}
+    </details>
+
+    <details class="rename"{{if or $.Data.MergeSearched (eq $.Data.ErrField "merge")}} open{{end}}>
+      <summary>Merge into another</summary>
+      {{if .IsOwner}}<p class="note graph-edit">This entity is you, so it cannot be merged into another one. To combine a duplicate with it, open the duplicate and merge it into {{.Name}}.</p>
+      {{else}}
+      {{if eq $.Data.ErrField "merge"}}<p class="error" role="alert"><strong>{{$.Data.Error}}</strong></p>{{end}}
+      <form class="rename-panel graph-edit" method="get" action="/graph">
+        <input type="hidden" name="center" value="{{.ID}}">
+        <label for="merge-q">Find the {{.TypeLabel}} to keep
+          <input id="merge-q" name="mergeq" type="search" value="{{$.Data.MergeQ}}" autocomplete="off" required></label>
+        <button class="btn-secondary" data-pending="Searching&hellip;">Search</button>
+      </form>
+      {{if $.Data.MergeSearched}}
+        {{if $.Data.MergeResults}}<ul class="entlist graph-edit">{{range $.Data.MergeResults}}
+          <li><form method="post" action="/graph/merge" class="inline-form merge-row">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="keep" value="{{.ID}}"><input type="hidden" name="drop" value="{{$.Data.Panel.ID}}">
+            <span class="ent-name">{{.Name}}</span> <button class="btn-secondary" aria-label="Merge {{$.Data.Panel.Name}} into {{.Name}}">Merge into this&hellip;</button></form></li>{{end}}</ul>
+        {{else}}<p class="note graph-edit">No other {{.TypeLabel}} matches. Only entities of the same type can be merged.</p>{{end}}
+      {{end}}
+      {{end}}
+    </details>
+
+    {{if .IsOwner}}<p class="note graph-edit">This entity is you, so it cannot be deleted.</p>
+    {{else}}
+    <form method="post" action="/graph/delete" class="graph-delete">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+      {{if eq $.Data.ErrField "delete"}}<p class="error" role="alert"><strong>{{$.Data.Error}}</strong></p>{{end}}
+      <button class="btn-danger-quiet">Delete {{.Name}}&hellip;</button>
+      <p class="note">You confirm on the next screen. You can restore it for 30 days.</p>
+    </form>
+    {{end}}
+  </aside>
+  {{end}}
+
+  <section class="graph-list" aria-labelledby="near-h">
+    <h2 id="near-h">Near {{.Panel.Name}}</h2>
+    <p class="note">{{if .Nodes}}Showing {{len .Nodes}} of the closest entities{{if .Truncated}}; more exist than fit, so these are the ones with the most relationships and the newest links{{end}}. Choose one to centre the map on it.{{else}}{{if .Filtered}}Nothing near it matches your filters.{{else}}It has no relationships yet.{{end}}{{end}}</p>
+    {{if .Nodes}}<ul class="entlist" id="node-list">{{range .Nodes}}
+      <li><a href="{{.Href}}" data-node="{{.ID}}">{{.Shape}}<span class="ent-name">{{.Name}}</span> <span class="note">{{.TypeLabel}} &middot; {{.Rels}} {{if eq .Rels 1}}relationship{{else}}relationships{{end}} with {{$.Data.Panel.Name}}</span></a></li>{{end}}</ul>{{end}}
+    {{if and .Filtered (not .Nodes)}}<p><a href="/graph?center={{.CenterID}}">Clear filters</a></p>{{end}}
+  </section>
+</div>
+{{else}}<p class="note">Search for an entity above to see how it connects.</p>
+{{end}}
+{{end}}
+</div>
+{{end}}
+{{end}}

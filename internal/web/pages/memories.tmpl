@@ -18,7 +18,9 @@
 {{end}}
 {{if .WasRestored}}<p class="notice" role="status">{{if .Restored}}Restored {{.Restored}} {{if eq .Restored 1}}memory{{else}}memories{{end}}.{{else}}Restored.{{end}}</p>{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+{{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}an entity that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}</p>{{end}}
 <form method="get" action="/memories" class="search">
+  {{if .Entity}}<input type="hidden" name="entity" value="{{.Entity}}">{{end}}
   <div class="search-row">
     <label>Search <input name="q" type="search" value="{{.Q}}"></label>
     <label>Written by

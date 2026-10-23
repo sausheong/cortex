@@ -54,12 +54,15 @@ type memoriesView struct {
 	ConnOpts  []connOpt
 	ConnNames map[string]string
 	Q, By     string
-	From, To  string
-	Total     int
-	Page      int
-	PrevPage  int
-	NextPage  int
-	Query     string // url-encoded filters for paging links
+	// Entity limits the list to memories that mention one entity; EntityName
+	// is its name, empty when it is not the viewer's.
+	Entity, EntityName string
+	From, To           string
+	Total              int
+	Page               int
+	PrevPage           int
+	NextPage           int
+	Query              string // url-encoded filters for paging links
 	// Error is shown next to the control named by ErrField
 	// ("ids", "older_than", "match", "").
 	Error, ErrField string
@@ -97,7 +100,8 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	if n, err := strconv.Atoi(q.Get("restored")); err == nil {
 		v.WasRestored, v.Restored = true, n
 	}
-	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, From: parseDay(v.From)}
+	v.Entity = strings.TrimSpace(q.Get("entity"))
+	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, EntityID: v.Entity, From: parseDay(v.From)}
 	if t := parseDay(v.To); t != nil {
 		end := t.AddDate(0, 0, 1)
 		f.To = &end
@@ -126,6 +130,11 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	v.Total, v.Conns = total, conns
+	if v.Entity != "" {
+		if e, err := cx.GetEntity(ctx, v.Entity); err == nil {
+			v.EntityName = e.Name
+		}
+	}
 	v.ConnNames = map[string]string{}
 	for _, c := range conns {
 		v.ConnNames[c.ID] = c.Name
@@ -143,7 +152,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 			Ago: relTime(now, m.CreatedAt), Abs: absTime(m.CreatedAt), ISO: m.CreatedAt.UTC().Format(time.RFC3339),
 			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
 	}
-	v.HasMore = v.Q != "" || v.By != "" || v.From != "" || v.To != ""
+	v.HasMore = v.Entity != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
 	if v.Page > 1 {
 		v.PrevPage = v.Page - 1
 	}
@@ -157,6 +166,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	add("q", v.Q)
+	add("entity", v.Entity)
 	add("by", v.By)
 	add("from", v.From)
 	add("to", v.To)
@@ -328,6 +338,8 @@ func deletedKind(k string) string {
 		return "Revoked connection"
 	case "compaction":
 		return "Compaction"
+	case "merge":
+		return "Merged entities"
 	case "forget", "entity":
 		return "Forgotten item"
 	}
