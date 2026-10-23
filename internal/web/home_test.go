@@ -66,7 +66,7 @@ func TestHomeSignedInRendersHomeWithNav(t *testing.T) {
 	if r.StatusCode != 200 {
 		t.Fatalf("status %d", r.StatusCode)
 	}
-	for _, want := range []string{"<h1>Home</h1>", `href="/" aria-current="page">Home`, "About you", "Assistants", "Health", "Recently deleted"} {
+	for _, want := range []string{"<h1>Home</h1>", `href="/" aria-current="page">Home`, "Assistants", "Health", "Recently deleted"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -84,9 +84,13 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	_, body := e.get("/")
-	set, about := strings.Index(body, "Get started"), strings.Index(body, "About you")
-	if set < 0 || about < 0 || set > about {
-		t.Fatalf("checklist should lead: setup=%d about=%d", set, about)
+	if !strings.Contains(body, "Get started") || strings.Index(body, "Get started") > strings.Index(body, "Assistants") {
+		t.Fatal("checklist should lead")
+	}
+	for _, hidden := range []string{"About you", "Nightly maintenance", "Has not run yet", `class="home-strip"`} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("first run should hide %q", hidden)
+		}
 	}
 	for _, want := range []string{"No assistants are connected yet", "Nothing yet. Memories your assistants save", "Not set up yet.", "Nothing waiting to be restored."} {
 		if !strings.Contains(body, want) {
@@ -98,9 +102,15 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	e.setProvider(ua.ID)
 	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
 	e.write(ua.ID, conn.ID, "likes tea")
+	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
 	_, body = e.get("/")
 	if strings.Contains(body, "Get started") {
 		t.Fatal("checklist still shown when setup is complete")
+	}
+	for _, want := range []string{"About you", "Nightly maintenance", `class="home-strip"`, "1 assistant active"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("complete setup should show %q", want)
+		}
 	}
 }
 
@@ -122,15 +132,18 @@ func TestHomeNewSinceGroupsAndLinks(t *testing.T) {
 	if !strings.Contains(body, "New since your last visit") {
 		t.Fatalf("heading: %s", body)
 	}
+	if !strings.Contains(body, "5 new memories since your last visit") {
+		t.Fatalf("strip total: %s", body)
+	}
 	if !strings.Contains(body, "ChatGPT &middot; 4 new") {
 		t.Fatalf("ChatGPT group missing: %s", body)
 	}
 	if !strings.Contains(body, "Claude &middot; 1 new") {
 		t.Fatal("Claude group missing")
 	}
-	// At most 3 lines per group.
-	if n := strings.Count(body, "chat says"); n != 3 {
-		t.Fatalf("lines for ChatGPT = %d, want 3", n)
+	// One line per group: the newest item.
+	if n := strings.Count(body, "chat says"); n != 1 {
+		t.Fatalf("lines for ChatGPT = %d, want 1", n)
 	}
 	since := e.now.Add(-time.Hour).Truncate(time.Second).UTC().Format(time.RFC3339)
 	want := `href="/memories?by=` + chat.ID + `&amp;since=` + url.QueryEscape(since) + `&amp;sort=newest"`
@@ -143,7 +156,7 @@ func TestHomeNewSinceGroupsAndLinks(t *testing.T) {
 }
 
 // The Memories page behind a "N new" link shows exactly N memories, including
-// ones written earlier the same day, and "Added directly" links to by=none.
+// ones written earlier the same day, and "Added by you or imported" links to by=none.
 func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
@@ -165,7 +178,7 @@ func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, body := e.get("/")
-	hrefs := regexp.MustCompile(`<h3 class="group-head"><a href="([^"]+)">([^<]*)`).FindAllStringSubmatch(body, -1)
+	hrefs := regexp.MustCompile(`<strong class="row-name"><a href="(/memories\?[^"]+)">([^<]*)`).FindAllStringSubmatch(body, -1)
 	if len(hrefs) != 2 {
 		t.Fatalf("want 2 groups, got %v in %s", hrefs, body)
 	}
@@ -180,8 +193,8 @@ func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
 		if strings.Contains(page, "old chat note") || strings.Contains(page, "old direct note") {
 			t.Errorf("%s: lists memories from before the visit", link)
 		}
-		if strings.HasPrefix(h[2], "Added directly") && !strings.Contains(link, "by=none") {
-			t.Errorf("Added directly must link with by=none: %s", link)
+		if strings.HasPrefix(h[2], "Added by you or imported") && !strings.Contains(link, "by=none") {
+			t.Errorf("Added by you or imported must link with by=none: %s", link)
 		}
 	}
 }
@@ -261,6 +274,8 @@ func TestHomeHealthRows(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	e.write(ua.ID, conn.ID, "seed")
 	_, body := e.get("/")
 	for _, want := range []string{"Has not run yet", "Configured with gpt-test", "Measured overnight."} {
 		if !strings.Contains(body, want) {
@@ -316,6 +331,7 @@ func TestHomeProfileFromCacheOnly(t *testing.T) {
 	if err := cx.PutMemory(t.Context(), &cortex.Memory{Content: "Alice likes tea", Static: true, EntityIDs: []string{owner}}); err != nil {
 		t.Fatal(err)
 	}
+	e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
 	// Not built yet: plain line, link kept.
 	_, body := e.get("/")
 	if !strings.Contains(body, "builds overnight") || !strings.Contains(body, `href="/graph"`) {

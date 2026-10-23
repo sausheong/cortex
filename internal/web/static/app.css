@@ -312,6 +312,8 @@ details.fold[open]>summary{margin-bottom:var(--s1)}
 /* Home: quiet sections divided by hairlines, plain rows, no tiles. */
 .home-section{margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--line)}
 .setup+.home-section,.lede+.home-section{margin-top:var(--s5)}
+.home-strip{margin:var(--s4) 0 0;font-size:var(--text-lg);line-height:1.4;max-width:var(--measure)}
+.home-strip span[aria-hidden]{color:var(--muted)}
 .home-section p{margin:0 0 var(--s2)}
 .home-bullets{margin:0 0 var(--s2);padding-left:var(--s5);max-width:var(--measure)}
 .home-bullets li+li{margin-top:var(--s1)}

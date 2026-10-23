@@ -23,7 +23,7 @@ import (
 
 const (
 	homeProfileLines = 5
-	homeNewPerGroup  = 3
+	homeNewPerGroup  = 1
 	homeFallbackDays = 7
 	homeIdleDays     = 30
 	homeQuoteRunes   = 140
@@ -52,6 +52,8 @@ type homeNew struct {
 	Heading string
 	Empty   string // set when there is nothing to list
 	Groups  []homeGroup
+	Total   int    // memories across all groups
+	Window  string // "since your last visit" or "in the last 7 days"
 }
 
 type homeAssistant struct {
@@ -70,6 +72,7 @@ type homeHealth struct {
 	// Maintenance
 	MaintState string // "none" | "ok" | "partial" | "failed"
 	MaintText  string
+	MaintShort string // "ran 3 hours ago", for the status strip
 	// Provider
 	ProviderOK   bool
 	ProviderText string
@@ -81,6 +84,7 @@ type homeHealth struct {
 }
 
 type homeView struct {
+	Strip      []string
 	Profile    homeProfile
 	New        homeNew
 	Assistants homeAssistants
@@ -144,7 +148,38 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	v.New = s.homeNew(ctx, cx, conns, connErr, prev, now)
 	v.Assistants = s.homeAssistants(ctx, cx, conns, connErr, now)
 	v.Health = s.homeHealth(ctx, cx, u.UserID, now)
+	v.Strip = homeStrip(v)
 	s.render(w, r, http.StatusOK, "home", v)
+}
+
+// homeStrip is the glance line: a few plain clauses, each left out when its
+// data could not be read or does not exist yet.
+func homeStrip(v homeView) []string {
+	var parts []string
+	if !v.Assistants.Err && len(v.Assistants.Rows) > 0 {
+		active := 0
+		for _, a := range v.Assistants.Rows {
+			if a.Flag == "" {
+				active++
+			}
+		}
+		if active == 0 {
+			parts = append(parts, "No assistants active")
+		} else {
+			parts = append(parts, plural(active, "assistant", "assistants")+" active")
+		}
+	}
+	if !v.New.Err {
+		if v.New.Total == 0 {
+			parts = append(parts, "Nothing new "+v.New.Window)
+		} else {
+			parts = append(parts, plural(v.New.Total, "new memory", "new memories")+" "+v.New.Window)
+		}
+	}
+	if v.Health.MaintShort != "" {
+		parts = append(parts, "Last maintenance "+v.Health.MaintShort)
+	}
+	return parts
 }
 
 func (s *server) homeProfile(ctx context.Context, cx *cortex.Cortex) homeProfile {
@@ -179,7 +214,7 @@ func quote(s string) string {
 
 func connLabel(byID map[string]accounts.Connection, id string) string {
 	if id == "" {
-		return "Added directly"
+		return "Added by you or imported"
 	}
 	c, ok := byID[id]
 	if !ok {
@@ -192,10 +227,11 @@ func connLabel(byID map[string]accounts.Connection, id string) string {
 }
 
 func (s *server) homeNew(ctx context.Context, cx *cortex.Cortex, conns []accounts.Connection, connErr error, prev, now time.Time) homeNew {
-	h := homeNew{Heading: "New since your last visit"}
+	h := homeNew{Heading: "New since your last visit", Window: "since your last visit"}
 	since := prev
 	if prev.IsZero() {
 		h.Heading = "Recently added"
+		h.Window = "in the last 7 days"
 		since = now.AddDate(0, 0, -homeFallbackDays)
 	}
 	// Whole seconds, so the Memories page behind each link (which takes an
@@ -226,6 +262,7 @@ func (s *server) homeNew(ctx context.Context, cx *cortex.Cortex, conns []account
 	}
 	stamp := since.UTC().Format(time.RFC3339)
 	for _, g := range groups {
+		h.Total += g.Count
 		hg := homeGroup{Name: connLabel(byID, g.ConnectionID), Count: g.Count}
 		q := url.Values{}
 		q.Set("by", cmp.Or(g.ConnectionID, cortex.NoConnection))
@@ -316,14 +353,17 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 			h.MaintText = "Has not run yet. It runs overnight once your AI provider is set up."
 		case merr == nil || *merr == "":
 			h.MaintState = "ok"
+			h.MaintShort = "ran " + relTime(now, *at)
 			h.MaintText = "Ran " + relTime(now, *at) + ". Everything went through."
 		case strings.HasPrefix(*merr, "maintenance completed;"):
 			h.MaintState = "partial"
 			var n int
 			_, _ = fmt.Sscanf(*merr, "maintenance completed; %d item(s) skipped", &n)
+			h.MaintShort = "ran " + relTime(now, *at) + ", some items skipped"
 			h.MaintText = "Ran " + relTime(now, *at) + ". " + plural(n, "item was", "items were") + " skipped after provider errors and will be retried tonight."
 		default:
 			h.MaintState = "failed"
+			h.MaintShort = "failed " + relTime(now, *at)
 			h.MaintText = "Failed " + relTime(now, *at) + ": " + *merr + "."
 		}
 	}
