@@ -11,6 +11,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/web/pages"
 )
 
 const (
@@ -125,11 +126,7 @@ func parseSize(v string) int {
 
 // fmtInt groups thousands: 1274 -> "1,274".
 func fmtInt(n int) string {
-	s := strconv.Itoa(n)
-	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
-	}
-	return s
+	return pages.FmtInt(n)
 }
 
 // tzOffset reads the browser-sent offset (minutes, as Date.getTimezoneOffset:

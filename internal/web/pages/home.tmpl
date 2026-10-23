@@ -32,7 +32,7 @@
   {{else}}
   <ul class="home-groups">
     {{range .New.Groups}}<li>
-      <h3 class="group-head"><a href="{{.Href}}">{{.Name}} &middot; {{.Count}} new</a></h3>
+      <h3 class="group-head"><a href="{{.Href}}">{{.Name}} &middot; {{n .Count}} new</a></h3>
       <ul class="home-lines">
         {{range .Items}}<li><span class="line-text">{{.Text}}</span> <time class="note" datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></li>{{end}}
       </ul>

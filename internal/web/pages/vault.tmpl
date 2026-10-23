@@ -1,7 +1,7 @@
 {{template "layout" .}}
 {{define "title"}}Vault{{end}}
 {{define "vaultrows"}}{{with .Data}}
-<p class="note vault-count" role="status" id="vault-count">{{if .Filtered}}{{.Total}} of {{.All}} files{{else}}{{.All}} files{{end}}{{if .FolderLabel}} &middot; {{.FolderLabel}}{{end}}</p>
+<p class="note vault-count" role="status" id="vault-count">{{if .Filtered}}{{n .Total}} of {{n .All}} files{{else}}{{n .All}} files{{end}}{{if .FolderLabel}} &middot; {{.FolderLabel}}{{end}}</p>
 {{if .Rows}}<ul class="vault-files">
 {{range .Rows}}<li><a class="vf" href="/vault/{{vpath .Path}}"><span class="vf-name">{{.Path}}</span>{{if ne .Name .Path}}<span class="vf-title">{{.Name}}</span>{{end}}</a>{{if .Ago}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</li>
 {{end}}</ul>{{else}}
@@ -25,9 +25,9 @@
     </form>
     <nav aria-label="Vault folders" class="vault-folders">
       <ul>
-        <li><a href="/vault{{if .Q}}?q={{.Q | urlquery}}{{end}}"{{if not .Folder}} aria-current="page"{{end}}>All files <span class="count">{{.All}}</span></a></li>
+        <li><a href="/vault{{if .Q}}?q={{.Q | urlquery}}{{end}}"{{if not .Folder}} aria-current="page"{{end}}>All files <span class="count">{{n .All}}</span></a></li>
         <li><a href="/vault?folder=index{{if .Q}}&amp;q={{.Q | urlquery}}{{end}}"{{if eq .Folder "index"}} aria-current="page"{{end}}>Index <span class="count">1</span></a></li>
-        {{range .Folders}}<li><a href="/vault?folder={{.Key}}{{if $.Data.Q}}&amp;q={{$.Data.Q | urlquery}}{{end}}"{{if eq .Key $.Data.Folder}} aria-current="page"{{end}}>{{.Label}} <span class="count">{{.Count}}</span></a></li>
+        {{range .Folders}}<li><a href="/vault?folder={{.Key}}{{if $.Data.Q}}&amp;q={{$.Data.Q | urlquery}}{{end}}"{{if eq .Key $.Data.Folder}} aria-current="page"{{end}}>{{.Label}} <span class="count">{{n .Count}}</span></a></li>
         {{end}}
       </ul>
     </nav>

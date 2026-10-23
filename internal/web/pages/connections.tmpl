@@ -33,7 +33,7 @@
       <div class="actions">
         <button class="btn-danger-quiet" name="choice" value="keep">Revoke, keep what it wrote</button>
         {{if .DeleteCount}}<input type="hidden" name="confirm_count" value="{{.DeleteCount}}">
-        <button class="btn-danger" name="choice" value="delete">Revoke and delete {{.DeleteCount}} {{if eq .DeleteCount 1}}item{{else}}items{{end}} it wrote</button>{{end}}
+        <button class="btn-danger" name="choice" value="delete">Revoke and delete {{n .DeleteCount}} {{if eq .DeleteCount 1}}item{{else}}items{{end}} it wrote</button>{{end}}
       </div>
       {{if .DeleteCount}}<p class="note">Deleted items can be restored for 30 days.</p>{{else}}<p class="note">It has not written anything, so there is nothing to delete.</p>{{end}}
       <p class="note">After revoking, you can remove it from this list.</p>

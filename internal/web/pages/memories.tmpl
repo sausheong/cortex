@@ -7,7 +7,7 @@
 {{template "setup" $}}
 {{if .Undo}}
 <section class="notice" id="undo-notice" role="status">
-  <p><strong>Deleted {{.Undo.Count}} {{if eq .Undo.Count 1}}memory{{else}}memories{{end}}.</strong> You can restore {{if eq .Undo.Count 1}}it{{else}}them{{end}} for 30 days.</p>
+  <p><strong>Deleted {{n .Undo.Count}} {{if eq .Undo.Count 1}}memory{{else}}memories{{end}}.</strong> You can restore {{if eq .Undo.Count 1}}it{{else}}them{{end}} for 30 days.</p>
   <form method="post" action="/memories/restore/{{.Undo.BatchID}}" class="actions">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <input type="hidden" name="next" value="{{.Undo.Next}}">
@@ -102,7 +102,7 @@
     <input type="hidden" name="view" value="{{.ViewQuery}}">
     <input type="hidden" name="all" value="1">
     <h2>Delete everything</h2>
-    <p class="note">Clears all {{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}. You type a phrase to confirm.</p>
+    <p class="note">Clears all {{n .Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}. You type a phrase to confirm.</p>
     <button class="btn-danger-quiet">Delete all memories&hellip;</button>
   </form>
 </details>

@@ -31,7 +31,7 @@
 </form>
 {{if .Searched}}
 <section class="graph-results" aria-labelledby="results-h">
-  <h2 id="results-h">{{if .Results}}{{len .Results}} {{if eq (len .Results) 1}}match{{else}}matches{{end}} for &ldquo;{{.Q}}&rdquo;{{else}}Nothing matches &ldquo;{{.Q}}&rdquo;{{end}}</h2>
+  <h2 id="results-h">{{if .Results}}{{n (len .Results)}} {{if eq (len .Results) 1}}match{{else}}matches{{end}} for &ldquo;{{.Q}}&rdquo;{{else}}Nothing matches &ldquo;{{.Q}}&rdquo;{{end}}</h2>
   {{if .Results}}<ul class="entlist">{{range .Results}}
     <li><a href="{{.Href}}">{{.Shape}}<span class="ent-name">{{.Name}}</span> <span class="note">{{.TypeLabel}}</span></a></li>{{end}}</ul>
   {{else}}<p class="note">Try fewer letters. Search looks for the text anywhere in an entity&rsquo;s name.</p>{{end}}
@@ -79,8 +79,8 @@
     <h2 id="panel-h">{{.Name}}</h2>
     <p class="panel-type">{{.Shape}}<span>{{.TypeLabel}}</span>{{if .IsOwner}} <span class="note">&middot; This is you</span>{{end}}</p>
     <dl class="facts">
-      <div><dt>Mentioned in</dt><dd>{{.Mentions}} {{if eq .Mentions 1}}memory{{else}}memories{{end}}</dd></div>
-      <div><dt>Relationships</dt><dd>{{.RelTotal}}</dd></div>
+      <div><dt>Mentioned in</dt><dd>{{n .Mentions}} {{if eq .Mentions 1}}memory{{else}}memories{{end}}</dd></div>
+      <div><dt>Relationships</dt><dd>{{n .RelTotal}}</dd></div>
       {{range .Attrs}}<div><dt>{{.K}}</dt><dd>{{.V}}</dd></div>{{end}}
     </dl>
 
@@ -88,13 +88,13 @@
     {{if .Relations}}<ul class="rels">{{range .Relations}}
       <li>{{if .Outgoing}}<span class="rel-self">{{$.Data.Panel.Name}}</span> <span class="rel-label">{{.Label}}</span> <a href="{{.Href}}">{{.OtherName}}</a>{{else}}<a href="{{.Href}}">{{.OtherName}}</a> <span class="rel-label">{{.Label}}</span> <span class="rel-self">{{$.Data.Panel.Name}}</span>{{end}}
         <span class="note">&middot; {{.OtherType}}</span></li>{{end}}</ul>
-      {{if gt .RelTotal (len .Relations)}}<p class="note">Showing the {{len .Relations}} newest of {{.RelTotal}}.</p>{{end}}
+      {{if gt .RelTotal (len .Relations)}}<p class="note">Showing the {{len .Relations}} newest of {{n .RelTotal}}.</p>{{end}}
     {{else}}<p class="note">No relationships yet.</p>{{end}}
 
     <h3>Memories that mention it</h3>
     {{if .Memories}}<ul class="mentions">{{range .Memories}}
       <li><a href="{{$.Data.Panel.MemHref}}" class="mention-text">{{.Text}}</a> <time class="note" datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></li>{{end}}</ul>
-      {{if gt .Mentions (len .Memories)}}<p><a href="{{.MemHref}}">See all {{.Mentions}} in Memories</a></p>{{end}}
+      {{if gt .Mentions (len .Memories)}}<p><a href="{{.MemHref}}">See all {{n .Mentions}} in Memories</a></p>{{end}}
     {{else}}<p class="note">No memory mentions it right now.</p>{{end}}
 
     <h3>Edit</h3>

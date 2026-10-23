@@ -496,6 +496,33 @@ func snippet(s string, n int) string {
 	return strings.TrimSpace(string(rs[:n])) + "…"
 }
 
+// attrVisible hides bookkeeping attributes (merge history, samples, ids,
+// underscore-prefixed keys) and structured values that read as raw JSON.
+func attrVisible(k string, v any) bool {
+	lk := strings.ToLower(k)
+	switch lk {
+	case "merged_from", "sample", "samples", "source", "sources", "embedding", "id", "ids":
+		return false
+	}
+	if strings.HasPrefix(lk, "_") || strings.HasPrefix(lk, "sample") || strings.HasSuffix(lk, "_id") || strings.HasSuffix(lk, "_ids") {
+		return false
+	}
+	switch v.(type) {
+	case map[string]any, []any:
+		return false
+	}
+	return true
+}
+
+// attrLabel turns a key like "birth_date" into "Birth date".
+func attrLabel(k string) string {
+	s := strings.TrimSpace(strings.ReplaceAll(k, "_", " "))
+	if s == "" {
+		return k
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func attrValue(v any) string {
 	switch x := v.(type) {
 	case string:
@@ -520,14 +547,14 @@ func (s *server) buildPanel(r *http.Request, cx *cortex.Cortex, p graphParams, i
 		IsOwner: id == owner, MemHref: "/memories?entity=" + url.QueryEscape(e.ID)}
 	keys := make([]string, 0, len(e.Attributes))
 	for k := range e.Attributes {
-		if k != "merged_from" {
+		if attrVisible(k, e.Attributes[k]) {
 			keys = append(keys, k)
 		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		if val := attrValue(e.Attributes[k]); val != "" {
-			pv.Attrs = append(pv.Attrs, kv{strings.ReplaceAll(k, "_", " "), val})
+			pv.Attrs = append(pv.Attrs, kv{attrLabel(k), val})
 		}
 	}
 	rels, total, err := cx.EntityRelations(ctx, id, 50)

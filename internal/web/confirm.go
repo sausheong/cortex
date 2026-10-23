@@ -52,12 +52,12 @@ func plural(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one
 	}
-	return strconv.Itoa(n) + " " + many
+	return fmtInt(n) + " " + many
 }
 
 // changedMsg is shown when the count moved between the two requests.
 func changedMsg(was, now int, noun string) string {
-	return "The number of " + noun + " changed from " + strconv.Itoa(was) + " to " + strconv.Itoa(now) + ". Check the new count and confirm again."
+	return "The number of " + noun + " changed from " + fmtInt(was) + " to " + fmtInt(now) + ". Check the new count and confirm again."
 }
 
 func (s *server) renderConfirm(w http.ResponseWriter, r *http.Request, status int, v confirmView) {

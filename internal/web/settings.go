@@ -27,7 +27,7 @@ func (j jobView) Text() string {
 		return "Waiting to start."
 	case "running":
 		if j.Total > 0 {
-			return fmt.Sprintf("Updating %d of %d memories. You can leave this page.", j.Done, j.Total)
+			return fmt.Sprintf("Updating %s of %s memories. You can leave this page.", fmtInt(j.Done), fmtInt(j.Total))
 		}
 		return "Getting started."
 	case "failed":

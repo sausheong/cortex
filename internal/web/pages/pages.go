@@ -5,6 +5,7 @@ import (
 	"embed"
 	"html/template"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -72,7 +73,27 @@ func EscapePath(p string) string {
 	return strings.Join(parts, "/")
 }
 
-var funcs = template.FuncMap{"vpath": EscapePath}
+// FmtInt groups thousands: 1274 -> "1,274".
+func FmtInt(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
+// fmtAny groups thousands for any integer value; nil renders as 0.
+func fmtAny(v any) string {
+	switch x := v.(type) {
+	case int:
+		return FmtInt(x)
+	case int64:
+		return FmtInt(int(x))
+	}
+	return "0"
+}
+
+var funcs = template.FuncMap{"vpath": EscapePath, "n": fmtAny}
 
 // Load parses every page template together with the layout, keyed by page
 // name ("signin", "home", "settings", "notice").

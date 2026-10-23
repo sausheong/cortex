@@ -329,9 +329,9 @@ main:has(.vault-wide){max-width:64rem}
 .vault-side label{margin:0 0 var(--s3)}
 .vault-side .btn-secondary{width:100%;margin-bottom:var(--s4)}
 .vault-folders ul{list-style:none;margin:0 0 var(--s4);padding:0}
-.vault-folders a{display:flex;justify-content:space-between;gap:var(--s2);align-items:center;min-height:44px;box-sizing:border-box;padding:0 var(--s3);border-radius:6px;color:var(--fg);text-decoration:none;border-left:2px solid transparent}
+.vault-folders a{display:flex;justify-content:space-between;gap:var(--s2);align-items:center;min-height:44px;box-sizing:border-box;padding:0 var(--s3);border-radius:6px;color:var(--fg);text-decoration:none}
 .vault-folders a:hover{background:var(--accent-soft)}
-.vault-folders a[aria-current=page]{font-weight:var(--w-strong);border-left-color:var(--accent);background:var(--accent-soft)}
+.vault-folders a[aria-current=page]{font-weight:var(--w-strong);background:var(--accent-soft)}
 .count{color:var(--muted);font-size:var(--text-sm);font-variant-numeric:tabular-nums;font-weight:var(--w-body)}
 .vault-dl{margin:0 0 var(--s2)}
 .vault-dl .btn{width:100%}
@@ -359,7 +359,7 @@ main:has(.vault-wide){max-width:64rem}
 .prose{max-width:var(--measure)}
 .prose h2{margin:var(--s5) 0 var(--s2)}
 .prose ul{padding-left:var(--s5)}.prose li{margin:var(--s1) 0}
-.prose code{background:var(--accent-soft);padding:1px 4px;border-radius:4px}
+.prose code{background:var(--accent-soft);padding:1px 4px;border-radius:6px}
 .prose a.wikilink{text-decoration-thickness:1px;text-underline-offset:3px}
 /* Missing target: dotted underline plus the title text, so it is not colour-only and does not look like a link. */
 .unresolved{color:var(--muted);text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
@@ -369,3 +369,4 @@ main:has(.vault-wide){max-width:64rem}
 .vault-source{margin:var(--s4) 0 0;padding:var(--s4);background:var(--accent-soft);border-radius:8px;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--text-sm);line-height:1.6}
 @media (max-width:48rem){.vault{grid-template-columns:minmax(0,1fr)}.vault-folders ul{display:flex;flex-wrap:wrap;gap:var(--s1)}.vault-folders a{border:1px solid var(--line);border-radius:6px}.vault-folders a[aria-current=page]{border-color:var(--accent)}.props>div{grid-template-columns:minmax(0,1fr)}.props .nested dt{padding-left:0}.vault-dl .btn{width:auto}.vault-side .btn-secondary{width:auto}}
 .js .vault-filter .btn-secondary{display:none}
+.doc-foot{margin:var(--s5) 0 0;padding-top:var(--s3);border-top:1px solid var(--line)}

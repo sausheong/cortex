@@ -397,6 +397,7 @@ func (s *server) vaultList(w http.ResponseWriter, r *http.Request, u SessionUser
 type vaultPageView struct {
 	Path, Title, Folder, FolderLabel string
 	Props                            []prop
+	Exported                         string
 	Body                             template.HTML
 	Source                           string
 	ShowSource                       bool
@@ -434,9 +435,11 @@ func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser
 		// The exporter's index points at a log page this vault does not have.
 		body = strings.ReplaceAll(body, "See also: [[log]]\n", "")
 	}
+	props, exported := splitExported(parseProps(front))
 	v := vaultPageView{
-		Path: f.Path, Title: title, Folder: f.Folder, FolderLabel: folderLabel(f.Folder), Kind: string(f.Kind),
-		Props:      parseProps(front),
+		Exported: exported,
+		Path:     f.Path, Title: title, Folder: f.Folder, FolderLabel: folderLabel(f.Folder), Kind: string(f.Kind),
+		Props:      props,
 		Body:       renderMarkdown(body, vs.resolve),
 		Source:     f.Content,
 		ShowSource: r.URL.Query().Get("view") == "source",
@@ -519,4 +522,17 @@ func safeZipName(n string) bool {
 		}
 	}
 	return true
+}
+
+// splitExported lifts the exporter's exported_at stamp out of the properties
+// so pages open with content, not export bookkeeping.
+func splitExported(in []prop) (out []prop, exported string) {
+	for _, p := range in {
+		if p.Key == "exported_at" && !p.Nested {
+			exported = p.Value
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, exported
 }

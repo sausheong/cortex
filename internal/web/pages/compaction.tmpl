@@ -30,7 +30,7 @@ document.getElementById("main").focus()}).catch(function(){})},3000)})();
 <form method="post" action="/compaction/{{.ID}}/apply">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="toolbar">
-    <label class="js-only check"><input type="checkbox" id="select-all"> Select all {{len .Changes}}</label>
+    <label class="js-only check"><input type="checkbox" id="select-all"> Select all {{n (len .Changes)}}</label>
     <span class="note" id="selected-count" aria-live="polite"></span>
   </div>
   <div id="changes" aria-describedby="err-select">
@@ -46,7 +46,7 @@ document.getElementById("main").focus()}).catch(function(){})},3000)})();
   <p class="field-error" id="err-select" role="alert">{{.ErrSelect}}</p>
   <div class="actions">
     <button class="btn">Review selected</button>
-    <button class="btn-secondary" name="select" value="all">Review all {{len .Changes}}</button>
+    <button class="btn-secondary" name="select" value="all">Review all {{n (len .Changes)}}</button>
   </div>
 </form>
 <script nonce="{{$.Nonce}}">

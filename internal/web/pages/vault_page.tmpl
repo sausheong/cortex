@@ -20,6 +20,7 @@
 {{if .Backlinks}}<section class="backlinks" aria-labelledby="bl-h"><h2 id="bl-h">Backlinks</h2>
 <ul>{{range .Backlinks}}<li><a class="wikilink" href="/vault/{{vpath .Path}}">{{.Name}}</a>{{if .Rel}} <span class="note">{{.Rel}}</span>{{end}}</li>{{end}}</ul></section>{{end}}
 {{end}}
+{{if .Exported}}<p class="note doc-foot">Exported {{.Exported}}</p>{{end}}
 </article>
 {{end}}
 {{end}}
