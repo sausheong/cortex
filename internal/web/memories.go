@@ -218,6 +218,68 @@ func viewURL(r *http.Request, extra ...string) string {
 	return "/memories?" + q.Encode()
 }
 
+// presetDays resolves a quick-range key ("7d", "30d", "year") to whole local
+// days ending today; any other key returns "".
+func presetDays(rng string, today time.Time) (key, from, to string) {
+	var f time.Time
+	switch rng {
+	case "7d":
+		f = today.AddDate(0, 0, -6)
+	case "30d":
+		f = today.AddDate(0, 0, -29)
+	case "year":
+		f = time.Date(today.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	default:
+		return "", "", ""
+	}
+	return rng, f.Format("2006-01-02"), today.Format("2006-01-02")
+}
+
+// clampedView returns the carried view with its page limited to the last page
+// that still has rows after a delete, so Undo's notice lands on a real page.
+func (s *server) clampedView(r *http.Request, u SessionUser) url.Values {
+	q := cleanView(r.PostFormValue("view"))
+	pg, _ := strconv.Atoi(q.Get("page"))
+	if pg < 2 {
+		return q
+	}
+	off, _ := tzOffset(r)
+	shift := time.Duration(off) * time.Minute
+	today := s.now().UTC().Add(-shift)
+	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	from, to := q.Get("from"), q.Get("to")
+	if _, f, t := presetDays(q.Get("range"), today); f != "" {
+		from, to = f, t
+	}
+	f := cortex.MemoryListFilter{Query: q.Get("q"), WrittenBy: q.Get("by"), EntityID: strings.TrimSpace(q.Get("entity"))}
+	if t := parseDay(from); t != nil {
+		start := t.Add(shift)
+		f.From = &start
+	}
+	if t := parseDay(to); t != nil {
+		end := t.AddDate(0, 0, 1).Add(shift)
+		f.To = &end
+	}
+	if t, err := time.Parse(time.RFC3339, q.Get("since")); err == nil {
+		t = t.UTC()
+		f.Since = &t
+	}
+	size := parseSize(q.Get("size"))
+	_, total, err := s.root.ForUser(u.UserID).ListMemories(r.Context(), f, 1, 0)
+	if err != nil {
+		return q
+	}
+	last := max((total+size-1)/size, 1)
+	if pg > last {
+		if last == 1 {
+			q.Del("page")
+		} else {
+			q.Set("page", strconv.Itoa(last))
+		}
+	}
+	return q
+}
+
 func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, field, msg string) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -248,16 +310,8 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	shift := time.Duration(off) * time.Minute
 	today := s.now().UTC().Add(-shift)
 	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
-	switch rng := q.Get("range"); rng {
-	case "7d", "30d", "year":
-		v.Range = rng
-		from := today.AddDate(0, 0, -6)
-		if rng == "30d" {
-			from = today.AddDate(0, 0, -29)
-		} else if rng == "year" {
-			from = time.Date(today.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-		}
-		v.From, v.To = from.Format("2006-01-02"), today.Format("2006-01-02")
+	if rng, from, to := presetDays(q.Get("range"), today); rng != "" {
+		v.Range, v.From, v.To = rng, from, to
 	}
 	v.Entity = strings.TrimSpace(q.Get("entity"))
 	var since *time.Time
@@ -577,7 +631,9 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 		s.memoriesPage(w, r, u, http.StatusConflict, "", "Those memories were already gone, so nothing was deleted.")
 		return
 	}
-	http.Redirect(w, r, viewURL(r, "batch", batch), http.StatusSeeOther)
+	q := s.clampedView(r, u)
+	q.Set("batch", batch)
+	http.Redirect(w, r, "/memories?"+q.Encode(), http.StatusSeeOther)
 }
 
 type deletedRow struct {

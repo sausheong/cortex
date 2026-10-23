@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -396,5 +397,47 @@ func TestMemoriesSinceAndByNone(t *testing.T) {
 	}
 	if b = q(url.Values{"since": {"garbage"}}); !strings.Contains(b, "direct early") {
 		t.Fatalf("bad since should be ignored: %s", b)
+	}
+}
+
+// Deleting the last page's rows sends the viewer to the new last page, with the
+// filter, sort and page size intact and the Undo notice showing.
+func TestMemoriesDeleteRedirectClampsPage(t *testing.T) {
+	e, _, id := memEnv(t)
+	seedN(t, e, id, 60)
+	view := "q=row&size=25&sort=oldest&page=3"
+	_, body := e.get("/memories?" + view)
+	ids := regexp.MustCompile(`name="ids" value="([^"]+)"`).FindAllStringSubmatch(body, -1)
+	if len(ids) != 10 {
+		t.Fatalf("page 3 rows = %d, want 10", len(ids))
+	}
+	form := url.Values{"csrf": {e.csrf()}, "scope": {"selected"}, "view": {view}, "confirm_count": {"10"}}
+	for _, m := range ids {
+		form.Add("ids", m[1])
+	}
+	resp, _ := e.post("/memories/delete", form)
+	loc := resp.Header.Get("Location")
+	u, err := url.Parse(loc)
+	if resp.StatusCode != http.StatusSeeOther || err != nil {
+		t.Fatalf("redirect %d %q", resp.StatusCode, loc)
+	}
+	q := u.Query()
+	if q.Get("q") != "row" || q.Get("size") != "25" || q.Get("sort") != "oldest" || q.Get("page") != "2" || q.Get("batch") == "" {
+		t.Fatalf("redirect should keep the view with page clamped to 2: %q", loc)
+	}
+	_, body = e.get(loc)
+	if !strings.Contains(body, `id="undo-notice"`) || !strings.Contains(body, "Deleted 10 memories") || !strings.Contains(body, "Showing 26–50 of 50") {
+		t.Fatalf("destination: %.600s", body)
+	}
+	// An emptied filter result drops back to page 1.
+	_, body = e.get("/memories?q=row&size=25&page=2")
+	rows := regexp.MustCompile(`name="ids" value="([^"]+)"`).FindAllStringSubmatch(body, -1)
+	form = url.Values{"csrf": {e.csrf()}, "scope": {"selected"}, "view": {"q=row&size=25&page=2"}, "confirm_count": {strconv.Itoa(len(rows))}}
+	for _, m := range rows {
+		form.Add("ids", m[1])
+	}
+	resp, _ = e.post("/memories/delete", form)
+	if got := resp.Header.Get("Location"); strings.Contains(got, "page=") {
+		t.Fatalf("page 1 needs no page param: %q", got)
 	}
 }
