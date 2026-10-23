@@ -307,7 +307,7 @@ func TestRemoveConnection(t *testing.T) {
 	if r, _ := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {csrf}, "choice": {"keep"}}); r.StatusCode != 303 {
 		t.Fatalf("revoke: %d", r.StatusCode)
 	}
-	if _, page := e.get("/connections"); !strings.Contains(page, "Remove from list") {
+	if _, page := e.get("/connections"); !strings.Contains(page, "Remove from list") || !strings.Contains(page, "Hides it here. Memories it wrote are kept.") {
 		t.Fatal("revoked row lacks Remove")
 	}
 	r, _ = e.post("/connections/"+conn.ID+"/remove", url.Values{"csrf": {csrf}})

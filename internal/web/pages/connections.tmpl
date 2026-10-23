@@ -20,7 +20,8 @@
   </details>
   {{if .Revoked}}<form method="post" action="/connections/{{.ID}}/remove">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <button class="btn-secondary">Remove from list</button>
+    <button class="btn-secondary" aria-describedby="rm-{{.ID}}">Remove from list</button>
+    <span class="note" id="rm-{{.ID}}">Hides it here. Memories it wrote are kept.</span>
   </form>{{end}}
   </div>
   {{if not .Revoked}}
