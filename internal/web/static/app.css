@@ -96,13 +96,13 @@ time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums
 .conn+.conn,.conn-empty+.conn{border-top:1px solid var(--line)}
 .conn-empty{color:var(--muted)}
 .conn-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--s2) var(--s3);align-items:center}
-.conn-metas{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:0 var(--s5)}
+.conn-legend{margin:0 0 var(--s4)}
+.conn-row .conn-meta{grid-column:1/-1;margin:0}
 .conn-meta{color:var(--muted);font-size:var(--text-sm)}
 .status{display:inline-flex;align-items:center;gap:6px;font-size:var(--text-sm);font-weight:var(--w-strong)}
 .status-active{color:var(--accent)}.status-revoked{color:var(--danger)}.status-unused{color:var(--muted)}
-.conn-hint{margin:var(--s2) 0 0}
 .is-revoked .conn-name{color:var(--muted)}
-details.revoke{margin-top:var(--s3)}
+.conn-actions details[open]{flex-basis:100%}
 .conn-actions{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--s2) var(--s3);margin-top:var(--s3)}
 .conn-actions form{margin:0}
 details.rename>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 16px;border:1px solid var(--line);border-radius:6px;color:var(--accent);cursor:pointer}
@@ -372,3 +372,5 @@ details.more .home-bullets{margin-top:var(--s1)}
 @media (max-width:560px){.vault-files li{flex-wrap:wrap}.vf-meta{flex:1 0 100%;padding:0 var(--s1) 10px;margin-top:-6px}}
 .js .vault-filter .btn-secondary{display:none}
 .doc-foot{margin:var(--s5) 0 0;padding-top:var(--s3);border-top:1px solid var(--line)}
+.conn-actions form:has(>[aria-describedby]){display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s3)}
+.conn-actions form:not(.revoke-panel):not(.rename-panel)>.note{margin:0;min-width:0;overflow-wrap:anywhere}

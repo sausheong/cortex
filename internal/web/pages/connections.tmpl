@@ -5,10 +5,8 @@
     {{if .Revoked}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>
     {{else if .LastUsed}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>
     {{else}}<span class="status status-unused"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Not used yet</span>{{end}}
-    <div class="conn-metas"><span class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else}}Never used{{end}}</span>
-    <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span></div>
+    <p class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else if not .Revoked}}Never used{{end}}{{if or .LastUsed (not .Revoked)}} &middot; {{end}}{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</p>
   </div>
-  {{if .Revoked}}<p class="note conn-hint">Cannot connect any more.</p>{{else if not .LastUsed}}<p class="note conn-hint">Not connected yet. It shows as Active after its first use.</p>{{end}}
   <div class="conn-actions">
   <details class="rename">
     <summary>Rename&hellip;</summary>
@@ -23,7 +21,6 @@
     <button class="btn-secondary" aria-describedby="rm-{{.ID}}">Remove from list</button>
     <span class="note" id="rm-{{.ID}}">Hides it here. Memories it wrote are kept.</span>
   </form>{{end}}
-  </div>
   {{if not .Revoked}}
   <details class="revoke">
     <summary>Revoke&hellip;</summary>
@@ -40,6 +37,7 @@
     </form>
   </details>
   {{end}}
+  </div>
 </li>{{end}}
 {{define "content"}}
 {{with .Data}}
@@ -76,6 +74,7 @@
 {{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 <section class="section" aria-labelledby="h-assistants">
+  <p class="note conn-legend"><strong>Not used yet</strong> turns to <strong>Active</strong> after the first request. <strong>Revoked</strong> can no longer connect.</p>
   <h2 id="h-assistants">Assistants</h2>
   <ul class="conns">
   {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected.</strong> Paste the instructions under <a href="#h-add">Add a connection</a> into ChatGPT or Claude. It appears here after it first connects.</li>{{end}}
