@@ -731,3 +731,32 @@ func TestTokensNotLogged(t *testing.T) {
 		}
 	}
 }
+
+func TestConsentButtonRoles(t *testing.T) {
+	ts, hc := cimdServer(t, func(u string) string {
+		return fmt.Sprintf(`{"client_id":%q,"client_name":"Claude","redirect_uris":["https://claude.example/cb"]}`, u)
+	})
+	e := newEnv(t, Options{CIMDClient: hc})
+	s := e.user("a")
+	btn := func(body, value string) (class, text string, pos int, focus bool) {
+		re := regexp.MustCompile(`<button class="([^"]*)" name="decision" value="` + value + `"([^>]*)>([^<]*)</button>`)
+		loc := re.FindStringSubmatchIndex(body)
+		if loc == nil {
+			t.Fatalf("no %s button: %s", value, body)
+		}
+		m := re.FindStringSubmatch(body)
+		return m[1], m[3], loc[0], strings.Contains(m[2], "autofocus")
+	}
+	_, body := e.consent(&s, e.register("ChatGPT", "https://evil.example/cb"), "https://evil.example/cb")
+	dc, _, dp, df := btn(body, "deny")
+	ac, at, ap, af := btn(body, "allow")
+	if dc != "btn" || ac != "btn-secondary" || at != "Allow anyway" || dp > ap || !df || af {
+		t.Fatalf("unverified roles: deny=%q allow=%q %q order=%v/%v focus=%v/%v", dc, ac, at, dp, ap, df, af)
+	}
+	_, body = e.consent(&s, ts.URL+"/client.json", "https://claude.example/cb")
+	dc, _, dp, df = btn(body, "deny")
+	ac, at, ap, af = btn(body, "allow")
+	if ac != "btn" || dc != "btn-secondary" || at != "Allow" || ap > dp || df {
+		t.Fatalf("verified roles: allow=%q deny=%q %q", ac, dc, at)
+	}
+}

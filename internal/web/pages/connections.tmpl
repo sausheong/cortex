@@ -1,57 +1,92 @@
 {{define "title"}}Connections{{end}}
+{{define "conn"}}<li class="conn{{if .Revoked}} is-revoked{{end}}">
+  <div class="conn-row">
+    <strong class="conn-name">{{.Name}}</strong>
+    {{if .Revoked}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>
+    {{else if .LastUsed}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>
+    {{else}}<span class="status status-unused"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Not used yet</span>{{end}}
+    <div class="conn-metas"><span class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{else}}Never used{{end}}</span>
+    <span class="conn-meta">{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</span></div>
+  </div>
+  {{if .Revoked}}<p class="note conn-hint">Cannot connect any more.</p>{{else if not .LastUsed}}<p class="note conn-hint">Not connected yet. It shows as Active after its first use.</p>{{end}}
+  {{if not .Revoked}}
+  <details class="revoke">
+    <summary>Revoke&hellip;</summary>
+    <form method="post" action="/connections/{{.ID}}/revoke" class="revoke-panel">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <p><strong>Revoke {{.Name}}?</strong> It loses access right away and cannot be switched back on. Choose what happens to what it wrote.</p>
+      <div class="actions">
+        <button class="btn-danger-quiet" name="choice" value="keep">Revoke, keep what it wrote</button>
+        {{if .DeleteCount}}<input type="hidden" name="confirm_count" value="{{.DeleteCount}}">
+        <button class="btn-danger" name="choice" value="delete">Revoke and delete {{.DeleteCount}} {{if eq .DeleteCount 1}}item{{else}}items{{end}} it wrote</button>{{end}}
+      </div>
+      {{if .DeleteCount}}<p class="note">Deleted items can be restored for 30 days.</p>{{else}}<p class="note">It has not written anything, so there is nothing to delete.</p>{{end}}
+    </form>
+  </details>
+  {{end}}
+</li>{{end}}
 {{define "content"}}
 {{with .Data}}
 <h1>Connections</h1>
-<p>Assistants and agents that can read and write your memory.</p>
-{{if .NewToken}}
-<section class="notice" id="new-token">
-  <h2>New token for {{.NewName}}</h2>
-  <p>Copy it now. It is shown only once.</p>
-  <p><code id="new-token-value">{{.NewToken}}</code></p>
+<p class="lede">Assistants and agents that can read and write your memory.</p>
+{{template "setup" $}}
+{{if .Revoked}}
+<section class="notice" id="revoke-notice" role="status">
+  <p><strong>Revoked {{.Revoked.Name}}.</strong> It can no longer read or write your memory.{{if .Revoked.BatchID}} Deleted {{.Revoked.Items}} {{if eq .Revoked.Items 1}}item{{else}}items{{end}} it wrote. You can restore {{if eq .Revoked.Items 1}}it{{else}}them{{end}} for 30 days; the connection stays revoked.{{end}}</p>
+  {{if .Revoked.BatchID}}<form method="post" action="/memories/restore/{{.Revoked.BatchID}}" class="actions">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="next" value="/connections">
+    <button class="btn-secondary">Undo delete</button>
+  </form>{{end}}
 </section>
 {{end}}
-{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-<h2>Assistants</h2>
-<ul class="conns">
-{{range .Assistants}}<li>
-  <strong>{{.Name}}</strong>
-  <span>last used: {{if .LastUsed}}{{.LastUsed}}{{else}}never{{end}}</span>
-  <span>written: {{.Written}}</span>
-  {{if .Revoked}}<span>revoked</span>{{else}}
-  <form method="post" action="/connections/{{.ID}}/revoke">
+{{if .WasRestored}}<p class="notice" role="status">Restored what it wrote. The connection stays revoked.</p>{{end}}
+{{if .NewToken}}
+<section class="notice new-token" id="new-token" role="alert" tabindex="-1" aria-labelledby="new-token-h">
+  <h2 id="new-token-h">Token created for {{.NewName}}</h2>
+  <p>Copy it now. It is shown only once.</p>
+  <p><code id="new-token-value">{{.NewToken}}</code></p>
+  <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy token">Copy token</button></p>
+</section>
+{{end}}
+{{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+<section class="section" aria-labelledby="h-assistants">
+  <h2 id="h-assistants">Assistants</h2>
+  <ul class="conns">
+  {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected.</strong> Paste the instructions under <a href="#h-add">Add a connection</a> into ChatGPT or Claude. It appears here after it first connects.</li>{{end}}
+  </ul>
+</section>
+<section class="section" aria-labelledby="h-agents">
+  <h2 id="h-agents">Agent tokens</h2>
+  <ul class="conns">
+  {{range .Agents}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No agent tokens.</strong> Create one below for a script or your own agent. The token is shown once.</li>{{end}}
+  </ul>
+</section>
+<section class="section add-connection" aria-labelledby="h-add">
+  <h2 id="h-add">Add a connection</h2>
+  <h3>Create an agent token</h3>
+  <form method="post" action="/connections/tokens" autocomplete="off" class="token-form">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <button class="btn">Revoke</button>
-    <label><input type="checkbox" name="remove" value="1"> also remove what it wrote</label>
-  </form>{{end}}
-</li>{{else}}<li>None yet.</li>{{end}}
-</ul>
-<h2>Agent tokens</h2>
-<ul class="conns">
-{{range .Agents}}<li>
-  <strong>{{.Name}}</strong>
-  <span>last used: {{if .LastUsed}}{{.LastUsed}}{{else}}never{{end}}</span>
-  <span>written: {{.Written}}</span>
-  {{if .Revoked}}<span>revoked</span>{{else}}
-  <form method="post" action="/connections/{{.ID}}/revoke">
-    <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <button class="btn">Revoke</button>
-    <label><input type="checkbox" name="remove" value="1"> also remove what it wrote</label>
-  </form>{{end}}
-</li>{{else}}<li>None yet.</li>{{end}}
-</ul>
-<form method="post" action="/connections/tokens" autocomplete="off">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <label>Token name <input name="name" required maxlength="80" placeholder="my agent"></label>
-  <button class="btn">Create token</button>
-</form>
-<h2>Recommended custom instructions</h2>
-<p>Paste this into your assistant's custom instructions.</p>
-<textarea id="instructions" readonly rows="5" style="width:100%">{{.Instructions}}</textarea>
-<p><button class="btn" type="button" id="copy-instructions">Copy</button></p>
+    <label>Token name <input name="name" required maxlength="80" placeholder="my agent" value="{{.FormName}}" aria-describedby="err-name"{{if eq .ErrField "name"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-name" role="alert">{{if eq .ErrField "name"}}{{.Error}}{{end}}</p>
+    <button class="btn" data-pending="Creating&hellip;">Create token</button>
+  </form>
+  <h3>Connect an assistant</h3>
+  <p>Paste this into your assistant's custom instructions.</p>
+  <textarea id="instructions" readonly rows="9">{{.Instructions}}</textarea>
+  <p><button class="btn-secondary js-only" type="button" data-copy="instructions" data-copy-label="Copy">Copy</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
+</section>
 <script>
-document.getElementById('copy-instructions').addEventListener('click',function(){
-var t=document.getElementById('instructions');t.select();
-if(navigator.clipboard){navigator.clipboard.writeText(t.value)}else{document.execCommand('copy')}});
+var nt=document.getElementById('new-token');if(nt){nt.focus()}
+document.querySelectorAll('[data-copy]').forEach(function(b){
+b.addEventListener('click',function(){
+var el=document.getElementById(b.dataset.copy);
+var text=el.value!==undefined?el.value:el.textContent;
+function done(){b.textContent='Copied';var s=b.parentNode.querySelector('.copy-status');if(s)s.textContent='Copied to clipboard';
+setTimeout(function(){b.textContent=b.dataset.copyLabel;if(s)s.textContent=''},2000)}
+function fallback(){var r=document.createRange();if(el.select){el.select()}else{r.selectNodeContents(el);var g=getSelection();g.removeAllRanges();g.addRange(r)}
+try{document.execCommand('copy');done()}catch(e){}}
+if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(done,fallback)}else{fallback()}})});
 </script>
 {{end}}
 {{end}}

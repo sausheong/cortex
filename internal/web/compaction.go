@@ -16,11 +16,46 @@ import (
 // compactKindPrefix must match jobs.CompactKindPrefix.
 const compactKindPrefix = "compact:"
 
+type compactionChange struct {
+	Index   int
+	Label   string
+	Sources []string
+	Result  string
+}
+
 type compactionView struct {
 	ID      string
 	Status  string
-	Changes []cortex.Change
-	Error   string
+	Changes []compactionChange
+	// Error is a plain-language failure; ErrLink/ErrLinkText give the next step.
+	Error, ErrLink, ErrLinkText string
+	ErrSelect                   string // shown next to the change list
+	CanRetry                    bool   // offer "Start a new compaction"
+}
+
+func changeLabel(kind string) string {
+	switch kind {
+	case "merge":
+		return "Merge"
+	case "combine":
+		return "Combine"
+	case "rollup":
+		return "Roll up"
+	}
+	return "Change"
+}
+
+func (h *compactionHandlers) view(id string, row *compactionRow) compactionView {
+	v := compactionView{ID: id, Status: row.status}
+	for i, c := range row.changes {
+		v.Changes = append(v.Changes, compactionChange{Index: i, Label: changeLabel(c.Kind), Sources: c.Sources, Result: c.Result})
+	}
+	if row.status == "failed" {
+		v.Error = "Compaction could not finish. This is usually the AI provider: the key may be wrong or out of credit."
+		v.ErrLink, v.ErrLinkText = "/settings", "Check AI provider settings"
+		v.CanRetry = true
+	}
+	return v
 }
 
 // CompactionMount returns the compaction routes. enqueue schedules the
@@ -32,6 +67,7 @@ func CompactionMount(enqueue func(ctx context.Context, userID, kind string) (str
 func compactionMount(enqueue func(ctx context.Context, userID, kind string) (string, error), resolve func(ctx context.Context, userID string) (*cortex.Cortex, error)) func(mux *http.ServeMux, d Deps) {
 	return func(mux *http.ServeMux, d Deps) {
 		h := &compactionHandlers{d: d, enqueue: enqueue, resolve: resolve}
+		mux.HandleFunc("GET /compaction", d.Auth(h.index))
 		mux.HandleFunc("POST /memories/compact", d.Auth(h.start))
 		mux.HandleFunc("GET /compaction/{id}", d.Auth(h.show))
 		mux.HandleFunc("POST /compaction/{id}/apply", d.Auth(h.apply))
@@ -80,6 +116,11 @@ func (h *compactionHandlers) fail(w http.ResponseWriter, r *http.Request, err er
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
+// index is the Compaction landing page, the entry point from the nav.
+func (h *compactionHandlers) index(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	h.d.Render(w, r, "compaction_start", struct{ Available bool }{h.enqueue != nil})
+}
+
 func (h *compactionHandlers) start(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	if h.enqueue == nil {
 		http.Error(w, "background jobs are not available on this server", http.StatusServiceUnavailable)
@@ -107,7 +148,7 @@ func (h *compactionHandlers) show(w http.ResponseWriter, r *http.Request, u Sess
 		h.fail(w, r, err)
 		return
 	}
-	h.d.Render(w, r, "compaction", compactionView{ID: r.PathValue("id"), Status: row.status, Changes: row.changes})
+	h.d.Render(w, r, "compaction", h.view(r.PathValue("id"), row))
 }
 
 // handle builds the user's own handle (with their embedder, so results are
@@ -138,7 +179,14 @@ func (h *compactionHandlers) apply(w http.ResponseWriter, r *http.Request, u Ses
 		return
 	}
 	var picked []cortex.Change
+	var idx []int
 	seen := map[int]bool{}
+	if r.PostFormValue("select") == "all" {
+		for i := range row.changes {
+			seen[i] = true
+			idx = append(idx, i)
+		}
+	}
 	for _, s := range r.PostForm["idx"] {
 		i, err := strconv.Atoi(s)
 		if err != nil || i < 0 || i >= len(row.changes) {
@@ -147,16 +195,46 @@ func (h *compactionHandlers) apply(w http.ResponseWriter, r *http.Request, u Ses
 		}
 		if !seen[i] {
 			seen[i] = true
-			picked = append(picked, row.changes[i])
+			idx = append(idx, i)
 		}
 	}
+	sources := 0
+	for _, i := range idx {
+		picked = append(picked, row.changes[i])
+		sources += len(row.changes[i].SourceIDs)
+	}
 	if len(picked) == 0 {
-		http.Redirect(w, r, "/compaction/"+id, http.StatusSeeOther)
+		v := h.view(id, row)
+		v.ErrSelect = "Tick at least one change, or choose Review all."
+		h.d.RenderStatus(w, r, http.StatusBadRequest, "compaction", v)
+		return
+	}
+	n := len(picked)
+	want, has := expectCount(r)
+	if !has || want != n {
+		cv := confirmView{
+			Title:       "Apply " + plural(n, "change", "changes") + "?",
+			Consequence: "This replaces " + plural(sources, "memory", "memories") + " with " + plural(n, "merged memory", "merged memories") + ". The originals are kept for 30 days and you can undo it afterwards.",
+			Action:      "/compaction/" + id + "/apply",
+			Count:       n,
+			Button:      "Apply " + plural(n, "change", "changes"),
+			CancelHref:  "/compaction/" + id,
+		}
+		for _, i := range idx {
+			cv.Fields = append(cv.Fields, confirmField{"idx", strconv.Itoa(i)})
+		}
+		status := http.StatusOK
+		if has {
+			cv.Error, status = changedMsg(want, n, "changes"), http.StatusConflict
+		}
+		h.d.RenderStatus(w, r, status, "confirm", cv)
 		return
 	}
 	cx, err := h.handle(ctx, u.UserID)
 	if err != nil {
-		http.Error(w, "set up your AI provider first", http.StatusConflict)
+		v := h.view(id, row)
+		v.Error, v.ErrLink, v.ErrLinkText = "cortex needs your AI provider to save merged memories, and it is not set up yet. Nothing was changed.", "/settings", "Set up your AI provider"
+		h.d.RenderStatus(w, r, http.StatusConflict, "compaction", v)
 		return
 	}
 	batch, err := cx.ApplyCompaction(ctx, picked)
@@ -170,7 +248,9 @@ func (h *compactionHandlers) apply(w http.ResponseWriter, r *http.Request, u Ses
 	}
 	if err != nil {
 		if errors.Is(err, cortex.ErrNotFound) {
-			http.Error(w, "some memories changed since the proposal; start a new compaction", http.StatusConflict)
+			v := h.view(id, row)
+			v.Error, v.CanRetry = "Some of these memories changed since the proposal was made. Nothing else was changed.", true
+			h.d.RenderStatus(w, r, http.StatusConflict, "compaction", v)
 			return
 		}
 		h.fail(w, r, err)

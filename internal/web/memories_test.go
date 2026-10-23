@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,30 +65,128 @@ func TestBulkDeleteOlderThan(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.now = time.Now().UTC()
-	resp, _ := e.post("/memories/delete", url.Values{"csrf": {e.csrf()}, "older_than": {"30"}})
+	csrf := e.csrf()
+	// Step 1 only previews: nothing is deleted, the exact count is shown.
+	resp, body := e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"matching"}, "older_than": {"30"}})
+	if resp.StatusCode != http.StatusOK || liveCount(t, c) != 2 || !strings.Contains(body, "Delete 1 memory?") || !strings.Contains(body, "30 days") {
+		t.Fatalf("preview: status %d live %d: %s", resp.StatusCode, liveCount(t, c), body)
+	}
+	resp, _ = e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"matching"}, "older_than": {"30"}, "confirm_count": {"1"}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	_, body := e.get("/memories")
+	_, body = e.get("/memories")
 	if strings.Contains(body, "ancient") || !strings.Contains(body, "fresh") {
 		t.Fatalf("wrong rows: %s", body)
 	}
 }
 
-func TestClearBrainNeedsConfirmation(t *testing.T) {
+func TestClearAllNeedsCountAndTypedPhrase(t *testing.T) {
 	e, c, _ := memEnv(t)
 	putMem(t, c, "one")
 	putMem(t, c, "two")
 	csrf := e.csrf()
-	for _, conf := range []string{"", "delete my brain please"} {
-		resp, _ := e.post("/memories/delete", url.Values{"csrf": {csrf}, "all": {"1"}, "confirm": {conf}})
-		if resp.StatusCode != http.StatusBadRequest || liveCount(t, c) != 2 {
-			t.Fatalf("confirm %q: status %d live %d", conf, resp.StatusCode, liveCount(t, c))
+	// Preview states the count and the phrase to type; nothing is deleted.
+	resp, body := e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"all"}, "all": {"1"}})
+	if resp.StatusCode != http.StatusOK || liveCount(t, c) != 2 ||
+		!strings.Contains(body, "Delete all 2 memories?") || !strings.Contains(body, clearAllPhrase) || !strings.Contains(body, "30 days") {
+		t.Fatalf("preview: %d: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "delete my brain") {
+		t.Fatal("joke phrase still present")
+	}
+	// Missing or wrong count, or missing or wrong phrase: refused.
+	for _, f := range []url.Values{
+		{"confirm": {clearAllPhrase}},                                     // no count
+		{"confirm_count": {"2"}},                                          // no phrase
+		{"confirm_count": {"2"}, "confirm": {"delete my brain"}},          // wrong phrase
+		{"confirm_count": {"2"}, "confirm": {"delete everything please"}}, // near miss
+		{"confirm_count": {"1"}, "confirm": {clearAllPhrase}},             // stale count
+		{"confirm_count": {"abc"}, "confirm": {clearAllPhrase}},           // malformed
+	} {
+		f.Set("csrf", csrf)
+		f.Set("all", "1")
+		f.Set("scope", "all")
+		resp, _ := e.post("/memories/delete", f)
+		if resp.StatusCode == http.StatusSeeOther || liveCount(t, c) != 2 {
+			t.Fatalf("%v: status %d live %d", f, resp.StatusCode, liveCount(t, c))
 		}
 	}
-	resp, _ := e.post("/memories/delete", url.Values{"csrf": {csrf}, "all": {"1"}, "confirm": {"delete my brain"}})
+	resp, _ = e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"all"}, "all": {"1"}, "confirm_count": {"2"}, "confirm": {"  Delete Everything "}})
 	if resp.StatusCode != http.StatusSeeOther || liveCount(t, c) != 0 {
 		t.Fatalf("status %d live %d", resp.StatusCode, liveCount(t, c))
+	}
+}
+
+func TestStaleCountShowsNewCountAndDeletesNothing(t *testing.T) {
+	e, c, _ := memEnv(t)
+	a, b := putMem(t, c, "keep-a"), putMem(t, c, "keep-b")
+	csrf := e.csrf()
+	_ = a
+	// The user confirmed 5 but only 2 match now.
+	resp, body := e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"matching"}, "match": {"keep"}, "confirm_count": {"5"}})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "changed from 5 to 2") || liveCount(t, c) != 2 {
+		t.Fatalf("status %d live %d: %s", resp.StatusCode, liveCount(t, c), body)
+	}
+	_ = b
+}
+
+func TestDeleteSelectedShowsUndoNoticeAndUndoRestores(t *testing.T) {
+	e, c, _ := memEnv(t)
+	id1 := putMem(t, c, "first")
+	id2 := putMem(t, c, "second")
+	putMem(t, c, "third")
+	csrf := e.csrf()
+	// Preview with the exact count; nothing deleted yet.
+	resp, body := e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"selected"}, "ids": {id1, id2}})
+	if resp.StatusCode != 200 || !strings.Contains(body, "Delete 2 memories?") || !strings.Contains(body, "You can restore them for 30 days.") || liveCount(t, c) != 3 {
+		t.Fatalf("preview: %d %s", resp.StatusCode, body)
+	}
+	resp, _ = e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"selected"}, "ids": {id1, id2}, "confirm_count": {"2"}})
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(loc, "/memories?batch=") || liveCount(t, c) != 1 {
+		t.Fatalf("status %d loc %q live %d", resp.StatusCode, loc, liveCount(t, c))
+	}
+	// Persistent notice with Undo, built from the stored batch.
+	_, body = e.get(loc)
+	m := regexpBatch.FindStringSubmatch(body)
+	if !strings.Contains(body, "Deleted 2 memories.") || !strings.Contains(body, "Undo delete") || m == nil {
+		t.Fatalf("no undo notice: %s", body)
+	}
+	// A forged batch id shows no notice.
+	_, forged := e.get("/memories?batch=nope")
+	if strings.Contains(forged, "Undo delete") {
+		t.Fatal("forged batch shows undo")
+	}
+	resp, _ = e.post("/memories/restore/"+m[1], url.Values{"csrf": {csrf}})
+	if resp.StatusCode != http.StatusSeeOther || liveCount(t, c) != 3 || resp.Header.Get("Location") != "/memories?restored=2" {
+		t.Fatalf("undo: status %d live %d loc %q", resp.StatusCode, liveCount(t, c), resp.Header.Get("Location"))
+	}
+	_, body = e.get("/memories?restored=2")
+	if !strings.Contains(body, "Restored 2 memories.") {
+		t.Fatalf("restored notice: %s", body)
+	}
+}
+
+func TestDeleteErrorsTieToFieldsWithNextStep(t *testing.T) {
+	e, c, _ := memEnv(t)
+	putMem(t, c, "one")
+	csrf := e.csrf()
+	for _, tc := range []struct {
+		form    url.Values
+		wantErr string
+		field   string
+	}{
+		{url.Values{"scope": {"selected"}}, "Tick at least one memory", `id="err-ids"`},
+		{url.Values{"scope": {"matching"}, "older_than": {"abc"}}, "whole number of days", `aria-invalid="true"`},
+		{url.Values{"scope": {"matching"}}, "Choose who wrote it", `id="err-match"`},
+		{url.Values{"scope": {"matching"}, "match": {"zzz"}}, "No memories match", `id="err-match"`},
+	} {
+		tc.form.Set("csrf", csrf)
+		resp, body := e.post("/memories/delete", tc.form)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, tc.wantErr) || !strings.Contains(body, tc.field) || liveCount(t, c) != 1 {
+			t.Fatalf("%v: %d %s", tc.form, resp.StatusCode, body)
+		}
 	}
 }
 
@@ -95,7 +194,7 @@ func TestRestoreBatchFromPage(t *testing.T) {
 	e, c, _ := memEnv(t)
 	id1 := putMem(t, c, "keep me")
 	csrf := e.csrf()
-	e.post("/memories/delete", url.Values{"csrf": {csrf}, "ids": {id1}})
+	e.post("/memories/delete", url.Values{"csrf": {csrf}, "scope": {"selected"}, "ids": {id1}, "confirm_count": {"1"}})
 	if liveCount(t, c) != 0 {
 		t.Fatal("not deleted")
 	}
@@ -142,7 +241,13 @@ func TestMemoryDeleteForeignIDsIgnored(t *testing.T) {
 	}
 	bc := e.root.ForUser(b.ID)
 	bm := putMem(t, bc, "b secret")
-	e.post("/memories/delete", url.Values{"csrf": {e.csrf()}, "ids": {bm}})
+	for _, f := range []url.Values{{}, {"confirm_count": {"1"}}, {"confirm_count": {"0"}}} {
+		f.Set("csrf", e.csrf())
+		f.Set("ids", bm)
+		if r, _ := e.post("/memories/delete", f); r.StatusCode == http.StatusSeeOther {
+			t.Fatalf("foreign ids accepted: %v", f)
+		}
+	}
 	if liveCount(t, bc) != 1 {
 		t.Fatal("b's memory was deleted by a")
 	}
@@ -197,6 +302,30 @@ func TestUsageCountsOwnRowsOnly(t *testing.T) {
 	}
 }
 
+// deleteAccount walks the confirm step: preview, wrong phrase, then delete.
+func deleteAccount(t *testing.T, e *env, memories int) {
+	t.Helper()
+	csrf := e.csrf()
+	resp, body := e.post("/account/delete", url.Values{"csrf": {csrf}})
+	if resp.StatusCode != 200 || !strings.Contains(body, "Delete your account?") || !strings.Contains(body, "30 days") || !strings.Contains(body, deleteAcctPhrase) {
+		t.Fatalf("preview: %d %s", resp.StatusCode, body)
+	}
+	n := strconv.Itoa(memories)
+	for _, f := range []url.Values{{"confirm_count": {n}}, {"confirm_count": {n}, "confirm": {"yes"}}, {"confirm": {deleteAcctPhrase}}, {"confirm_count": {"99"}, "confirm": {deleteAcctPhrase}}} {
+		f.Set("csrf", csrf)
+		if r, _ := e.post("/account/delete", f); r.StatusCode == http.StatusSeeOther {
+			t.Fatalf("deleted without full confirmation: %v", f)
+		}
+		if r, _ := e.get("/memories"); r.StatusCode != 200 {
+			t.Fatalf("session lost after refused delete: %v", f)
+		}
+	}
+	resp, _ = e.post("/account/delete", url.Values{"csrf": {csrf}, "confirm_count": {n}, "confirm": {deleteAcctPhrase}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
 func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 	e, _, id := memEnv(t)
 	tok, _, err := e.st.CreateAgentToken(t.Context(), id, "tunnel")
@@ -206,10 +335,7 @@ func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
 		t.Fatal(err)
 	}
-	resp, _ := e.post("/account/delete", url.Values{"csrf": {e.csrf()}})
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
+	deleteAccount(t, e, 0)
 	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("token still valid")
 	}
@@ -227,7 +353,7 @@ func TestAccountDeleteThenSigninRestores(t *testing.T) {
 	e, c, id := memEnv(t)
 	putMem(t, c, "still here")
 	tok, _, _ := e.st.CreateAgentToken(t.Context(), id, "tunnel")
-	e.post("/account/delete", url.Values{"csrf": {e.csrf()}})
+	deleteAccount(t, e, 1)
 	e.newClient()
 	e.idp.ids["c"] = alice()
 	if resp, _ := e.callback(e.start(""), "c"); resp.StatusCode != 200 {
@@ -247,3 +373,31 @@ func TestAccountDeleteThenSigninRestores(t *testing.T) {
 }
 
 var regexpBatch = regexp.MustCompile(`/memories/restore/([^"]+)"`)
+
+func TestMemoriesListFirstWithRelativeTimeAndCleanUpCollapsed(t *testing.T) {
+	e, c, _ := memEnv(t)
+	putMem(t, c, "a quiet fact")
+	_, body := e.get("/memories")
+	for _, want := range []string{"just now", `title="`, "<summary>More filters</summary>", "<summary>Clean up</summary>", `href="/compaction"`, `href="/memories/deleted"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "<details class=\"cleanup section\" open") {
+		t.Fatal("Clean up must start collapsed")
+	}
+}
+
+func TestMemoriesSelectPageFallback(t *testing.T) {
+	e, c, _ := memEnv(t)
+	putMem(t, c, "one")
+	putMem(t, c, "two")
+	_, body := e.get("/memories")
+	if strings.Contains(body, " checked>") || !strings.Contains(body, "Select all on this page") {
+		t.Fatalf("plain page wrong: %s", body)
+	}
+	_, body = e.get("/memories?page=1&select=page")
+	if strings.Count(body, `name="ids"`) != 2 || strings.Count(body, `name="ids" value`) != strings.Count(body, " checked>") || !strings.Contains(body, "2 selected") {
+		t.Fatalf("select=page wrong: %s", body)
+	}
+}

@@ -1,45 +1,71 @@
-{{define "title"}}AI provider{{end}}
+{{define "title"}}Settings{{end}}
 {{define "content"}}
 {{with .Data}}
-<h1>AI provider</h1>
-<p>cortex uses your own provider for extraction and embeddings. Keys are stored encrypted and shown masked.</p>
-{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-{{if .Saved}}<p class="notice">Settings saved.</p>{{end}}
+<h1>Settings</h1>
+<p class="lede">cortex uses your own AI provider to read and organise what your assistants save. Keys are stored encrypted and shown masked.</p>
+{{if .Error}}<p class="error" role="alert">{{if .NotSaved}}<strong>Not saved.</strong> {{end}}{{.Error}}{{if .NotSaved}} Your previous settings are unchanged.{{end}}</p>{{end}}
+{{if .Saved}}<p class="notice" role="status">Settings saved. The connection to your provider worked.</p>{{end}}
 {{if .MaintenanceError}}<p class="error" role="alert">Last nightly maintenance failed: {{.MaintenanceError}}. Check your provider settings.</p>{{end}}
 {{if .Job}}
-<section class="job" id="job" data-id="{{.Job.ID}}" data-status="{{.Job.Status}}">
-  <h2>Re-embedding</h2>
-  <p>Status: <span id="job-status">{{.Job.Status}}</span> (<span id="job-done">{{.Job.Done}}</span>/<span id="job-total">{{.Job.Total}}</span>)</p>
-  {{if .Job.Error}}<p class="error">{{.Job.Error}}</p>{{end}}
+<section class="job notice" id="job" data-id="{{.Job.ID}}" data-status="{{.Job.Status}}">
+  <h2>Updating memory search</h2>
+  <p id="job-text" role="status">{{.Job.Text}}</p>
+  {{if .Job.Error}}<p class="note">Details: {{.Job.Error}}</p>{{end}}
 </section>
 {{end}}
 {{if .Pending}}{{if not .Live}}
-<form method="post" action="/settings/reembed">
+<form method="post" action="/settings/reembed" class="notice">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <p>Your embedding settings changed and existing memories have not been re-embedded yet.</p>
-  <button class="btn">Retry re-embedding</button>
+  <p>Your embedding settings changed, but your existing memories have not been updated to match yet. Until then, search may miss some of them.</p>
+  <button class="btn-secondary">Update memories now</button>
 </form>
 {{end}}{{end}}
-<form method="post" action="/settings" autocomplete="off">
+<form method="post" action="/settings" autocomplete="off" class="settings-form">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <label>Chat provider
-    <select name="provider">
-      <option value="openai-compatible" {{if eq .S.Provider "openai-compatible"}}selected{{end}}>OpenAI-compatible</option>
-      <option value="anthropic" {{if eq .S.Provider "anthropic"}}selected{{end}}>Anthropic</option>
-    </select></label>
-  <label>Base URL <input name="base_url" value="{{.S.BaseURL}}" placeholder="https://api.openai.com/v1"></label>
-  <label>API key <input name="api_key" type="password" value="" placeholder="{{.S.APIKey}}"></label>
-  <label>Chat model <input name="chat_model" value="{{.S.ChatModel}}"></label>
-  <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
-  <label>Embedding dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric"></label>
-  <label>Embedding base URL (optional) <input name="embed_base_url" value="{{.S.EmbedBaseURL}}"></label>
-  <label>Embedding API key (optional) <input name="embed_api_key" type="password" value="" placeholder="{{.S.EmbedAPIKey}}"></label>
-  <button class="btn">Test &amp; save</button>
+  <fieldset>
+    <legend>Chat</legend>
+    <p class="note group-help">The model that reads new memories and picks out the people, places and facts in them.</p>
+    <label>Provider
+      <select name="provider"{{if eq .ErrField "provider"}} aria-invalid="true"{{end}}>
+        <option value="openai-compatible" {{if eq .S.Provider "openai-compatible"}}selected{{end}}>OpenAI-compatible (OpenAI, OpenRouter, local servers)</option>
+        <option value="anthropic" {{if eq .S.Provider "anthropic"}}selected{{end}}>Anthropic</option>
+      </select></label>
+    <label>Base URL <input name="base_url" value="{{.S.BaseURL}}" placeholder="https://api.openai.com/v1" aria-describedby="err-base h-base"{{if eq .ErrField "base_url"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-base" role="alert">{{if eq .ErrField "base_url"}}{{.Error}}{{end}}</p>
+    <p class="note field-help" id="h-base">The web address of your provider's API. The default works for OpenAI. Change it only for another provider or a server you run. Leave it blank for Anthropic.</p>
+    <label>API key <input name="api_key" type="password" value="" placeholder="{{.S.APIKey}}" aria-describedby="h-key"></label>
+    <p class="note field-help" id="h-key">{{if .S.APIKey}}A key is saved. Leave this blank to keep it.{{else}}Paste the secret key from your provider's dashboard.{{end}}</p>
+    <label>Model <input name="chat_model" value="{{.S.ChatModel}}" aria-describedby="h-chat"></label>
+    <p class="note field-help" id="h-chat">The model name, for example gpt-4o-mini. A small, cheap model is enough.</p>
+  </fieldset>
+  <details class="advanced"{{if or (eq .S.Provider "anthropic") .EmbedError}} open{{end}}>
+  <summary><span class="adv-title">Advanced: embeddings</span>
+    <span class="note adv-sum">{{.S.EmbedModel}}, {{.S.EmbedDims}} dimensions, {{if .S.EmbedBaseURL}}own address{{else}}same address as chat{{end}}, {{if .S.EmbedAPIKey}}own key{{else}}chat key{{end}}. {{if eq .S.Provider "anthropic"}}A key is required with Anthropic.{{else}}The defaults are fine for most people.{{end}}</span></summary>
+  <fieldset>
+    <legend class="sr-only">Embeddings</legend>
+    <p class="note group-help">Embeddings let cortex search by meaning instead of exact words. Optional with an OpenAI-compatible provider: the defaults reuse the chat key above. Required with Anthropic, which does not offer embeddings, so add an embedding key here.</p>
+    <label>Embedding model <input name="embed_model" value="{{.S.EmbedModel}}"></label>
+    <label>Dimensions <input name="embed_dims" value="{{.S.EmbedDims}}" inputmode="numeric" aria-describedby="err-dims h-dims"{{if eq .ErrField "embed_dims"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-dims" role="alert">{{if eq .ErrField "embed_dims"}}{{.Error}}{{end}}</p>
+    <p class="note field-help" id="h-dims">How finely cortex describes each memory for search. 512 suits most people. Changing the model or this number re-processes your existing memories in the background.</p>
+    <label>Base URL <input name="embed_base_url" value="{{.S.EmbedBaseURL}}" placeholder="Same as chat" aria-describedby="err-ebase"{{if eq .ErrField "embed_base_url"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-ebase" role="alert">{{if eq .ErrField "embed_base_url"}}{{.Error}}{{end}}</p>
+    <label>API key <input name="embed_api_key" type="password" value="" placeholder="{{if .S.EmbedAPIKey}}{{.S.EmbedAPIKey}}{{else}}Same as chat{{end}}" aria-describedby="err-ekey"{{if eq .ErrField "embed_api_key"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-ekey" role="alert">{{if eq .ErrField "embed_api_key"}}{{.Error}}{{end}}</p>
+  </fieldset>
+  </details>
+  <div class="actions">
+    <button class="btn" data-pending="Testing&hellip;">Test &amp; save</button>
+    <p class="note save-help">We make one small test request to your provider first. If it fails, nothing is saved, and we show you why.</p>
+  </div>
 </form>
 {{if .Live}}<script>
 (function(){var el=document.getElementById('job');if(!el)return;
+function text(j){if(j.status==='queued')return 'Waiting to start.';
+if(j.status==='running')return j.total?('Updating '+j.done+' of '+j.total+' memories. You can leave this page.'):'Getting started.';
+if(j.status==='failed')return 'This stopped before finishing.';return 'Finished.'}
 function tick(){fetch('/settings/job/'+el.dataset.id,{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){
-document.getElementById('job-status').textContent=j.status;document.getElementById('job-done').textContent=j.done;document.getElementById('job-total').textContent=j.total;
+document.getElementById('job-text').textContent=text(j);
 if(j.status==='queued'||j.status==='running'){setTimeout(tick,2000)}else{location.reload()}}).catch(function(){setTimeout(tick,5000)})}
 setTimeout(tick,1500)})();
 </script>{{end}}

@@ -109,27 +109,34 @@ func checkURL(raw string, allowPrivate bool) error {
 // Validate enforces the provider URL policy and the dims allowlist. Empty
 // fields are checked as their defaults.
 func (s Settings) Validate(allowPrivate bool) error {
+	_, err := s.ValidateField(allowPrivate)
+	return err
+}
+
+// ValidateField is Validate that also names the form field at fault
+// ("provider", "base_url", "embed_dims", "embed_base_url" or "embed_api_key").
+func (s Settings) ValidateField(allowPrivate bool) (string, error) {
 	s = s.WithDefaults()
 	if s.Provider != ProviderOpenAI && s.Provider != ProviderAnthropic {
-		return errors.New("provider must be openai-compatible or anthropic")
+		return "provider", errors.New("provider must be openai-compatible or anthropic")
 	}
 	if s.BaseURL != "" {
 		if err := checkURL(s.BaseURL, allowPrivate); err != nil {
-			return err
+			return "base_url", err
 		}
 	}
 	if s.EmbedBaseURL != "" {
 		if err := checkURL(s.EmbedBaseURL, allowPrivate); err != nil {
-			return err
+			return "embed_base_url", err
 		}
 	}
 	if !allowedDims[s.EmbedDims] {
-		return fmt.Errorf("embedding dimensions %d not allowed", s.EmbedDims)
+		return "embed_dims", fmt.Errorf("embedding dimensions %d not allowed", s.EmbedDims)
 	}
 	if s.Provider == ProviderAnthropic && s.EmbedAPIKey == "" {
-		return errors.New("the anthropic provider needs a separate embedding API key")
+		return "embed_api_key", errors.New("the anthropic provider needs a separate embedding API key")
 	}
-	return nil
+	return "", nil
 }
 
 // Store is the accounts data layer.

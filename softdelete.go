@@ -47,9 +47,9 @@ func rowsAffected(res sql.Result) int {
 	return int(n)
 }
 
-// SoftDeleteMemories marks the memories matching f as deleted in one batch.
-// The batch ID is empty when nothing matched.
-func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by string) (string, int, error) {
+// deleteWhere builds the WHERE clause shared by SoftDeleteMemories and
+// CountMemories.
+func (c *Cortex) deleteWhere(f DeleteFilter) (string, []any, error) {
 	conds := []string{"user_id = ?", "deleted_at IS NULL"}
 	args := []any{c.userID}
 	set := f.All
@@ -79,7 +79,60 @@ func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by stri
 		args = append(args, "%"+esc+"%")
 	}
 	if !set {
-		return "", 0, fmt.Errorf("cortex: delete filter is empty")
+		return "", nil, fmt.Errorf("cortex: delete filter is empty")
+	}
+	return strings.Join(conds, " AND "), args, nil
+}
+
+// CountMemories returns how many live memories SoftDeleteMemories would mark
+// for f, so a caller can show the exact number before deleting.
+func (c *Cortex) CountMemories(ctx context.Context, f DeleteFilter) (int, error) {
+	where, args, err := c.deleteWhere(f)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE `+where, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("cortex: count memories: %w", err)
+	}
+	return n, nil
+}
+
+// CountByConnection returns how many rows SoftDeleteByConnection would mark
+// for connID (memories, entities, chunks and relationships, including
+// relationships that touch the connection's entities).
+func (c *Cortex) CountByConnection(ctx context.Context, connID string) (int, error) {
+	if connID == "" {
+		return 0, fmt.Errorf("cortex: connection id required")
+	}
+	total := 0
+	for _, table := range []string{"memories", "entities", "chunks"} {
+		var n int
+		if err := c.db.QueryRowContext(ctx,
+			`SELECT count(*) FROM `+table+` WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?`,
+			c.userID, connID).Scan(&n); err != nil {
+			return 0, fmt.Errorf("cortex: count %s: %w", table, err)
+		}
+		total += n
+	}
+	var n int
+	if err := c.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM relationships WHERE user_id = ? AND deleted_at IS NULL
+		   AND (written_by_connection_id = ?
+		     OR source_id IN (SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?)
+		     OR target_id IN (SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?))`,
+		c.userID, connID, c.userID, connID, c.userID, connID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("cortex: count relationships: %w", err)
+	}
+	return total + n, nil
+}
+
+// SoftDeleteMemories marks the memories matching f as deleted in one batch.
+// The batch ID is empty when nothing matched.
+func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by string) (string, int, error) {
+	where, args, err := c.deleteWhere(f)
+	if err != nil {
+		return "", 0, err
 	}
 
 	tx, err := c.db.BeginTx(ctx, nil)
@@ -92,7 +145,7 @@ func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by stri
 		return "", 0, err
 	}
 	res, err := tx.ExecContext(ctx,
-		`UPDATE memories SET deleted_at = now(), deleted_by = ?, delete_batch_id = ? WHERE `+strings.Join(conds, " AND "),
+		`UPDATE memories SET deleted_at = now(), deleted_by = ?, delete_batch_id = ? WHERE `+where,
 		append([]any{by, batchID}, args...)...)
 	if err != nil {
 		return "", 0, fmt.Errorf("cortex: soft delete memories: %w", err)

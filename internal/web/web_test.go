@@ -648,7 +648,7 @@ func TestFailedReembedShowsRetry(t *testing.T) {
 	e.insertJob("j_failed", id, "reembed", "failed", "provider unreachable")
 	e.enq = nil
 	_, body := e.get("/settings")
-	if !strings.Contains(body, "provider unreachable") || !strings.Contains(body, "Retry re-embedding") {
+	if !strings.Contains(body, "provider unreachable") || !strings.Contains(body, "Update memories now") {
 		t.Fatalf("no error/retry: %s", body)
 	}
 	if r, _ := e.post("/settings/reembed", url.Values{"csrf": {e.csrf()}}); r.StatusCode != http.StatusSeeOther {
@@ -707,5 +707,37 @@ func TestJobProgressOwnOnly(t *testing.T) {
 	}
 	if r, body := e.get("/settings/job/j_a"); r.StatusCode != 200 || !strings.Contains(body, `"running"`) {
 		t.Fatalf("own: %d %s", r.StatusCode, body)
+	}
+}
+
+func TestSettingsEmbedGroupOpensOnRejection(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	open := `<details class="advanced" open`
+	// Rejected embed base URL: the group opens.
+	r, body := e.post("/settings", settingsForm(e.csrf(), "embed_base_url", "http://embed.example.com/v1"))
+	if r.StatusCode != 400 || !strings.Contains(body, open) {
+		t.Fatalf("embed url rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
+	}
+	// Rejected chat URL with default embedding fields: the group stays closed.
+	r, body = e.post("/settings", settingsForm(e.csrf(), "base_url", "http://api.example.com/v1",
+		"embed_model", "", "embed_dims", ""))
+	if r.StatusCode != 400 || strings.Contains(body, open) || !strings.Contains(body, `<details class="advanced"`) {
+		t.Fatalf("chat rejection: %d open=%v", r.StatusCode, strings.Contains(body, open))
+	}
+}
+
+func TestSettingsFieldErrorIsInline(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	r, body := e.post("/settings", settingsForm(e.csrf(), "base_url", "http://api.example.com/v1"))
+	if r.StatusCode != 400 || !strings.Contains(body, `name="base_url"`) ||
+		!strings.Contains(body, `aria-describedby="err-base h-base" aria-invalid="true"`) ||
+		!strings.Contains(body, `id="err-base" role="alert">base URL must use https`) ||
+		!strings.Contains(body, `<strong>Not saved.</strong>`) {
+		t.Fatalf("inline field error missing: %d", r.StatusCode)
+	}
+	if strings.Contains(body, `name="embed_base_url"`+" ") && strings.Contains(body, `id="err-ebase" role="alert">base`) {
+		t.Fatal("error leaked to the embedding field")
 	}
 }

@@ -54,6 +54,8 @@ type Deps struct {
 	Auth func(next func(w http.ResponseWriter, r *http.Request, u SessionUser)) http.HandlerFunc
 	// Render writes a page inside the layout with security headers.
 	Render func(w http.ResponseWriter, r *http.Request, name string, data any)
+	// RenderStatus is Render with an explicit HTTP status.
+	RenderStatus func(w http.ResponseWriter, r *http.Request, status int, name string, data any)
 }
 
 type server struct {
@@ -109,7 +111,8 @@ func (s *server) deps() Deps {
 		Auth: s.auth,
 		Render: func(w http.ResponseWriter, r *http.Request, name string, data any) {
 			s.render(w, r, http.StatusOK, name, data)
-		}}
+		},
+		RenderStatus: s.render}
 }
 
 func (s *server) handler() http.Handler {
@@ -188,9 +191,12 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	p := pages.Page{Data: data}
+	p := pages.Page{Data: data, Path: r.URL.Path}
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
+		if name == "memories" || name == "connections" || name == "settings" {
+			p.Setup = s.setupState(r.Context(), u.UserID)
+		}
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {

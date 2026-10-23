@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,15 +20,47 @@ type jobView struct {
 	Live              bool
 }
 
+// Text is the job's progress in plain words.
+func (j jobView) Text() string {
+	switch j.Status {
+	case "queued":
+		return "Waiting to start."
+	case "running":
+		if j.Total > 0 {
+			return fmt.Sprintf("Updating %d of %d memories. You can leave this page.", j.Done, j.Total)
+		}
+		return "Getting started."
+	case "failed":
+		return "This stopped before finishing. Check your provider settings, then update again."
+	}
+	return "Finished."
+}
+
 type settingsView struct {
-	S       accounts.Settings // masked
-	Error   string
-	Saved   bool
-	Job     *jobView
-	Live    bool // Job is queued or running
-	Pending bool // desired embedder differs from the active one
+	S     accounts.Settings // masked
+	Error string
+	// NotSaved is true when Error means the submitted settings were rejected
+	// and nothing changed; false for follow-up errors after a successful save.
+	NotSaved bool
+	Saved    bool
+	// EmbedError is true when a rejection concerns the embedding group, so the
+	// collapsed "Advanced" section opens on it.
+	EmbedError bool
+	// ErrField names the form field Error is about ("" when it concerns the
+	// whole form); the message also shows next to that field.
+	ErrField string
+	Job      *jobView
+	Live     bool // Job is queued or running
+	Pending  bool // desired embedder differs from the active one
 	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
 	MaintenanceError string
+}
+
+// embedCustomised reports whether any embedding field differs from its default.
+func embedCustomised(c accounts.Settings) bool {
+	return c.EmbedBaseURL != "" || c.EmbedAPIKey != "" ||
+		(c.EmbedModel != "" && c.EmbedModel != accounts.DefaultEmbedModel) ||
+		(c.EmbedDims != 0 && c.EmbedDims != accounts.DefaultEmbedDims)
 }
 
 func (s *server) latestReembed(ctx context.Context, userID string) (*jobView, error) {
@@ -61,9 +94,12 @@ func (s *server) embedPending(ctx context.Context, userID string) (bool, error) 
 	return act.EmbedModel != cur.EmbedModel || act.EmbedDims != cur.EmbedDims || act.EmbedBaseURL != cur.EffectiveEmbedURL(), nil
 }
 
-func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool) {
+func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool, field ...string) {
 	ctx := r.Context()
-	v := settingsView{Error: msg, Saved: saved}
+	v := settingsView{Error: msg, Saved: saved, NotSaved: status == http.StatusBadRequest}
+	if len(field) > 0 {
+		v.ErrField = field[0]
+	}
 	if cur == nil {
 		if st, err := s.st.GetSettings(ctx, u.UserID); err == nil {
 			cur = st
@@ -75,9 +111,13 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 	}
 	if cur == nil {
 		d := accounts.Settings{}.WithDefaults()
+		d.ChatModel = "gpt-4o-mini" // starting point for a first-time user
 		cur = &d
 	}
 	v.S = cur.Masked()
+	// Validate and TestProvider errors do not say which group failed, so a
+	// rejected save opens the embedding group whenever it was customised.
+	v.EmbedError = v.NotSaved && (strings.Contains(strings.ToLower(msg), "embed") || embedCustomised(*cur) || strings.HasPrefix(v.ErrField, "embed_"))
 	j, err := s.latestReembed(ctx, u.UserID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -134,8 +174,8 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	redisplay := in // keys are masked on display
-	if err := in.Validate(s.st.AllowPrivate); err != nil {
-		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false)
+	if field, err := in.ValidateField(s.st.AllowPrivate); err != nil {
+		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false, field)
 		return
 	}
 	if err := s.testProvider(ctx, in); err != nil {
@@ -168,7 +208,7 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		if _, err := s.opts.Enqueue(ctx, u.UserID, "reembed"); err != nil {
 			s.cfg.Logger.Error("enqueue reembed", "err", err)
 			s.settingsPage(w, r, u, http.StatusInternalServerError, nil,
-				"Settings were saved, but re-embedding could not be started. Use Retry.", false)
+				"Settings were saved, but re-embedding could not be started. Use Update memories now.", false)
 			return
 		}
 	}

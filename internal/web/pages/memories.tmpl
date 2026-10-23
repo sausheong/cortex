@@ -1,50 +1,106 @@
 {{define "title"}}Memories{{end}}
 {{define "content"}}
 {{with .Data}}
+{{template "memnav" $}}
 <h1>Memories</h1>
-{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-{{if .Restored}}<p class="notice">Restored.</p>{{end}}
-<form method="get" action="/memories">
-  <label>Search <input name="q" value="{{.Q}}"></label>
-  <label>Written by
-    <select name="by"><option value="">anyone</option>
-      {{range .Conns}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Name}}</option>{{end}}
-    </select></label>
-  <label>From <input name="from" type="date" value="{{.From}}"></label>
-  <label>To <input name="to" type="date" value="{{.To}}"></label>
-  <button class="btn">Filter</button>
+<p class="lede">{{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}{{if .HasMore}} match{{if eq .Total 1}}es{{end}} your filter{{else}} stored{{end}}.</p>
+{{template "setup" $}}
+{{if .Undo}}
+<section class="notice" id="undo-notice" role="status">
+  <p><strong>Deleted {{.Undo.Count}} {{if eq .Undo.Count 1}}memory{{else}}memories{{end}}.</strong> You can restore {{if eq .Undo.Count 1}}it{{else}}them{{end}} for 30 days.</p>
+  <form method="post" action="/memories/restore/{{.Undo.BatchID}}" class="actions">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="next" value="{{.Undo.Next}}">
+    <button class="btn">Undo delete</button>
+    <a href="/memories/deleted">Recently deleted</a>
+  </form>
+</section>
+{{end}}
+{{if .WasRestored}}<p class="notice" role="status">{{if .Restored}}Restored {{.Restored}} {{if eq .Restored 1}}memory{{else}}memories{{end}}.{{else}}Restored.{{end}}</p>{{end}}
+{{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+<form method="get" action="/memories" class="search">
+  <div class="search-row">
+    <label>Search <input name="q" type="search" value="{{.Q}}"></label>
+    <label>Written by
+      <select name="by"><option value="">Anyone</option>
+        {{range .Conns}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select></label>
+    <button class="btn-secondary" data-pending="Searching&hellip;">Search</button>
+  </div>
+  <details class="more"{{if or .From .To}} open{{end}}>
+    <summary>More filters</summary>
+    <div class="search-row">
+      <label>From <input name="from" type="date" value="{{.From}}"></label>
+      <label>To <input name="to" type="date" value="{{.To}}"></label>
+    </div>
+  </details>
 </form>
-<p class="note">{{.Total}} memories. <a href="/memories/deleted">Recently deleted</a></p>
-<form method="post" action="/memories/delete">
+<form method="post" action="/memories/delete" id="memform">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <ul class="memlist">
+  <input type="hidden" name="scope" value="selected">
+  <div class="seltoolbar" id="seltoolbar">
+    <span id="selcount" aria-live="polite" class="selcount">{{if .SelectPage}}{{.SelCount}} selected{{end}}</span>
+    <button class="btn-danger-quiet">Delete selected&hellip;</button>
+    <a id="selclear" class="selact" href="{{.PageHref}}"{{if not .SelectPage}} hidden{{end}}>Clear selection</a>
+    <span class="note js-hide">Tick memories to delete. You confirm the count on the next screen.</span>
+  </div>
+  {{if .Memories}}<p class="selall"><a id="selall" class="selact" href="{{.SelectHref}}">Select all on this page{{if gt .SelCount 0}} ({{.SelCount}}){{end}}</a></p>{{end}}
+  <ul class="memlist" id="memlist" aria-describedby="err-ids">
   {{range .Memories}}
-    <li><label><input type="checkbox" name="ids" value="{{.ID}}" style="display:inline;width:auto"> {{.Content}}</label>
-    <span class="note">{{.CreatedAt.Format "2006-01-02"}}{{if .WrittenBy}} · {{index $.Data.ConnNames .WrittenBy}}{{end}}</span></li>
-  {{else}}<li class="note">No memories.</li>{{end}}
+    <li><label class="mem"><input type="checkbox" name="ids" value="{{.ID}}"{{if $.Data.SelectPage}} checked{{end}}>
+      <span class="mem-body"><span class="mem-text">{{.Content}}</span>
+      <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Who}} &middot; {{.Who}}{{end}}</span></span>
+    </label></li>
+  {{else}}<li class="empty-state">{{if $.Data.HasMore}}<strong>Nothing matches.</strong> <span class="note">Try fewer filters, or <a href="/memories">clear the search</a>.</span>{{else}}<strong>No memories yet.</strong>
+    <span class="note">cortex only remembers what a connected assistant saves. <a href="/connections">Connect an assistant</a>, then ask it to remember something about you.</span>{{end}}</li>{{end}}
   </ul>
-  <button class="btn">Delete selected</button>
+  <p class="field-error" id="err-ids" role="alert">{{if eq .ErrField "ids"}}{{.Error}}{{end}}</p>
 </form>
-<p>{{if .PrevPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.PrevPage}}">Previous</a>{{end}}
-{{if .NextPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.NextPage}}">Next</a>{{end}}</p>
-<h2>Bulk delete</h2>
-<form method="post" action="/memories/delete">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <label>Written by
-    <select name="by"><option value="">-</option>
-      {{range .Conns}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
-    </select></label>
-  <label>Older than (days) <input name="older_than" inputmode="numeric"></label>
-  <label>Containing text <input name="match"></label>
-  <button class="btn">Delete matching</button>
-</form>
-<h2>Delete everything</h2>
-<form method="post" action="/memories/delete">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <input type="hidden" name="all" value="1">
-  <label>Type <b>delete my brain</b> to confirm <input name="confirm" autocomplete="off"></label>
-  <button class="btn">Delete all memories</button>
-</form>
-<p class="note">Deleted memories can be restored for 30 days.</p>
+{{if or .PrevPage .NextPage}}<p class="pager">{{if .PrevPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.PrevPage}}">Newer</a>{{end}}
+{{if .NextPage}}<a href="/memories?{{if .Query}}{{.Query}}&amp;{{end}}page={{.NextPage}}">Older</a>{{end}}</p>{{end}}
+<details class="cleanup section"{{if or (eq .ErrField "older_than") (eq .ErrField "match")}} open{{end}}>
+  <summary>Clean up</summary>
+  <p class="note">Deleted memories can be restored for 30 days from <a href="/memories/deleted">Recently deleted</a>. You always see the exact count before anything is deleted.</p>
+  <form method="post" action="/memories/delete" class="cleanup-form">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="scope" value="matching">
+    <h2>Delete by rule</h2>
+    <label>Written by
+      <select name="by"><option value="">Anyone</option>
+        {{range .Conns}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+      </select></label>
+    <label>Older than (days) <input name="older_than" inputmode="numeric" aria-describedby="err-older"{{if eq .ErrField "older_than"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-older" role="alert">{{if eq .ErrField "older_than"}}{{.Error}}{{end}}</p>
+    <label>Containing text <input name="match" aria-describedby="err-match"{{if eq .ErrField "match"}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-match" role="alert">{{if eq .ErrField "match"}}{{.Error}}{{end}}</p>
+    <button class="btn-danger-quiet">Delete matching&hellip;</button>
+  </form>
+  <form method="post" action="/memories/delete" class="cleanup-form">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="scope" value="all">
+    <input type="hidden" name="all" value="1">
+    <h2>Delete everything</h2>
+    <p class="note">Clears all {{.Total}} {{if eq .Total 1}}memory{{else}}memories{{end}}. You type a phrase to confirm.</p>
+    <button class="btn-danger-quiet">Delete all memories&hellip;</button>
+  </form>
+</details>
+<script>
+(function(){
+  var f=document.getElementById("memform"); if(!f) return;
+  var bar=document.getElementById("seltoolbar"), out=document.getElementById("selcount");
+  function upd(){
+    var n=f.querySelectorAll('input[name=ids]:checked').length;
+    bar.classList.toggle("has-sel",n>0);
+    out.textContent=n?n+" selected":"";
+    if(sa) sa.hidden=n===f.querySelectorAll('input[name=ids]').length&&n>0;
+  }
+  function setAll(v){f.querySelectorAll('input[name=ids]').forEach(function(c){c.checked=v});upd();}
+  var sa=document.getElementById("selall"), sc=document.getElementById("selclear");
+  if(sa) sa.addEventListener("click",function(e){e.preventDefault();setAll(true);});
+  if(sc) sc.hidden=false;
+  if(sc) sc.addEventListener("click",function(e){e.preventDefault();setAll(false);});
+  f.addEventListener("change",upd); upd();
+})();
+</script>
 {{end}}
 {{end}}

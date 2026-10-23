@@ -1,15 +1,16 @@
 {{define "title"}}Recently deleted{{end}}
 {{define "content"}}
 {{with .Data}}
+{{template "memnav" $}}
 <h1>Recently deleted</h1>
-{{if .Deleted}}<p class="notice">Deleted {{.Deleted}} memories.</p>{{end}}
-<p class="note">Deletions can be restored for 30 days, then they are removed for good.</p>
-<ul>
+<p class="lede">Deletions can be restored for 30 days, then they are removed for good.</p>
+<ul class="memlist batches">
 {{range .Batches}}
-  <li>{{.CreatedAt.Format "2006-01-02 15:04"}} · {{.Kind}} · {{.Memories}} memories, {{.Entities}} entities
-    <form method="post" action="/memories/restore/{{.ID}}" style="display:inline">
-      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="link">Restore</button></form></li>
-{{else}}<li class="note">Nothing to restore.</li>{{end}}
+  <li><span><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time> · {{.Kind}} · {{.Memories}} {{if eq .Memories 1}}memory{{else}}memories{{end}}{{if .Other}} and {{.Other}} related {{if eq .Other 1}}item{{else}}items{{end}}{{end}}</span>
+    <form class="inline-form" method="post" action="/memories/restore/{{.ID}}">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn-secondary" aria-label="Restore deletion from {{.Abs}}">Restore</button></form></li>
+{{else}}<li class="empty-state"><strong>Nothing deleted recently.</strong>
+  <span class="note">When you delete memories they wait here for 30 days, so you can restore them.</span></li>{{end}}
 </ul>
 <p><a href="/memories">Back to memories</a></p>
 {{end}}

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sausheong/cortex"
 )
@@ -66,10 +67,48 @@ func TestRevokeAndRemoveSoftDeletes(t *testing.T) {
 	if conns[0].Written != 1 {
 		t.Fatalf("written = %d", conns[0].Written)
 	}
-	resp, _ := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {e.connCSRF()}, "remove": {"1"}})
+	csrf := e.connCSRF()
+	// The page offers both choices with the exact count (1 memory + 0 others).
+	_, page := e.get("/connections")
+	if !strings.Contains(page, "Revoke, keep what it wrote") || !strings.Contains(page, "Revoke and delete 1 item it wrote") {
+		t.Fatalf("two-choice step missing: %s", page)
+	}
+	// No choice, or a stale count: nothing happens.
+	for _, f := range []url.Values{{}, {"choice": {"delete"}}, {"choice": {"delete"}, "confirm_count": {"7"}}, {"remove": {"1"}}} {
+		f.Set("csrf", csrf)
+		r, _ := e.post("/connections/"+conn.ID+"/revoke", f)
+		if r.StatusCode == http.StatusSeeOther {
+			t.Fatalf("revoked without a valid confirmation: %v", f)
+		}
+		if _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
+			t.Fatalf("token revoked by refused request %v: %v", f, err)
+		}
+	}
+	_, body := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {csrf}, "choice": {"delete"}, "confirm_count": {"7"}})
+	if !strings.Contains(body, "changed from 7 to 1") {
+		t.Fatalf("stale count message: %s", body)
+	}
+	resp, _ := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {csrf}, "choice": {"delete"}, "confirm_count": {"1"}})
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
+	// Persistent notice with Undo; Undo restores the item and the connection stays revoked.
+	_, notice := e.get(resp.Header.Get("Location"))
+	bm := regexpBatch.FindStringSubmatch(notice)
+	if !strings.Contains(notice, "Revoked agent1.") || !strings.Contains(notice, "Undo delete") || bm == nil {
+		t.Fatalf("no undo notice: %s", notice)
+	}
+	if r, _ := e.post("/memories/restore/"+bm[1], url.Values{"csrf": {csrf}, "next": {"/connections"}}); r.StatusCode != 303 || r.Header.Get("Location") != "/connections?restored=1" {
+		t.Fatalf("undo: %d %q", r.StatusCode, r.Header.Get("Location"))
+	}
+	if n := len(e.liveContents(ua.ID)); n != 1 {
+		t.Fatalf("undo left %d live memories", n)
+	}
+	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+		t.Fatal("undo re-enabled the token")
+	}
+	// Redo the delete part for the original assertions below.
+	e.root.ForUser(ua.ID).SoftDeleteByConnection(t.Context(), conn.ID)
 	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("revoked token still resolves")
 	}
@@ -90,8 +129,8 @@ func TestRevokeForeignConnectionIs404(t *testing.T) {
 	e.newClient()
 	e.signIn(alice(), "")
 	csrf := e.connCSRF()
-	r1, b1 := e.post("/connections/"+bconn.ID+"/revoke", url.Values{"csrf": {csrf}, "remove": {"1"}})
-	r2, b2 := e.post("/connections/c_doesnotexist/revoke", url.Values{"csrf": {csrf}, "remove": {"1"}})
+	r1, b1 := e.post("/connections/"+bconn.ID+"/revoke", url.Values{"csrf": {csrf}, "choice": {"delete"}, "confirm_count": {"0"}})
+	r2, b2 := e.post("/connections/c_doesnotexist/revoke", url.Values{"csrf": {csrf}, "choice": {"delete"}, "confirm_count": {"0"}})
 	if r1.StatusCode != 404 || r2.StatusCode != 404 || b1 != b2 {
 		t.Fatalf("foreign %d %q vs absent %d %q", r1.StatusCode, b1, r2.StatusCode, b2)
 	}
@@ -127,8 +166,53 @@ func TestInstructionTextPresent(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	_, body := e.get("/connections")
-	const want = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me — a preference, a person or organisation I know, a capability, my background — save it with cortex `remember`."
+	const want = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me (a preference, a person or organisation I know, a capability, my background), save it with cortex `remember`."
 	if !strings.Contains(html.UnescapeString(body), want) {
 		t.Fatalf("instruction text missing")
+	}
+}
+
+func TestRevokeKeepLeavesWrittenData(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1")
+	m := &cortex.Memory{Content: "kept"}
+	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {e.connCSRF()}, "choice": {"keep"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+		t.Fatal("token still resolves")
+	}
+	if !e.liveContents(ua.ID)["kept"] {
+		t.Fatal("kept memory was deleted")
+	}
+	_, body := e.get(resp.Header.Get("Location"))
+	if !strings.Contains(body, "Revoked agent1.") || strings.Contains(body, "Undo delete") {
+		t.Fatalf("notice wrong: %s", body)
+	}
+}
+
+func TestTokenNameErrorTiedToField(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	resp, body := e.post("/connections/tokens", url.Values{"csrf": {e.connCSRF()}, "name": {"   "}})
+	if resp.StatusCode != 200 || !strings.Contains(body, `aria-describedby="err-name"`) || !strings.Contains(body, `aria-invalid="true"`) || !strings.Contains(body, "Enter a name for the token") {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+}
+
+func TestAgo(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		10 * time.Second: "just now", time.Minute: "1 minute ago", 3 * time.Hour: "3 hours ago",
+		72 * time.Hour: "3 days ago", 24 * time.Hour: "1 day ago", 70 * 24 * time.Hour: "2 months ago", 800 * 24 * time.Hour: "2 years ago",
+	} {
+		if got := ago(d); got != want {
+			t.Errorf("ago(%v) = %q, want %q", d, got, want)
+		}
 	}
 }

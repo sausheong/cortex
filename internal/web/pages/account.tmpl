@@ -2,12 +2,20 @@
 {{define "content"}}
 {{with .Data}}
 <h1>Account</h1>
-<p>Storage: {{.MB}} MB · {{.Usage.Memories}} memories · {{.Usage.Entities}} entities · {{.Usage.Chunks}} chunks{{if .Usage.Deleted}} · {{.Usage.Deleted}} deleted (restorable for 30 days){{end}}</p>
-<h2>Delete account</h2>
+<p class="lede">What cortex holds for you, and how to close your account.</p>
+<h2>Storage</h2>
+<dl class="facts">
+  <div><dt>Space used</dt><dd>{{.MB}} MB</dd></div>
+  <div><dt>Memories</dt><dd>{{.Usage.Memories}}</dd></div>
+  <div><dt>People, places and things</dt><dd>{{.Usage.Entities}}</dd></div>
+  {{if .Usage.Deleted}}<div><dt>Deleted, can be restored for 30 days</dt><dd>{{.Usage.Deleted}}</dd></div>{{end}}
+</dl>
+<h2 class="section">Delete account</h2>
 <p>This signs you out and disconnects every assistant at once. Your data is kept for 30 days; signing in again within that time restores it, without connections.</p>
-<form method="post" action="/account/delete" onsubmit="return confirm('Delete your account?')">
+<form method="post" action="/account/delete">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <button class="btn">Delete my account</button>
+  <div class="actions"><button class="btn-danger-quiet">Delete my account&hellip;</button>
+  <span class="note">You confirm on the next screen.</span></div>
 </form>
 {{end}}
 {{end}}
