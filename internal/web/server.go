@@ -70,6 +70,8 @@ type server struct {
 
 	authLimit *accounts.Limiter
 	testLimit *accounts.Limiter
+	zipLimit  *accounts.Limiter
+	vcache    vaultCache
 
 	// Seams for tests.
 	testProvider func(ctx context.Context, s accounts.Settings) error
@@ -127,6 +129,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /settings/reembed", s.auth(s.settingsReembed))
 	mux.HandleFunc("GET /settings/job/{id}", s.auth(s.jobProgress))
 	s.mountMemories(mux)
+	s.mountVault(mux)
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(sub)))
 	if s.opts.MCP != nil {

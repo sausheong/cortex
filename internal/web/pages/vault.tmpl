@@ -1,0 +1,62 @@
+{{template "layout" .}}
+{{define "title"}}Vault{{end}}
+{{define "vaultrows"}}{{with .Data}}
+<p class="note vault-count" role="status" id="vault-count">{{if .Filtered}}{{.Total}} of {{.All}} files{{else}}{{.All}} files{{end}}{{if .FolderLabel}} &middot; {{.FolderLabel}}{{end}}</p>
+{{if .Rows}}<ul class="vault-files">
+{{range .Rows}}<li><a class="vf" href="/vault/{{.Path}}"><span class="vf-name">{{.Path}}</span>{{if ne .Name .Path}}<span class="vf-title">{{.Name}}</span>{{end}}</a>{{if .Ago}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</li>
+{{end}}</ul>{{else}}
+<div class="empty-state">{{if .Filtered}}<strong>No files match.</strong> <span class="note">Try a shorter name, or <a href="/vault">show every file</a>.</span>{{else}}<strong>The vault is empty.</strong> <span class="note">Pages appear here once an assistant has saved memories about people, organisations or topics.</span>{{end}}</div>{{end}}
+{{if or .Prev .Next}}<p class="pager" aria-label="Pages">{{if .Prev}}<a href="/vault?{{if .Query}}{{.Query}}&amp;{{end}}page={{.Prev}}">Previous</a>{{end}}
+{{if .Next}}<a href="/vault?{{if .Query}}{{.Query}}&amp;{{end}}page={{.Next}}">Next</a>{{end}}</p>{{end}}
+{{end}}{{end}}
+{{define "content"}}
+{{with .Data}}
+<div class="vault-wide">
+<h1>Vault</h1>
+<p class="lede">Everything cortex knows, as linked notes you can open in Obsidian or feed to an LLM wiki. Read-only: it is rebuilt from your memories.</p>
+<div class="vault">
+  <aside class="vault-side" aria-label="Folders">
+    <form method="get" action="/vault" class="vault-filter" role="search">
+      <label>Filter files <input id="vault-q" name="q" type="search" value="{{.Q}}" autocomplete="off" placeholder="Name or file"></label>
+      {{if .Folder}}<input type="hidden" name="folder" value="{{.Folder}}">{{end}}
+      <label>Sort by
+        <select name="sort"><option value="name"{{if eq .Sort "name"}} selected{{end}}>Name</option><option value="updated"{{if eq .Sort "updated"}} selected{{end}}>Last updated</option></select></label>
+      <button class="btn-secondary">Apply</button>
+    </form>
+    <nav aria-label="Vault folders" class="vault-folders">
+      <ul>
+        <li><a href="/vault{{if .Q}}?q={{.Q | urlquery}}{{end}}"{{if not .Folder}} aria-current="page"{{end}}>All files <span class="count">{{.All}}</span></a></li>
+        <li><a href="/vault?folder=index{{if .Q}}&amp;q={{.Q | urlquery}}{{end}}"{{if eq .Folder "index"}} aria-current="page"{{end}}>Index <span class="count">1</span></a></li>
+        {{range .Folders}}<li><a href="/vault?folder={{.Key}}{{if $.Data.Q}}&amp;q={{$.Data.Q | urlquery}}{{end}}"{{if eq .Key $.Data.Folder}} aria-current="page"{{end}}>{{.Label}} <span class="count">{{.Count}}</span></a></li>
+        {{end}}
+      </ul>
+    </nav>
+    <p class="vault-dl"><a class="btn-secondary btn" href="/vault/download">Download as .zip</a></p>
+    <p class="note">Same files as <code>cortex export</code>.</p>
+  </aside>
+  <section class="vault-main" id="vault-results" aria-label="Files">
+    {{template "vaultrows" $}}
+  </section>
+</div>
+</div>
+<script>
+(function(){
+var q=document.getElementById("vault-q"),res=document.getElementById("vault-results");
+if(!q||!res||!window.fetch)return;
+var t,n=0,form=q.form;
+function run(){
+  var p=new URLSearchParams(new FormData(form));p.delete("page");
+  var u="/vault?"+p.toString(),id=++n;
+  fetch(u,{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(h){
+    if(id!==n)return;
+    var d=new DOMParser().parseFromString(h,"text/html"),r=d.getElementById("vault-results");
+    if(r){res.innerHTML=r.innerHTML;history.replaceState(null,"",u)}
+  }).catch(function(){});
+}
+q.addEventListener("input",function(){clearTimeout(t);t=setTimeout(run,200)});
+form.querySelector("select").addEventListener("change",run);
+form.addEventListener("submit",function(e){e.preventDefault();run()});
+})();
+</script>
+{{end}}
+{{end}}

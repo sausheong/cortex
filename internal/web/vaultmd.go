@@ -1,0 +1,174 @@
+package web
+
+import (
+	"bytes"
+	"html/template"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
+)
+
+// wikiLink is an Obsidian [[target|alias]] link, resolved against the viewer's
+// own vault when parsed.
+type wikiLink struct {
+	ast.BaseInline
+	Label string
+	Href  string // "" when the target has no page
+}
+
+var kindWikiLink = ast.NewNodeKind("WikiLink")
+
+func (*wikiLink) Kind() ast.NodeKind           { return kindWikiLink }
+func (n *wikiLink) Dump(src []byte, level int) { ast.DumpHelper(n, src, level, nil, nil) }
+
+type wikiParser struct {
+	resolve func(target string) (path string, ok bool)
+}
+
+func (wikiParser) Trigger() []byte { return []byte{'['} }
+
+func (p wikiParser) Parse(_ ast.Node, block text.Reader, _ parser.Context) ast.Node {
+	line, _ := block.PeekLine()
+	if len(line) < 5 || line[1] != '[' {
+		return nil
+	}
+	end := bytes.Index(line, []byte("]]"))
+	if end < 3 {
+		return nil
+	}
+	inner := string(line[2:end])
+	target, alias, hasAlias := strings.Cut(inner, "|")
+	target = strings.TrimSpace(target)
+	if target == "" || strings.ContainsAny(target, "[]") {
+		return nil
+	}
+	label := strings.TrimSpace(alias)
+	if !hasAlias || label == "" {
+		label = target
+	}
+	block.Advance(end + 2)
+	n := &wikiLink{Label: label}
+	if path, ok := p.resolve(target); ok {
+		n.Href = "/vault/" + escapePath(path)
+	}
+	return n
+}
+
+func escapePath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, s := range parts {
+		parts[i] = url.PathEscape(s)
+	}
+	return strings.Join(parts, "/")
+}
+
+type wikiRenderer struct{}
+
+func (wikiRenderer) RegisterFuncs(r renderer.NodeRendererFuncRegisterer) {
+	r.Register(kindWikiLink, func(w util.BufWriter, _ []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		n := node.(*wikiLink)
+		label := util.EscapeHTML([]byte(n.Label))
+		if n.Href == "" {
+			_, _ = w.WriteString(`<span class="unresolved" title="No page with this name">`)
+			_, _ = w.Write(label)
+			_, _ = w.WriteString(`</span>`)
+		} else {
+			_, _ = w.WriteString(`<a class="wikilink" href="`)
+			_, _ = w.Write(util.EscapeHTML([]byte(n.Href)))
+			_, _ = w.WriteString(`">`)
+			_, _ = w.Write(label)
+			_, _ = w.WriteString(`</a>`)
+		}
+		return ast.WalkContinue, nil
+	})
+}
+
+// renderMarkdown turns vault markdown into HTML. Raw HTML in the source is
+// dropped and unsafe link schemes (javascript:, data:, ...) are neutralised
+// by goldmark's default, safe configuration (no html.WithUnsafe).
+func renderMarkdown(src string, resolve func(string) (string, bool)) template.HTML {
+	md := goldmark.New(
+		goldmark.WithParserOptions(parser.WithInlineParsers(
+			util.Prioritized(wikiParser{resolve}, 199))),
+		goldmark.WithRendererOptions(renderer.WithNodeRenderers(
+			util.Prioritized(wikiRenderer{}, 100))),
+	)
+	var buf bytes.Buffer
+	if err := md.Convert([]byte(src), &buf); err != nil {
+		return template.HTML(template.HTMLEscapeString(src))
+	}
+	// Plain links with a scheme we do not browse to are rendered inert by
+	// goldmark; links that remain get rel so they never leak the vault URL.
+	out := strings.ReplaceAll(buf.String(), `<a href="http`, `<a rel="noopener noreferrer nofollow" href="http`)
+	return template.HTML(out)
+}
+
+// splitFrontmatter separates the leading --- block from the body.
+func splitFrontmatter(content string) (front, body string) {
+	if !strings.HasPrefix(content, "---\n") {
+		return "", content
+	}
+	rest := content[4:]
+	i := strings.Index(rest, "\n---\n")
+	if i < 0 {
+		return "", content
+	}
+	return rest[:i], strings.TrimLeft(rest[i+5:], "\n")
+}
+
+type prop struct {
+	Key, Value string
+	Nested     bool
+}
+
+var kvLine = regexp.MustCompile(`^(\s*)([A-Za-z0-9_.-]+):(?: (.*))?$`)
+
+// parseProps reads the exporter's flat frontmatter (one level of nesting
+// under attributes) into display rows.
+func parseProps(front string) []prop {
+	var out []prop
+	for _, ln := range strings.Split(front, "\n") {
+		m := kvLine.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		v := unyaml(m[3])
+		if m[3] == "" && m[1] == "" {
+			out = append(out, prop{Key: m[2]})
+			continue
+		}
+		out = append(out, prop{Key: m[2], Value: v, Nested: m[1] != ""})
+	}
+	return out
+}
+
+func unyaml(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+		s = strings.ReplaceAll(s, `\"`, `"`)
+		s = strings.ReplaceAll(s, `\\`, `\`)
+	}
+	return s
+}
+
+var wikiRe = regexp.MustCompile(`\[\[([^\[\]\n]+?)\]\]`)
+
+// wikiTargets lists the link targets in content, in order.
+func wikiTargets(content string) []string {
+	var out []string
+	for _, m := range wikiRe.FindAllStringSubmatch(content, -1) {
+		t, _, _ := strings.Cut(m[1], "|")
+		out = append(out, strings.TrimSpace(t))
+	}
+	return out
+}
