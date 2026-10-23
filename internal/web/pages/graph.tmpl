@@ -67,13 +67,6 @@
 
 {{if .CenterID}}
 <div class="graph-layout breakout">
-  <section class="graph-stage" aria-labelledby="stage-h">
-    <h2 id="stage-h" class="sr-only">Map of {{.Panel.Name}} and nearby entities</h2>
-    <div class="graph-canvas" id="graph-canvas" data-src="{{.DataURL}}"></div>
-    <p class="note js-only graph-hint">Select a shape to move the map to it. The list below holds the same entities.</p>
-    <ul class="legend" aria-label="Shapes by type">{{range .Legend}}<li>{{.Shape}}{{.Label}}</li>{{end}}</ul>
-  </section>
-
   {{with .Panel}}
   <aside class="graph-panel" aria-labelledby="panel-h">
     <h2 id="panel-h">{{.Name}}</h2>
@@ -84,20 +77,25 @@
       {{range .Attrs}}<div><dt>{{.K}}</dt><dd>{{.V}}</dd></div>{{end}}
     </dl>
 
-    <h3>Relationships</h3>
+    <details class="fold" open>
+      <summary>Relationships ({{n .RelTotal}})</summary>
     {{if .Relations}}<ul class="rels">{{range .Relations}}
       <li>{{if .Outgoing}}<span class="rel-self">{{$.Data.Panel.Name}}</span> <span class="rel-label">{{.Label}}</span> <a href="{{.Href}}">{{.OtherName}}</a>{{else}}<a href="{{.Href}}">{{.OtherName}}</a> <span class="rel-label">{{.Label}}</span> <span class="rel-self">{{$.Data.Panel.Name}}</span>{{end}}
         <span class="note">&middot; {{.OtherType}}</span></li>{{end}}</ul>
       {{if gt .RelTotal (len .Relations)}}<p class="note">Showing the {{len .Relations}} newest of {{n .RelTotal}}.</p>{{end}}
     {{else}}<p class="note">No relationships yet.</p>{{end}}
+    </details>
 
-    <h3>Memories that mention it</h3>
+    <details class="fold" open>
+      <summary>Memories that mention it ({{n .Mentions}})</summary>
     {{if .Memories}}<ul class="mentions">{{range .Memories}}
       <li><a href="{{$.Data.Panel.MemHref}}" class="mention-text">{{.Text}}</a> <time class="note" datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></li>{{end}}</ul>
       {{if gt .Mentions (len .Memories)}}<p><a href="{{.MemHref}}">See all {{n .Mentions}} in Memories</a></p>{{end}}
     {{else}}<p class="note">No memory mentions it right now.</p>{{end}}
+    </details>
 
-    <h3>Edit</h3>
+    <details class="fold"{{if or (eq $.Data.ErrField "rename") (eq $.Data.ErrField "merge") (eq $.Data.ErrField "delete") $.Data.Offer $.Data.MergeSearched}} open data-keep{{else}} open{{end}}>
+      <summary>Edit or delete</summary>
     <details class="rename"{{if or (eq $.Data.ErrField "rename") $.Data.Offer}} open{{end}}>
       <summary>Rename</summary>
       <form class="rename-panel graph-edit" method="post" action="/graph/rename" autocomplete="off">
@@ -148,8 +146,17 @@
       <p class="note">You confirm on the next screen. You can restore it for 30 days.</p>
     </form>
     {{end}}
+    </details>
   </aside>
   {{end}}
+
+  <section class="graph-stage" aria-labelledby="stage-h">
+    <h2 id="stage-h" class="sr-only">Map of {{.Panel.Name}} and nearby entities</h2>
+    <div class="graph-canvas" id="graph-canvas" data-src="{{.DataURL}}"></div>
+    <p class="note js-only graph-hint">Select a shape to move the map to it. The list below holds the same entities.</p>
+    <ul class="legend" aria-label="Shapes by type">{{range .Legend}}<li>{{.Shape}}{{.Label}}</li>{{end}}</ul>
+  </section>
+
 
   <section class="graph-list" aria-labelledby="near-h">
     <h2 id="near-h">Near {{.Panel.Name}}</h2>

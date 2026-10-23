@@ -240,6 +240,7 @@ main h1{font-size:1.5rem}
 /* Heading and lede keep the 42rem column on every page; only a map, panel or list beneath breaks out. */
 .breakout{--wide:64rem;position:relative;left:50%;width:min(var(--wide),calc(100vw - 2 * var(--s4)));transform:translateX(-50%)}
 .graph-layout.breakout{--wide:72rem}
+@media (max-width:48rem){.breakout{left:0;width:100%;transform:none}}
 .graph-search label{margin:0 0 var(--s1)}
 .graph-search-row{display:grid;justify-content:start;grid-template-columns:minmax(0,28rem) auto;gap:var(--s3);align-items:end}
 .graph-search-row input{margin-top:0;min-height:44px}
@@ -278,15 +279,18 @@ label.check input{margin:0}
 .g-node.is-center{cursor:default}
 .g-node.is-center .g-shape{fill:var(--accent-soft);stroke:var(--accent);stroke-width:2}
 .g-node:hover .g-shape,.g-node.is-hot .g-shape{fill:var(--accent-soft);stroke:var(--accent);stroke-width:2.5}
-.g-label{font:var(--w-label) var(--text-sm)/1.4 var(--font);fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round;pointer-events:none}
+.g-label{font-family:var(--font);font-weight:var(--w-label);fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .g-node.is-center .g-label{font-weight:var(--w-strong)}
+.g-hit{fill:transparent;stroke:none}
 .g-label-more{display:none}
 .g-node:hover .g-label-more,.g-node.is-hot .g-label-more,.g-node.is-open .g-label-more{display:block}
 .graph-hint{margin:var(--s2) 0 0}
 .legend{display:flex;flex-wrap:wrap;gap:0 var(--s4);list-style:none;margin:var(--s2) 0 0;padding:0;font-size:var(--text-sm);color:var(--muted)}
 .legend li{display:inline-flex;align-items:center;gap:var(--s2);min-height:28px}
 .graph-panel h2{margin:0 0 var(--s1);overflow-wrap:anywhere}
-.graph-panel>h3:first-of-type{margin-top:var(--s4)}
+details.fold{border-top:1px solid var(--line);margin-top:var(--s3)}
+details.fold>summary{display:flex;align-items:center;min-height:44px;font-weight:var(--w-strong);cursor:pointer}
+details.fold[open]>summary{margin-bottom:var(--s1)}
 .panel-type{display:flex;align-items:center;gap:var(--s2);margin:0 0 var(--s3);color:var(--muted);font-size:var(--text-sm);font-weight:var(--w-label)}
 .rels,.mentions{margin:0;padding:0;list-style:none}
 .rels li,.mentions li{padding:var(--s2) 0;border-top:1px solid var(--line);max-width:none}
@@ -303,7 +307,7 @@ label.check input{margin:0}
 .graph-delete .note{margin:var(--s2) 0 0}
 .graph-panel .facts{margin-bottom:var(--s3)}
 .graph-list h2{font-size:var(--text-lg)}
-@media (max-width:560px){.graph-search-row{grid-template-columns:1fr}.graph-panel{order:-1}}
+@media (max-width:560px){.graph-search-row{grid-template-columns:1fr}}
 
 /* Home: quiet sections divided by hairlines, plain rows, no tiles. */
 .home-section{margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--line)}

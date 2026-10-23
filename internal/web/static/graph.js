@@ -6,7 +6,16 @@
   var box = document.getElementById("graph-canvas");
   if (!box || !window.d3f) return;
   var NS = "http://www.w3.org/2000/svg";
-  var data = null, timer = 0, lastW = 0;
+  var data = null, timer = 0, lastW = 0, open = null;
+  function isCoarse() { return !!(window.matchMedia && matchMedia("(hover: none)").matches); }
+  function closeOpen() { if (open) open.classList.remove("is-open"); open = null; }
+  // A tapped label closes on a tap elsewhere or on Escape.
+  document.addEventListener("click", closeOpen);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeOpen(); });
+  // On phones the side panel starts folded so the map is within reach; a fold
+  // holding an error or an open task stays open.
+  if (window.matchMedia && matchMedia("(max-width:560px)").matches)
+    document.querySelectorAll("details.fold:not([data-keep])").forEach(function (d) { d.open = false; });
 
   function el(name, attrs, parent) {
     var n = document.createElementNS(NS, name);
@@ -38,29 +47,72 @@
       .force("center", d3f.forceCenter(W / 2, H / 2))
       .stop();
     for (var i = 0; i < 300; i++) sim.tick();
-    // Which nodes carry a visible label: all of them when the map is small,
-    // otherwise the centre and the best-connected neighbours. The rest show
-    // theirs on hover, focus (via the list) or tap.
-    var LABEL_ALL = 12, LABEL_TOP = 8;
-    var ranked = nodes.filter(function (n) { return !n.center; })
-      .sort(function (a, b) { return (b.rels || 0) - (a.rels || 0); });
-    var shown = {};
-    nodes.forEach(function (n) { if (n.center || nodes.length <= LABEL_ALL) shown[n.id] = true; });
-    if (nodes.length > LABEL_ALL) ranked.slice(0, LABEL_TOP).forEach(function (n) { shown[n.id] = true; });
-    function labelOf(n) { return short(n.name, n.center ? 28 : 20); }
-    // Fit the viewBox to the nodes, their labels and a margin, so the map
-    // fills its frame instead of floating in blank canvas.
-    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, m = 24;
-    nodes.forEach(function (n) {
-      var r = n.center ? 20 : 14, lw = shown[n.id] ? labelOf(n).length * 3.9 : 0, lb = shown[n.id] ? (n.center ? 42 : 34) : 0;
-      x0 = Math.min(x0, n.x - Math.max(r, lw)); x1 = Math.max(x1, n.x + Math.max(r, lw));
-      y0 = Math.min(y0, n.y - r); y1 = Math.max(y1, n.y + Math.max(r, lb));
-    });
-    x0 -= m; y0 -= m; x1 += m; y1 += m;
-    var minW = 300, minH = 200;
-    if (x1 - x0 < minW) { var cx = (x0 + x1) / 2; x0 = cx - minW / 2; x1 = cx + minW / 2; }
-    if (y1 - y0 < minH) { var cy = (y0 + y1) / 2; y0 = cy - minH / 2; y1 = cy + minH / 2; }
-    var VW = x1 - x0, VH = y1 - y0;
+    // Phones get a taller frame, and the layout is squeezed to fit the frame
+    // width so the map is not scaled down below readable size.
+    var pad = 36, bw = box.clientWidth || W;
+    (function squeeze() {
+      var ax = Infinity, bx = -Infinity, ay = Infinity, by = -Infinity;
+      nodes.forEach(function (n) { ax = Math.min(ax, n.x); bx = Math.max(bx, n.x); ay = Math.min(ay, n.y); by = Math.max(by, n.y); });
+      var fx = Math.min(1, (W - 2 * pad) / Math.max(1, bx - ax)), fy = Math.min(1, (H - 2 * pad) / Math.max(1, by - ay));
+      if (fx < 1 || fy < 1) nodes.forEach(function (n) { n.x = W / 2 + (n.x - W / 2) * fx; n.y = H / 2 + (n.y - H / 2) * fy; });
+    })();
+    // Labels are chosen greedily, centre first and then the best-connected
+    // neighbours, and kept only when they overlap no other label or shape.
+    // Sizes are in viewBox units, so they depend on the final scale k
+    // (rendered pixels per unit); font and shapes are compensated by 1/k so
+    // text stays about 14px and shapes and tap targets stay usable.
+    var LABEL_MAX = 10;
+    var order = nodes.filter(function (n) { return n.center; }).concat(
+      nodes.filter(function (n) { return !n.center; }).sort(function (a, b) { return (b.rels || 0) - (a.rels || 0); }));
+    function labelOf(n) { return short(n.name, n.center ? (bw < 520 ? 20 : 28) : (bw < 520 ? 14 : 20)); }
+    function plan(k) {
+      var u = 1 / Math.min(1, k), ss = Math.min(1.6, u), fs = 14 * (1 / k);
+      var info = {}, rects = [], x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      nodes.forEach(function (n) {
+        var r = (n.center ? 20 : 14) * ss, hit = Math.max(r, 12 / k);
+        info[n.id] = { r: r, hit: hit, sc: (n.center ? 1.6 : 1) * ss, label: null };
+        x0 = Math.min(x0, n.x - hit); x1 = Math.max(x1, n.x + hit); y0 = Math.min(y0, n.y - hit); y1 = Math.max(y1, n.y + hit);
+      });
+      function hits(rc, self) {
+        var i;
+        for (i = 0; i < rects.length; i++) if (rc.l < rects[i].r && rc.r > rects[i].l && rc.t < rects[i].b && rc.b > rects[i].t) return true;
+        for (i = 0; i < nodes.length; i++) {
+          var o = nodes[i], q = info[o.id].r + 3;
+          if (o !== self && rc.l < o.x + q && rc.r > o.x - q && rc.t < o.y + q && rc.b > o.y - q) return true;
+        }
+        return false;
+      }
+      var placed = 0;
+      order.forEach(function (n) {
+        if (!n.center && placed >= LABEL_MAX) return;
+        var text = labelOf(n), w = text.length * 0.56 * fs + 6, h = fs * 1.3, r = info[n.id].r, gap = 4;
+        var cands = [
+          { a: "middle", x: 0, y: r + gap + fs * 0.9, l: n.x - w / 2, t: n.y + r + gap },
+          { a: "middle", x: 0, y: -(r + gap + fs * 0.25), l: n.x - w / 2, t: n.y - r - gap - h },
+          { a: "start", x: r + gap, y: fs * 0.35, l: n.x + r + gap, t: n.y - h / 2 },
+          { a: "end", x: -(r + gap), y: fs * 0.35, l: n.x - r - gap - w, t: n.y - h / 2 }
+        ];
+        for (var i = 0; i < cands.length; i++) {
+          var c = cands[i], rc = { l: c.l, t: c.t, r: c.l + w, b: c.t + h };
+          if (rc.l < 4 || rc.r > W - 4 || rc.t < 4 || rc.b > H - 4 || hits(rc, n)) continue;
+          rects.push(rc); placed++;
+          info[n.id].label = { text: text, a: c.a, x: c.x, y: c.y, fs: fs };
+          x0 = Math.min(x0, rc.l); x1 = Math.max(x1, rc.r); y0 = Math.min(y0, rc.t); y1 = Math.max(y1, rc.b);
+          break;
+        }
+      });
+      return { info: info, x0: x0, y0: y0, x1: x1, y1: y1, fs: fs };
+    }
+    var k = Math.min(1, bw / W), pl = plan(k), m = 16, VW, VH, vx, vy;
+    for (var pass = 0; pass < 3; pass++) {
+      VW = Math.max(300, pl.x1 - pl.x0 + 2 * m); VH = Math.max(200, pl.y1 - pl.y0 + 2 * m);
+      var nk = bw / VW;
+      if (Math.abs(nk - k) < 0.02) break;
+      k = nk; pl = plan(k);
+    }
+    VW = Math.max(300, pl.x1 - pl.x0 + 2 * m); VH = Math.max(200, pl.y1 - pl.y0 + 2 * m);
+    var x0 = (pl.x0 + pl.x1) / 2 - VW / 2, y0 = (pl.y0 + pl.y1) / 2 - VH / 2;
+    var fs0 = pl.fs;
 
     box.textContent = "";
     var svg = el("svg", { viewBox: x0 + " " + y0 + " " + VW + " " + VH, "aria-hidden": "true", focusable: "false", class: "g-svg" }, box);
@@ -68,27 +120,32 @@
     var mk = el("marker", { id: "g-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
     el("path", { d: "M0 1L9 5L0 9Z", class: "g-arrowhead" }, mk);
     var gl = el("g", {}, svg), gn = el("g", {}, svg);
-    var open = null;
-    var coarse = window.matchMedia && matchMedia("(hover: none)").matches;
+    closeOpen();
+    var hint = document.querySelector(".graph-hint");
+    if (hint && isCoarse()) hint.textContent = "Tap a shape to see its name, then tap it again to move the map to it. The list below holds the same entities.";
     links.forEach(function (l) {
       var s = l.source, t = l.target, dx = t.x - s.x, dy = t.y - s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
-      var rs = s.center ? 17 : 12, rt = t.center ? 17 : 12;
+      var rs = pl.info[s.id].sc * 10.5, rt = pl.info[t.id].sc * 10.5;
       var line = el("line", { x1: s.x + dx / d * rs, y1: s.y + dy / d * rs, x2: t.x - dx / d * (rt + 3), y2: t.y - dy / d * (rt + 3),
         class: "g-edge", "marker-end": "url(#g-arrow)" }, gl);
       el("title", {}, line).textContent = s.name + " " + l.label + " " + t.name;
     });
     nodes.forEach(function (n) {
+      var inf = pl.info[n.id];
       var g = el("g", { transform: "translate(" + n.x + " " + n.y + ")", class: "g-node" + (n.center ? " is-center" : ""), "data-node": n.id }, gn);
-      var sc = n.center ? 1.6 : 1;
-      el("path", { d: n.path, "fill-rule": "evenodd", transform: "scale(" + sc + ")", class: "g-shape" }, g);
+      el("circle", { r: inf.hit, class: "g-hit" }, g);
+      el("path", { d: n.path, "fill-rule": "evenodd", transform: "scale(" + inf.sc + ")", class: "g-shape" }, g);
       el("title", {}, g).textContent = n.name + " (" + n.type_label + ")";
-      var t = el("text", { y: n.center ? 32 : 24, "text-anchor": "middle", class: "g-label" + (shown[n.id] ? "" : " g-label-more") }, g);
-      t.textContent = labelOf(n);
-      if (!n.center) g.addEventListener("click", function () {
+      var lb = inf.label, shown = !!lb;
+      lb = lb || { text: labelOf(n), a: "middle", x: 0, y: inf.r + 4 + fs0 * 0.9, fs: fs0 };
+      var t = el("text", { x: lb.x, y: lb.y, "font-size": lb.fs, "text-anchor": lb.a, class: "g-label" + (shown ? "" : " g-label-more") }, g);
+      t.textContent = lb.text;
+      if (!n.center) g.addEventListener("click", function (ev) {
         // On touch, a first tap on an unlabelled shape names it; a second opens it.
-        if (coarse && !shown[n.id] && open !== g) {
+        if (isCoarse() && !shown && open !== g) {
           if (open) open.classList.remove("is-open");
           open = g; g.classList.add("is-open");
+          ev.stopPropagation();
           return;
         }
         go(n.id);
