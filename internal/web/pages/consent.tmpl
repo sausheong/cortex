@@ -20,8 +20,11 @@
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <input type="hidden" name="request_id" value="{{.Data.RequestID}}">
   <div class="actions">
-    <button class="btn" name="decision" value="allow">Allow</button>
+    {{if .Data.Unverified}}<button class="btn" name="decision" value="deny" autofocus>Deny</button>
+    <button class="btn-secondary" name="decision" value="allow">Allow anyway</button>
+    {{else}}<button class="btn" name="decision" value="allow">Allow</button>
     <button class="btn-secondary" name="decision" value="deny">Deny</button>
+    {{end}}
   </div>
 </form>
 </div>
