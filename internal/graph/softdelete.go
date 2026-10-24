@@ -370,7 +370,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 			id, c.UserID).Scan(&liveID)
 		switch {
 		case err == nil:
-			if _, err := mergeEntitiesTx(ctx, tx, c.UserID, liveID, id, mergeOpts{}); err != nil {
+			if _, err := c.mergeEntitiesTx(ctx, tx, liveID, id, mergeOpts{}); err != nil {
 				return fmt.Errorf("cortex: restore merge: %w", err)
 			}
 		case errors.Is(err, sql.ErrNoRows):

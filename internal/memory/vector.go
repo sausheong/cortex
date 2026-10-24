@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/model"
-	"github.com/sausheong/cortex/internal/store"
 )
 
 // checkPgvectorVersion returns an error if v is older than 0.8.0.
@@ -133,6 +132,9 @@ func (c Ops) putEmbeddingGen(ctx context.Context, refID, refType string, v []flo
 	if err := checkDims(len(v)); err != nil {
 		return err
 	}
+	if err := c.RequireKey(); err != nil {
+		return err
+	}
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin embedding write: %w", err)
@@ -159,11 +161,14 @@ func (c Ops) putEmbeddingGen(ctx context.Context, refID, refType string, v []flo
 	default:
 		gen = active
 	}
-	if _, err := tx.ExecContext(ctx, upsertEmbeddingSQL(),
-		store.NewID(), c.UserID, refID, refType, VectorLiteral(v), len(v), gen); err != nil {
-		return fmt.Errorf("cortex: insert embedding: %w", err)
+	if err := c.writeEmbedding(ctx, tx, refID, refType, gen, v); err != nil {
+		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	c.NotifyWrite("embedding")
+	return nil
 }
 
 // FlipGeneration switches the user to newGen in one transaction under the
@@ -175,6 +180,9 @@ func (c Ops) FlipGeneration(ctx context.Context, newGen int,
 	inTx func(tx *sql.Tx) error) error {
 	if newGen < 1 {
 		return fmt.Errorf("cortex: invalid generation %d", newGen)
+	}
+	if err := c.RequireKey(); err != nil {
+		return err
 	}
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -189,12 +197,7 @@ func (c Ops) FlipGeneration(ctx context.Context, newGen int,
 			if err := checkDims(len(v)); err != nil {
 				return err
 			}
-			_, err := tx.ExecContext(ctx, upsertEmbeddingSQL(),
-				store.NewID(), c.UserID, refID, refType, VectorLiteral(v), len(v), newGen)
-			if err != nil {
-				return fmt.Errorf("cortex: insert embedding: %w", err)
-			}
-			return nil
+			return c.writeEmbedding(ctx, tx, refID, refType, newGen, v)
 		}
 		if err := embedTail(ctx, tx.Tx, put); err != nil {
 			return err
@@ -217,7 +220,11 @@ func (c Ops) FlipGeneration(ctx context.Context, newGen int,
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	c.NotifyWrite("embedding")
+	return nil
 }
 
 // EnsureVectorIndex creates the partial HNSW index for (dims, refType) if it

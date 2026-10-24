@@ -18,6 +18,9 @@ import (
 // LastSeenAt, keeps the higher confidence and merges attributes (new keys
 // win), and the existing ID is set on the passed relationship.
 func (c Ops) PutRelationship(ctx context.Context, r *model.Relationship) error {
+	if err := c.RequireKey(); err != nil {
+		return err
+	}
 	if err := store.RequireEntity(ctx, c.DB, c.UserID, r.SourceID); err != nil {
 		return err
 	}
@@ -31,6 +34,9 @@ func (c Ops) PutRelationship(ctx context.Context, r *model.Relationship) error {
 	attrs := r.Attributes
 	if attrs == nil {
 		attrs = map[string]any{}
+	}
+	if c.Encrypted() {
+		return c.putRelationshipEnc(ctx, r, attrs, now)
 	}
 	attrsJSON, err := json.Marshal(attrs)
 	if err != nil {
@@ -81,8 +87,8 @@ func (c Ops) PutRelationship(ctx context.Context, r *model.Relationship) error {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE relationships SET invalid_at = COALESCE(?::timestamptz, now())
 			 WHERE user_id = ? AND deleted_at IS NULL AND invalid_at IS NULL
-			   AND source_id = ? AND type = ? AND target_id <> ?`,
-			closeAt, c.UserID, r.SourceID, r.Type, r.TargetID); err != nil {
+			   AND source_id = ? AND ((enc AND type_blind = ?) OR (enc IS NOT TRUE AND type = ?)) AND target_id <> ?`,
+			closeAt, c.UserID, r.SourceID, c.BlindNorm(r.Type), r.Type, r.TargetID); err != nil {
 			return fmt.Errorf("cortex: close superseded relationships: %w", err)
 		}
 	}
@@ -90,6 +96,7 @@ func (c Ops) PutRelationship(ctx context.Context, r *model.Relationship) error {
 		return fmt.Errorf("cortex: commit relationship: %w", err)
 	}
 	r.LastSeenAt = now
+	c.NotifyWrite("relationship")
 	return nil
 }
 
@@ -140,14 +147,15 @@ func (c Ops) GetRelationships(ctx context.Context, entityID string, filters ...m
 	}
 
 	validity, vargs := EdgeValidityClause("", cfg.IncludeInvalid, cfg.AsOf)
-	query := `SELECT id, source_id, target_id, type, attributes, source, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
+	query := `SELECT ` + relCols + `
 		FROM relationships
 		WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ? OR target_id = ?) AND ` + validity
 	args := append([]any{c.UserID, entityID, entityID}, vargs...)
 
 	if cfg.RelType != "" {
-		query += " AND type = ?"
-		args = append(args, ontology.NormalizeType(cfg.RelType))
+		rt := ontology.NormalizeType(cfg.RelType)
+		query += " AND ((enc AND type_blind = ?) OR (enc IS NOT TRUE AND type = ?))"
+		args = append(args, c.BlindNorm(rt), rt)
 	}
 
 	rows, err := c.DB.QueryContext(ctx, query, args...)
@@ -158,18 +166,10 @@ func (c Ops) GetRelationships(ctx context.Context, entityID string, filters ...m
 
 	var rels []model.Relationship
 	for rows.Next() {
-		var r model.Relationship
-		var attrsJSON sql.NullString
-		var validAt, invalidAt sql.NullTime
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.Confidence, &r.CreatedAt, &r.EvidenceCount, &r.LastSeenAt, &validAt, &invalidAt); err != nil {
-			return nil, fmt.Errorf("cortex: scan relationship: %w", err)
+		r, err := c.scanRelationship(rows)
+		if err != nil {
+			return nil, err
 		}
-		if attrsJSON.Valid && attrsJSON.String != "" {
-			if err := json.Unmarshal([]byte(attrsJSON.String), &r.Attributes); err != nil {
-				return nil, fmt.Errorf("cortex: unmarshal relationship attributes: %w", err)
-			}
-		}
-		r.ValidAt, r.InvalidAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt)
 		rels = append(rels, r)
 	}
 	if err := rows.Err(); err != nil {

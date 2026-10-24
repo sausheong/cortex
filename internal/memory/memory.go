@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,9 @@ import (
 // The operation is wrapped in a transaction. The memory's ID, CreatedAt,
 // and UpdatedAt are set on the passed struct.
 func (c Ops) PutMemory(ctx context.Context, m *model.Memory) error {
+	if err := c.RequireKey(); err != nil {
+		return err
+	}
 	m.Confidence = model.CoerceConfidence(m.Confidence)
 	m.ID = store.NewID()
 	now := time.Now().UTC()
@@ -37,13 +41,19 @@ func (c Ops) PutMemory(ctx context.Context, m *model.Memory) error {
 	if m.Speaker != "" {
 		speaker = m.Speaker
 	}
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO memories (id, user_id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after, written_by_connection_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, c.UserID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter, c.NullConn(),
-	)
-	if err != nil {
-		return fmt.Errorf("cortex: insert memory: %w", err)
+	if c.Encrypted() {
+		if err := c.insertMemoryEnc(ctx, tx, m); err != nil {
+			return err
+		}
+	} else {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO memories (id, user_id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after, written_by_connection_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, c.UserID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter, c.NullConn(),
+		)
+		if err != nil {
+			return fmt.Errorf("cortex: insert memory: %w", err)
+		}
 	}
 
 	// Insert entity links into junction table.
@@ -60,6 +70,7 @@ func (c Ops) PutMemory(ctx context.Context, m *model.Memory) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("cortex: commit memory: %w", err)
 	}
+	c.NotifyWrite("memory")
 	return nil
 }
 
@@ -108,7 +119,7 @@ func (c Ops) SearchMemoriesMode(ctx context.Context, query string, limit int, mo
 		          (SELECT count(*) FROM memories x WHERE x.user_id = ? AND x.deleted_at IS NULL AND x.tsv @@ tok.q) AS n
 		   FROM (VALUES `+strings.Join(vals, ", ")+`) AS tok(q)
 		 ), tot AS (SELECT GREATEST(count(*), 1)::float8 AS c FROM memories WHERE user_id = ? AND deleted_at IS NULL)
-		 SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
+		 SELECT `+memCols+`
 		 FROM memories m JOIN d ON m.tsv @@ d.q CROSS JOIN tot
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND `+clause+`
 		 GROUP BY m.id
@@ -123,19 +134,10 @@ func (c Ops) SearchMemoriesMode(ctx context.Context, query string, limit int, mo
 
 	var memories []model.Memory
 	for rows.Next() {
-		var m model.Memory
-		var spk sql.NullString
-		var vat, iat, eat, fa sql.NullTime
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy); err != nil {
-			return nil, fmt.Errorf("cortex: scan memory: %w", err)
+		m, err := c.scanMemory(rows)
+		if err != nil {
+			return nil, err
 		}
-		if spk.Valid {
-			m.Speaker = spk.String
-		}
-		m.ValidAt = store.NullTimePtr(vat)
-		m.InvalidAt = store.NullTimePtr(iat)
-		m.ExpiredAt = store.NullTimePtr(eat)
-		m.ForgetAfter = store.NullTimePtr(fa)
 		memories = append(memories, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -172,7 +174,7 @@ func (c Ops) GetMemoriesByEntityMode(ctx context.Context, entityID string, mode 
 	args = append(args, targs...)
 
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
+		`SELECT `+memCols+`
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id AND me.user_id = m.user_id
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND me.entity_id = ? AND `+clause,
@@ -185,19 +187,10 @@ func (c Ops) GetMemoriesByEntityMode(ctx context.Context, entityID string, mode 
 
 	var memories []model.Memory
 	for rows.Next() {
-		var m model.Memory
-		var spk sql.NullString
-		var vat, iat, eat, fa sql.NullTime
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy); err != nil {
-			return nil, fmt.Errorf("cortex: scan memory: %w", err)
+		m, err := c.scanMemory(rows)
+		if err != nil {
+			return nil, err
 		}
-		if spk.Valid {
-			m.Speaker = spk.String
-		}
-		m.ValidAt = store.NullTimePtr(vat)
-		m.InvalidAt = store.NullTimePtr(iat)
-		m.ExpiredAt = store.NullTimePtr(eat)
-		m.ForgetAfter = store.NullTimePtr(fa)
 		memories = append(memories, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -310,25 +303,13 @@ func (c Ops) InvalidateMemory(ctx context.Context, id string, invalidAt *time.Ti
 // (nil, nil) if no such memory exists. Used by reconciliation's apply-time
 // re-validation, which must distinguish "missing" from "already invalidated".
 func (c Ops) GetMemoryByID(ctx context.Context, id string) (*model.Memory, error) {
-	var m model.Memory
-	var spk sql.NullString
-	var vat, iat, eat, fa sql.NullTime
-	err := c.DB.QueryRowContext(ctx,
-		`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at, static, forget_after, COALESCE(written_by_connection_id, '')
-		 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.UserID,
-	).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy)
-	if err == sql.ErrNoRows {
+	m, err := c.scanMemory(c.DB.QueryRowContext(ctx,
+		`SELECT `+memCols+` FROM memories m WHERE m.id = ? AND m.user_id = ? AND m.deleted_at IS NULL`, id, c.UserID))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrMemoryNotFound()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get memory by id: %w", err)
 	}
-	if spk.Valid {
-		m.Speaker = spk.String
-	}
-	m.ValidAt = store.NullTimePtr(vat)
-	m.InvalidAt = store.NullTimePtr(iat)
-	m.ExpiredAt = store.NullTimePtr(eat)
-	m.ForgetAfter = store.NullTimePtr(fa)
 	return &m, nil
 }

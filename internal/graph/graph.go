@@ -102,11 +102,17 @@ func (c Ops) RenameEntity(ctx context.Context, id, name string) error {
 	if name == "" {
 		return errors.New("cortex: entity name is empty")
 	}
+	if err := c.RequireKey(); err != nil {
+		return err
+	}
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin rename: %w", err)
 	}
 	defer tx.Rollback()
+	if c.Encrypted() {
+		return c.renameEntityEnc(ctx, tx, id, name)
+	}
 	var typ string
 	err = tx.QueryRowContext(ctx, `SELECT type FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL FOR UPDATE`, id, c.UserID).Scan(&typ)
 	if err != nil {

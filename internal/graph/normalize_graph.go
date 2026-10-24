@@ -150,7 +150,7 @@ func (c Ops) NormalizeGraph(ctx context.Context, opts ...model.NormalizeOption) 
 			}
 		}
 		for _, drop := range g[1:] {
-			if _, err := mergeEntitiesTx(ctx, tx, c.UserID, keep.id, drop.id, mo); err != nil {
+			if _, err := c.mergeEntitiesTx(ctx, tx, keep.id, drop.id, mo); err != nil {
 				return report, fmt.Errorf("cortex: normalize merge %q into %q: %w", drop.name, keep.name, err)
 			}
 			report.Merged = append(report.Merged, model.MergedEntity{KeepID: keep.id, DropID: drop.id, Name: keep.name, DropName: drop.name, Type: keep.typ})

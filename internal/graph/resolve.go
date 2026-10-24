@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -60,35 +61,64 @@ func (c Ops) IngestEntity(ctx context.Context, e *model.Entity, rc *ResolveConte
 
 // findSameEntity returns the live entity named name (ignoring case) whose
 // type is of the same kind as typ (see kindMatches), preferring an exact
-// name, or nil.
+// name, or nil. Encrypted rows match on name_blind; legacy rows (states none
+// and migrating) on lower(name), and a legacy hit is rewritten as encrypted
+// while migrating.
 func (c Ops) findSameEntity(ctx context.Context, name, typ string) (*model.Entity, error) {
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, type FROM entities
-		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) = lower(?)
-		 ORDER BY (name = ?) DESC, created_at, id`,
-		c.UserID, name, name)
+		`SELECT id, enc, type, type_ct, name, name_ct FROM entities
+		 WHERE user_id = ? AND deleted_at IS NULL
+		   AND ((enc AND name_blind = ?) OR (?::boolean AND enc IS NOT TRUE AND lower(name) = lower(?)))
+		 ORDER BY created_at, id`,
+		c.UserID, c.BlindNorm(name), c.legacyOK(), name)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find entity: %w", err)
 	}
-	var match string
+	type cand struct {
+		id    string
+		enc   bool
+		exact bool
+	}
+	var cands []cand
 	for rows.Next() {
-		var id, t string
-		if err := rows.Scan(&id, &t); err != nil {
+		var e model.Entity
+		var enc bool
+		var t, n sql.NullString
+		var typeCT, nameCT []byte
+		if err := rows.Scan(&e.ID, &enc, &t, &typeCT, &n, &nameCT); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan entity: %w", err)
 		}
-		if match == "" && kindMatches(t, typ) {
-			match = id
+		if err := c.openNameType(&e, enc, n, t, nameCT, typeCT); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if kindMatches(e.Type, typ) {
+			cands = append(cands, cand{e.ID, enc, e.Name == name})
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("cortex: find entity: %w", err)
 	}
-	if match == "" {
+	if len(cands) == 0 {
 		return nil, nil
 	}
-	return c.GetEntity(ctx, match)
+	best := cands[0]
+	for _, cd := range cands {
+		if cd.exact {
+			best = cd
+			break
+		}
+	}
+	e, err := c.GetEntity(ctx, best.id)
+	if err != nil {
+		return nil, err
+	}
+	if !best.enc {
+		c.rewriteEntityLegacy(ctx, e)
+	}
+	return e, nil
 }
 
 // kindMatches reports whether a stored entity type is the same kind as typ:
@@ -131,7 +161,21 @@ func (c Ops) absorbIntoEntity(ctx context.Context, stored, e *model.Entity) erro
 		conf = stored.Confidence
 	}
 	now := time.Now().UTC()
-	if _, err := c.DB.ExecContext(ctx,
+	if c.Encrypted() {
+		var isOwner bool
+		if err := c.DB.QueryRowContext(ctx, `SELECT is_owner FROM entities WHERE id = ? AND user_id = ?`, stored.ID, c.UserID).Scan(&isOwner); err != nil {
+			return fmt.Errorf("cortex: update entity: %w", err)
+		}
+		source := e.Source
+		if isOwner || source == "" {
+			source = stored.Source
+		}
+		if _, err := c.writeEntityEnc(ctx, c.DB, entWrite{id: stored.ID, name: stored.Name, typ: stored.Type, source: source,
+			attrs: attrs, conf: conf, updated: now}); err != nil {
+			return err
+		}
+		c.NotifyWrite("entity")
+	} else if _, err := c.DB.ExecContext(ctx,
 		`UPDATE entities SET attributes = ?::jsonb, confidence = ?, updated_at = ?,
 		   source = CASE WHEN is_owner OR ? = '' THEN source ELSE ? END
 		 WHERE id = ? AND user_id = ?`,
