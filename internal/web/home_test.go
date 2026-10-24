@@ -87,7 +87,7 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	if !strings.Contains(body, "Get started") {
 		t.Fatal("checklist should lead")
 	}
-	for _, hidden := range []string{"About you", "Nightly maintenance", "Has not run yet", `class="home-strip"`, "Assistants</h2>", "Health</h2>", "Recently deleted", "Recently added"} {
+	for _, hidden := range []string{"About you", "Nightly maintenance", "Runs overnight once", `class="home-strip"`, "Assistants</h2>", "Health</h2>", "Recently deleted", "Recently added"} {
 		if strings.Contains(body, hidden) {
 			t.Errorf("first run should hide %q", hidden)
 		}
@@ -280,7 +280,7 @@ func TestHomeHealthRows(t *testing.T) {
 	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
 	e.write(ua.ID, conn.ID, "seed")
 	_, body := e.get("/")
-	for _, want := range []string{"Has not run yet", "Configured with gpt-test", "Measured overnight."} {
+	for _, want := range []string{"Runs overnight once", "Configured with gpt-test", "Not measured yet. Updated overnight."} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}

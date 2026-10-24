@@ -107,7 +107,8 @@ time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums
 .conn-actions details[open]{flex-basis:100%}
 .conn-actions{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--s2) var(--s3);margin-top:var(--s3)}
 .conn-actions form{margin:0}
-details.rename>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 16px;border:1px solid var(--line);border-radius:6px;color:var(--accent);cursor:pointer}
+details.rename>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 4px;border:0;border-radius:6px;color:var(--muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+details.rename>summary:hover,details.rename[open]>summary{color:var(--fg)}
 details.rename>summary::-webkit-details-marker{display:none}
 .rename-panel{margin-top:8px;padding:12px 16px;border:1px solid var(--line);border-radius:8px;display:flex;flex-wrap:wrap;align-items:end;gap:var(--s2)}
 .rename-panel label{margin:0}
@@ -203,7 +204,7 @@ details.cleanup{border-top:1px solid var(--line);padding-top:var(--s2)}
 .trust.is-unverified{background:var(--danger-bg);border-color:var(--danger-line)}
 .trust.is-unverified h2{color:var(--danger)}
 .trust code{overflow-wrap:anywhere;font-weight:var(--w-strong)}
-.consent .actions{margin-top:var(--s3)}
+.consent .actions{margin-top:var(--s5)}
 fieldset{margin:var(--s5) 0 0;padding:0;border:0;min-width:0}
 legend{padding:0;margin:0 0 var(--s2);font-size:var(--text-lg);font-weight:var(--w-strong);letter-spacing:-.01em}
 .group-help{margin:0 0 var(--s3)}
@@ -240,7 +241,7 @@ main h1{font-size:1.5rem}
 .selact[hidden]{display:none}
 
 /* Memories sub-navigation and collapsed advanced settings */
-.subnav{display:flex;flex-wrap:wrap;gap:0 var(--s4);margin:0 0 var(--s3);border-bottom:1px solid var(--line)}
+.subnav{display:flex;flex-wrap:wrap;gap:0 var(--s4);margin:0 0 var(--s5);border-bottom:1px solid var(--line)}
 .subnav a{display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;font-size:var(--text-sm);font-weight:var(--w-label);color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
 .subnav a:hover{color:var(--fg)}
 .subnav a[aria-current=page]{color:var(--fg);font-weight:var(--w-strong);border-bottom-color:var(--accent)}

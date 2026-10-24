@@ -350,7 +350,7 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 		switch {
 		case at == nil:
 			h.MaintState = "none"
-			h.MaintText = "Has not run yet. It runs overnight once your AI provider is set up."
+			h.MaintText = "Runs overnight once your AI provider is set up."
 		case merr == nil || *merr == "":
 			h.MaintState = "ok"
 			h.MaintShort = "ran " + relTime(now, *at)
@@ -390,7 +390,7 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 	case err != nil:
 		fail("usage", err)
 	case !ok:
-		h.StorageText = "Measured overnight."
+		h.StorageText = "Not measured yet. Updated overnight."
 	default:
 		h.StorageText = humanBytes(us.Bytes) + " across " + plural(us.Memories, "memory", "memories") + "."
 	}
