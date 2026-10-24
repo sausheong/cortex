@@ -1,7 +1,9 @@
-package cortex
+package integration_test
 
 import (
 	"context"
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +21,7 @@ func TestOpenAppliesMigrations(t *testing.T) {
 		t.Errorf("version = %d, want 12", v)
 	}
 	var n int
-	err = c.h.DB.QueryRowContext(context.Background(),
+	err = testutil.H(c).DB.QueryRowContext(context.Background(),
 		`SELECT count(*) FROM information_schema.columns
 		 WHERE table_schema = current_schema() AND table_name = 'memories' AND column_name = 'tsv'`).Scan(&n)
 	if err != nil || n != 0 {

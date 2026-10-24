@@ -1,9 +1,10 @@
-package cortex
+package cortex_test
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
@@ -19,7 +20,7 @@ func ExampleCortex_Remember() {
 	}
 	defer cleanup()
 
-	cx, err := Open(dsn)
+	cx, err := cortex.Open(dsn)
 	if err != nil {
 		return
 	}
@@ -28,16 +29,16 @@ func ExampleCortex_Remember() {
 
 	// Use a mock extractor so no LLM is required.
 	cx.SetExtractor(&mockExtractor{
-		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
-			return &Extraction{
-				Entities: []Entity{
+		extractFn: func(_ context.Context, _, _ string) (*cortex.Extraction, error) {
+			return &cortex.Extraction{
+				Entities: []cortex.Entity{
 					{Type: "person", Name: "Alice"},
 					{Type: "organization", Name: "Stripe"},
 				},
-				Relationships: []Relationship{
+				Relationships: []cortex.Relationship{
 					{SourceID: "Alice", TargetID: "Stripe", Type: "works_at"},
 				},
-				Memories: []Memory{
+				Memories: []cortex.Memory{
 					{Content: "Alice works at Stripe"},
 				},
 			}, nil
@@ -45,12 +46,12 @@ func ExampleCortex_Remember() {
 	})
 
 	ctx := context.Background()
-	if err := cx.Remember(ctx, "Alice works at Stripe as an engineer", WithSource("example")); err != nil {
+	if err := cx.Remember(ctx, "Alice works at Stripe as an engineer", cortex.WithSource("example")); err != nil {
 		return
 	}
 
-	people, _ := cx.FindEntities(ctx, EntityFilter{Type: "person"})
-	orgs, _ := cx.FindEntities(ctx, EntityFilter{Type: "organization"})
+	people, _ := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
+	orgs, _ := cx.FindEntities(ctx, cortex.EntityFilter{Type: "organization"})
 	mems, _ := cx.SearchMemories(ctx, "Stripe", 5)
 
 	fmt.Printf("entities: %d people, %d organizations\n", len(people), len(orgs))
@@ -71,7 +72,7 @@ func ExampleCortex_Recall() {
 	}
 	defer cleanup()
 
-	cx, err := Open(dsn)
+	cx, err := cortex.Open(dsn)
 	if err != nil {
 		return
 	}
@@ -81,14 +82,14 @@ func ExampleCortex_Recall() {
 	ctx := context.Background()
 
 	// Seed a chunk directly.
-	if err := cx.PutChunk(ctx, &Chunk{Content: "Alice is a senior engineer at Stripe"}); err != nil {
+	if err := cx.PutChunk(ctx, &cortex.Chunk{Content: "Alice is a senior engineer at Stripe"}); err != nil {
 		return
 	}
 
 	// Decompose to keyword search so no LLM API call is needed.
 	cx.SetLLM(&mockLLM{
-		decomposeFn: func(_ context.Context, q string) ([]StructuredQuery, error) {
-			return []StructuredQuery{
+		decomposeFn: func(_ context.Context, q string) ([]cortex.StructuredQuery, error) {
+			return []cortex.StructuredQuery{
 				{Type: "keyword_search", Params: map[string]any{"query": q}},
 			}, nil
 		},
@@ -119,7 +120,7 @@ func ExampleCortex_Forget() {
 	}
 	defer cleanup()
 
-	cx, err := Open(dsn)
+	cx, err := cortex.Open(dsn)
 	if err != nil {
 		return
 	}
@@ -128,11 +129,11 @@ func ExampleCortex_Forget() {
 
 	ctx := context.Background()
 
-	e := &Entity{Type: "person", Name: "Alice", Source: "example"}
+	e := &cortex.Entity{Type: "person", Name: "Alice", Source: "example"}
 	if err := cx.PutEntity(ctx, e); err != nil {
 		return
 	}
-	if err := cx.PutMemory(ctx, &Memory{
+	if err := cx.PutMemory(ctx, &cortex.Memory{
 		Content:   "Alice works at Stripe",
 		EntityIDs: []string{e.ID},
 		Source:    "example",
@@ -140,14 +141,14 @@ func ExampleCortex_Forget() {
 		return
 	}
 
-	before, _ := cx.FindEntities(ctx, EntityFilter{Type: "person"})
+	before, _ := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
 	fmt.Printf("before forget: %d entity\n", len(before))
 
-	if err := cx.Forget(ctx, Filter{EntityID: e.ID}); err != nil {
+	if err := cx.Forget(ctx, cortex.Filter{EntityID: e.ID}); err != nil {
 		return
 	}
 
-	after, _ := cx.FindEntities(ctx, EntityFilter{Type: "person"})
+	after, _ := cx.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
 	mems, _ := cx.SearchMemories(ctx, "Alice", 5)
 	fmt.Printf("after forget: %d entities\n", len(after))
 	fmt.Printf("memories kept (recoverable): %v\n", len(mems) == 1)
@@ -168,7 +169,7 @@ func ExampleCortex_Traverse() {
 	}
 	defer cleanup()
 
-	cx, err := Open(dsn)
+	cx, err := cortex.Open(dsn)
 	if err != nil {
 		return
 	}
@@ -177,26 +178,26 @@ func ExampleCortex_Traverse() {
 
 	ctx := context.Background()
 
-	alice := &Entity{Type: "person", Name: "Alice"}
-	stripe := &Entity{Type: "organization", Name: "Stripe"}
-	bob := &Entity{Type: "person", Name: "Bob"}
-	for _, e := range []*Entity{alice, stripe, bob} {
+	alice := &cortex.Entity{Type: "person", Name: "Alice"}
+	stripe := &cortex.Entity{Type: "organization", Name: "Stripe"}
+	bob := &cortex.Entity{Type: "person", Name: "Bob"}
+	for _, e := range []*cortex.Entity{alice, stripe, bob} {
 		if err := cx.PutEntity(ctx, e); err != nil {
 			return
 		}
 	}
-	if err := cx.PutRelationship(ctx, &Relationship{
+	if err := cx.PutRelationship(ctx, &cortex.Relationship{
 		SourceID: alice.ID, TargetID: stripe.ID, Type: "works_at",
 	}); err != nil {
 		return
 	}
-	if err := cx.PutRelationship(ctx, &Relationship{
+	if err := cx.PutRelationship(ctx, &cortex.Relationship{
 		SourceID: alice.ID, TargetID: bob.ID, Type: "knows",
 	}); err != nil {
 		return
 	}
 
-	graph, err := cx.Traverse(ctx, alice.ID, WithDepth(1))
+	graph, err := cx.Traverse(ctx, alice.ID, cortex.WithDepth(1))
 	if err != nil {
 		return
 	}
@@ -210,12 +211,12 @@ func ExampleCortex_Traverse() {
 
 // exampleKeyed returns a handle for a fresh encrypted user holding a user key,
 // as a signed-in, unlocked account has. Examples have no *testing.T.
-func exampleKeyed(root *Cortex) *Cortex {
+func exampleKeyed(root *cortex.Cortex) *cortex.Cortex {
 	u, err := root.CreateUser(context.Background(), "example-sub", "example@x.test", "Example", true)
 	if err != nil {
 		panic(err)
 	}
-	if _, err := root.h.DB.ExecContext(context.Background(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = ?`, u.ID); err != nil {
+	if _, err := root.DB().ExecContext(context.Background(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, u.ID); err != nil {
 		panic(err)
 	}
 	uk, err := keys.NewUK()
@@ -223,4 +224,42 @@ func exampleKeyed(root *Cortex) *Cortex {
 		panic(err)
 	}
 	return root.ForUser(u.ID).WithKey(uk, "encrypted")
+}
+
+// mockExtractor is a canned extractor so the examples need no LLM.
+type mockExtractor struct {
+	extractFn func(ctx context.Context, content, contentType string) (*cortex.Extraction, error)
+}
+
+func (m *mockExtractor) Extract(ctx context.Context, content, contentType string) (*cortex.Extraction, error) {
+	if m.extractFn != nil {
+		return m.extractFn(ctx, content, contentType)
+	}
+	return &cortex.Extraction{}, nil
+}
+
+// mockLLM is a canned LLM; only Decompose is customisable.
+type mockLLM struct {
+	decomposeFn func(ctx context.Context, query string) ([]cortex.StructuredQuery, error)
+}
+
+func (m *mockLLM) Extract(context.Context, string, string) (cortex.ExtractionResult, error) {
+	return cortex.ExtractionResult{}, nil
+}
+
+func (m *mockLLM) Decompose(ctx context.Context, query string) ([]cortex.StructuredQuery, error) {
+	if m.decomposeFn != nil {
+		return m.decomposeFn(ctx, query)
+	}
+	return nil, nil
+}
+
+func (m *mockLLM) Summarize(context.Context, []string) (string, error) { return "", nil }
+
+func (m *mockLLM) DetectConflicts(context.Context, []cortex.Memory) ([]cortex.ConflictPair, error) {
+	return nil, nil
+}
+
+func (m *mockLLM) DetectRelations(context.Context, []cortex.Memory) ([]cortex.MemoryRelation, error) {
+	return nil, nil
 }

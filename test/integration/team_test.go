@@ -1,7 +1,7 @@
 // Package cortex_test exercises the Cortex API using the fictional Acme Corp
 // dataset. These tests serve as integration-style examples showing realistic
 // query patterns against a fully seeded knowledge graph.
-package cortex_test
+package integration_test
 
 import (
 	"context"
