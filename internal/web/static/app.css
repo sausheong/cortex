@@ -107,7 +107,7 @@ time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums
 .conn-actions details[open]{flex-basis:100%}
 .conn-actions{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--s2) var(--s3);margin-top:var(--s3)}
 .conn-actions form{margin:0}
-details.rename>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 4px;border:0;border-radius:6px;color:var(--muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+details.rename>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 4px;border:0;border-radius:6px;color:var(--muted);cursor:pointer}
 details.rename>summary{margin-left:calc(var(--s1) * -1)}
 details.rename>summary:hover,details.rename[open]>summary{color:var(--fg)}
 details.rename>summary::-webkit-details-marker{display:none}
@@ -144,7 +144,7 @@ details.rename>summary::-webkit-details-marker{display:none}
 .search-row .btn-secondary{min-height:44px}
 .search-row input,.search-row select{min-height:44px}
 details.more,details.cleanup{margin-top:var(--s2)}
-details.more>summary,details.cleanup>summary{display:flex;align-items:center;width:fit-content;min-height:44px;color:var(--accent);cursor:pointer}
+details.more>summary,details.cleanup>summary{display:flex;align-items:center;width:fit-content;min-height:44px;color:var(--fg);cursor:pointer}
 details.more .search-row:not(.dates){grid-template-columns:repeat(2,minmax(0,12rem));margin-bottom:var(--s2)}
 .memlist{margin:var(--s4) 0 0}
 #memlist .memlist{margin:0}
@@ -310,7 +310,7 @@ label.check input{margin:0;width:20px;height:20px}
 .legend li{display:inline-flex;align-items:center;gap:var(--s2);min-height:28px}
 .graph-panel h2{margin:0 0 var(--s1);overflow-wrap:anywhere}
 details.fold{border-top:1px solid var(--line);margin-top:var(--s3)}
-details.fold>summary{display:flex;align-items:center;min-height:44px;color:var(--accent);cursor:pointer}
+details.fold>summary{display:flex;align-items:center;min-height:44px;color:var(--fg);cursor:pointer}
 details.fold[open]>summary{margin-bottom:var(--s1)}
 .panel-type{display:flex;align-items:center;gap:var(--s2);margin:0 0 var(--s3);color:var(--muted);font-size:var(--text-sm);font-weight:var(--w-label)}
 .rels,.mentions{margin:0;padding:0;list-style:none}
@@ -401,3 +401,12 @@ details.more .home-bullets{margin-top:var(--s1)}
 .act a,.actions a{display:inline-flex;align-items:center;min-height:44px}
 
 @media (max-width:560px){.vault-filter label{flex-basis:100%}}
+
+/* Disclosure toggles: a rotating chevron, quiet text colour, never link styling */
+:is(details.more,details.cleanup,details.fold,details.rename,details.revoke,details.details-quiet)>summary{list-style:none;gap:var(--s2)}
+:is(details.more,details.cleanup,details.fold,details.rename,details.revoke,details.details-quiet)>summary::-webkit-details-marker{display:none}
+:is(details.more,details.cleanup,details.fold,details.rename,details.revoke,details.details-quiet)>summary::before{content:"";flex:none;width:6px;height:6px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform .15s ease-out}
+:is(details.more,details.cleanup,details.fold,details.rename,details.revoke,details.details-quiet)[open]>summary::before{transform:rotate(45deg)}
+:is(details.more,details.cleanup,details.fold)>summary:hover{color:var(--accent)}
+details.rename>summary{padding-left:0;margin-left:0}
+@media (prefers-reduced-motion:reduce){:is(details.more,details.cleanup,details.fold,details.rename,details.revoke,details.details-quiet)>summary::before{transition:none}}
