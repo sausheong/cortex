@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 // isoWorld is two users with identically named content.
@@ -37,8 +40,8 @@ func seedIso(t *testing.T, cx *Cortex, tag string) (e, e2 *Entity, m, m2 *Memory
 		if err := cx.PutMemory(ctx, x); err != nil {
 			t.Fatal(err)
 		}
-		vecs, _ := cx.h.Cfg.Embedder.Embed(ctx, []string{x.Content})
-		if err := cx.putEmbedding(ctx, x.ID, "memory", vecs[0]); err != nil {
+		vecs, _ := testutil.H(cx).Cfg.Embedder.Embed(ctx, []string{x.Content})
+		if err := putEmbedding(cx, ctx, x.ID, "memory", vecs[0]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -49,8 +52,8 @@ func seedIso(t *testing.T, cx *Cortex, tag string) (e, e2 *Entity, m, m2 *Memory
 	if err := cx.PutChunk(ctx, ch); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := cx.h.Cfg.Embedder.Embed(ctx, []string{ch.Content})
-	if err := cx.putEmbedding(ctx, ch.ID, "chunk", vecs[0]); err != nil {
+	vecs, _ := testutil.H(cx).Cfg.Embedder.Embed(ctx, []string{ch.Content})
+	if err := putEmbedding(cx, ctx, ch.ID, "chunk", vecs[0]); err != nil {
 		t.Fatal(err)
 	}
 	return
@@ -79,7 +82,7 @@ func snapshot(t *testing.T, cx *Cortex, userID string) string {
 		`SELECT id||'|'||COALESCE(entity_id,'')||'|'||encode(content_ct,'hex') FROM chunks WHERE user_id = ? ORDER BY id`,
 		`SELECT ref_type||'|'||ref_id FROM embeddings WHERE user_id = ? ORDER BY 1`,
 	} {
-		rows, err := cx.h.DB.QueryContext(ctx, q, userID)
+		rows, err := testutil.H(cx).DB.QueryContext(ctx, q, userID)
 		if err != nil {
 			t.Fatalf("snapshot: %v", err)
 		}
@@ -114,7 +117,7 @@ func TestIsolationForeignIDs(t *testing.T) {
 		call func(id string) error
 	}{
 		{"GetEntity", "entity", aOwn(func(c *Cortex, id string) error { _, err := c.GetEntity(ctx, id); return err })},
-		{"getMemoryByID", "memory", aOwn(func(c *Cortex, id string) error { _, err := c.getMemoryByID(ctx, id); return err })},
+		{"getMemoryByID", "memory", aOwn(func(c *Cortex, id string) error { _, err := getMemoryByID(c, ctx, id); return err })},
 		{"Forget", "entity", aOwn(func(c *Cortex, id string) error { return c.Forget(ctx, Filter{EntityID: id}) })},
 		{"MergeKeepForeign", "entity", aOwn(func(c *Cortex, id string) error { _, err := c.MergeEntities(ctx, id, w.aEnt2.ID); return err })},
 		{"MergeDropForeign", "entity", aOwn(func(c *Cortex, id string) error { _, err := c.MergeEntities(ctx, w.aEnt.ID, id); return err })},
@@ -152,8 +155,8 @@ func TestIsolationForeignIDs(t *testing.T) {
 		{"RestoreBatch", "batch", aOwn(func(c *Cortex, id string) error { return c.RestoreBatch(ctx, id) })},
 		{"TrackProfile", "entity", aOwn(func(c *Cortex, id string) error { return c.TrackProfile(ctx, id) })},
 	}
-	beforeB := snapshot(t, w.b, w.b.h.UserID)
-	beforeA := snapshot(t, w.a, w.a.h.UserID)
+	beforeB := snapshot(t, w.b, testutil.H(w.b).UserID)
+	beforeA := snapshot(t, w.a, testutil.H(w.a).UserID)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			foreign := w.bEnt.ID
@@ -176,10 +179,10 @@ func TestIsolationForeignIDs(t *testing.T) {
 			}
 		})
 	}
-	if got := snapshot(t, w.b, w.b.h.UserID); got != beforeB {
+	if got := snapshot(t, w.b, testutil.H(w.b).UserID); got != beforeB {
 		t.Errorf("user b's rows changed:\n%s\n---\n%s", beforeB, got)
 	}
-	if got := snapshot(t, w.a, w.a.h.UserID); got != beforeA {
+	if got := snapshot(t, w.a, testutil.H(w.a).UserID); got != beforeA {
 		t.Errorf("user a's rows changed:\n%s\n---\n%s", beforeA, got)
 	}
 }
@@ -226,7 +229,7 @@ func TestIsolationRecall(t *testing.T) {
 		}
 		for _, r := range res {
 			if strings.Contains(r.Content, other) {
-				t.Errorf("user %s recall leaked %q", c.h.UserID, r.Content)
+				t.Errorf("user %s recall leaked %q", testutil.H(c).UserID, r.Content)
 			}
 		}
 	}
@@ -309,13 +312,13 @@ func TestIsolationLintMaintain(t *testing.T) {
 	w := newIsoWorld(t)
 	past := time.Now().Add(-time.Hour)
 	// A's memory is due to expire; b's identical memory must stay untouched.
-	if _, err := w.a.h.DB.ExecContext(ctx, `UPDATE memories SET forget_after = ? WHERE user_id = ?`, past, w.a.h.UserID); err != nil {
+	if _, err := testutil.H(w.a).DB.ExecContext(ctx, `UPDATE memories SET forget_after = ? WHERE user_id = ?`, past, testutil.H(w.a).UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.b.h.DB.ExecContext(ctx, `UPDATE memories SET forget_after = ? WHERE user_id = ?`, past, w.b.h.UserID); err != nil {
+	if _, err := testutil.H(w.b).DB.ExecContext(ctx, `UPDATE memories SET forget_after = ? WHERE user_id = ?`, past, testutil.H(w.b).UserID); err != nil {
 		t.Fatal(err)
 	}
-	beforeB := snapshot(t, w.b, w.b.h.UserID)
+	beforeB := snapshot(t, w.b, testutil.H(w.b).UserID)
 	if _, err := w.a.Lint(ctx); err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
@@ -325,15 +328,15 @@ func TestIsolationLintMaintain(t *testing.T) {
 	if _, err := w.a.BuildMemoryEdges(ctx); err != nil {
 		t.Logf("BuildMemoryEdges: %v", err)
 	}
-	if got := snapshot(t, w.b, w.b.h.UserID); got != beforeB {
+	if got := snapshot(t, w.b, testutil.H(w.b).UserID); got != beforeB {
 		t.Errorf("a's maintenance changed b's rows:\n%s\n---\n%s", beforeB, got)
 	}
 	var n int
-	if err := w.b.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ? AND expired_at IS NOT NULL`, w.b.h.UserID).Scan(&n); err != nil || n != 0 {
+	if err := testutil.H(w.b).DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ? AND expired_at IS NOT NULL`, testutil.H(w.b).UserID).Scan(&n); err != nil || n != 0 {
 		t.Errorf("b has %d expired memories (err=%v), want 0", n, err)
 	}
 	// Sanity: maintenance did act on a.
-	if err := w.a.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ? AND expired_at IS NOT NULL`, w.a.h.UserID).Scan(&n); err != nil || n == 0 {
+	if err := testutil.H(w.a).DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ? AND expired_at IS NOT NULL`, testutil.H(w.a).UserID).Scan(&n); err != nil || n == 0 {
 		t.Errorf("a has %d expired memories (err=%v), expected maintenance to expire some", n, err)
 	}
 }
@@ -341,22 +344,22 @@ func TestIsolationLintMaintain(t *testing.T) {
 func TestIsolationSoftDeleteAndPurge(t *testing.T) {
 	ctx := context.Background()
 	w := newIsoWorld(t)
-	if _, err := w.b.h.DB.ExecContext(ctx,
-		`UPDATE memories SET deleted_at = now() - interval '40 days' WHERE user_id = ? AND id = ?`, w.b.h.UserID, w.bMem2.ID); err != nil {
+	if _, err := testutil.H(w.b).DB.ExecContext(ctx,
+		`UPDATE memories SET deleted_at = now() - interval '40 days' WHERE user_id = ? AND id = ?`, testutil.H(w.b).UserID, w.bMem2.ID); err != nil {
 		t.Fatal(err)
 	}
-	beforeB := snapshot(t, w.b, w.b.h.UserID)
+	beforeB := snapshot(t, w.b, testutil.H(w.b).UserID)
 	if _, n, err := w.a.SoftDeleteMemories(ctx, DeleteFilter{All: true}, "user"); err != nil || n != 2 {
 		t.Fatalf("a deleted %d (err %v), want its own 2", n, err)
 	}
 	if _, err := w.a.PurgeDeleted(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	if got := snapshot(t, w.b, w.b.h.UserID); got != beforeB {
+	if got := snapshot(t, w.b, testutil.H(w.b).UserID); got != beforeB {
 		t.Errorf("a's delete/purge changed b's rows:\n%s\n---\n%s", beforeB, got)
 	}
 	var n int
-	if err := w.b.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ?`, w.b.h.UserID).Scan(&n); err != nil || n != 2 {
+	if err := testutil.H(w.b).DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE user_id = ?`, testutil.H(w.b).UserID).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("b memories = %d (err %v), want 2 incl. its expired row", n, err)
 	}
 	// b's own purge does remove its expired row.

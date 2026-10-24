@@ -1,9 +1,12 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestMaintain_RunsAllThreePasses(t *testing.T) { forEachMode(t, testMaintain_RunsAllThreePasses) }
@@ -26,7 +29,7 @@ func testMaintain_RunsAllThreePasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate older so newer is strictly newer (reconcile gate) and so decay has age.
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := testutil.H(c).DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`,
 		newer.CreatedAt.Add(-48*time.Hour), older.ID); err != nil {
 		t.Fatal(err)
@@ -83,7 +86,7 @@ func testMaintain_DryRunWritesNothing(t *testing.T) {
 	if err := c.PutMemory(ctx, newer); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := testutil.H(c).DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`,
 		newer.CreatedAt.Add(-48*time.Hour), older.ID); err != nil {
 		t.Fatal(err)
@@ -114,7 +117,7 @@ func testMaintain_DryRunWritesNothing(t *testing.T) {
 	if len(edges) != 0 {
 		t.Fatalf("dry-run must not record edges, got %d", len(edges))
 	}
-	got, err := c.getMemoryByID(ctx, older.ID)
+	got, err := getMemoryByID(c, ctx, older.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

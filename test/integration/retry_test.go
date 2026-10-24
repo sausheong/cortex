@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestReconcile_TimeoutSkipsEntityAndContinues(t *testing.T) {

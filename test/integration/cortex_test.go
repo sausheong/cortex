@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/sausheong/cortex"
+
 	"github.com/sausheong/cortex/internal/pgtest"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestRemember(t *testing.T) { forEachMode(t, testRemember) }
@@ -229,14 +232,14 @@ func testForgetKeepsMemoryUntilPurged(t *testing.T) {
 		t.Fatalf("memory should survive a soft forget, got %d", len(ms))
 	}
 	// Purging the entity removes its links but not the memory.
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET deleted_at = now() - interval '31 days' WHERE id = ?`, e.ID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE entities SET deleted_at = now() - interval '31 days' WHERE id = ?`, e.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.PurgeDeleted(ctx, 30*24*time.Hour); err != nil {
 		t.Fatalf("PurgeDeleted: %v", err)
 	}
 	var n int
-	if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM memory_entities WHERE entity_id = ?`, e.ID).Scan(&n); err != nil || n != 0 {
+	if err := testutil.H(c).DB.QueryRowContext(ctx, `SELECT count(*) FROM memory_entities WHERE entity_id = ?`, e.ID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("links after purge = %d (err %v), want 0", n, err)
 	}
 }
@@ -456,7 +459,7 @@ func testRemember_EventTimeFlowsToAsOfRecall(t *testing.T) {
 	// TestRecall_WithAsOf. Without this, the memory ingested "now" is excluded from
 	// any as-of in the past regardless of its event-time.
 	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := testutil.H(c).DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ?`, ingest); err != nil {
 		t.Fatalf("backdate created_at: %v", err)
 	}
@@ -575,7 +578,7 @@ func testForget_DeletesMemoryEdges(t *testing.T) {
 	}
 
 	var n int
-	if err := c.h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_edges`).Scan(&n); err != nil {
+	if err := testutil.H(c).DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_edges`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {

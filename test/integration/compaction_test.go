@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 // compactSeed writes a memory with an explicit 8-dim embedding.
@@ -18,7 +21,7 @@ func compactSeed(t *testing.T, c *Cortex, content string, static bool, vec []flo
 		t.Fatal(err)
 	}
 	if age > 0 {
-		if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, time.Now().Add(-age), m.ID); err != nil {
+		if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, time.Now().Add(-age), m.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,8 +51,8 @@ func nearAxis(i int) []float32 {
 
 func liveSnapshot(t *testing.T, c *Cortex) map[string]string {
 	t.Helper()
-	rows, err := c.h.DB.QueryContext(context.Background(),
-		`SELECT id, content_ct FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
+	rows, err := testutil.H(c).DB.QueryContext(context.Background(),
+		`SELECT id, content_ct FROM memories WHERE user_id = ? AND deleted_at IS NULL`, testutil.H(c).UserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +64,7 @@ func liveSnapshot(t *testing.T, c *Cortex) map[string]string {
 		if err := rows.Scan(&id, &ct); err != nil {
 			t.Fatal(err)
 		}
-		text, err := c.h.OpenStr("memories", id, "content", ct)
+		text, err := testutil.H(c).OpenStr("memories", id, "content", ct)
 		if err != nil {
 			t.Fatal(err)
 		}

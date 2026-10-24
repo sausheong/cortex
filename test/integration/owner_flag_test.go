@@ -1,8 +1,11 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestOwnerProtectionUsesIsOwner(t *testing.T) {
@@ -61,7 +64,7 @@ func TestOwnerLocatedViaOwnerEntityIDNotSource(t *testing.T) {
 func TestNewUserOwnerEntityIsOwner(t *testing.T) {
 	c, ownerID := ownerCortex(t, "New User", "new@owner.test")
 	var isOwner bool
-	if err := c.h.DB.QueryRowContext(context.Background(), `SELECT is_owner FROM entities WHERE id = ?`, ownerID).Scan(&isOwner); err != nil {
+	if err := testutil.H(c).DB.QueryRowContext(context.Background(), `SELECT is_owner FROM entities WHERE id = ?`, ownerID).Scan(&isOwner); err != nil {
 		t.Fatal(err)
 	}
 	if !isOwner {
@@ -76,7 +79,7 @@ func TestProfileEligibleIncludesOwnerByFlag(t *testing.T) {
 	if err := c.PutEntity(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := c.profileEligibleIDs(ctx)
+	ids, err := profileEligibleIDs(c, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

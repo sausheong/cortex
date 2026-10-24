@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestReconcile_DryRun_ProposesSupersession(t *testing.T) {
@@ -31,11 +34,11 @@ func testReconcile_DryRun_ProposesSupersession(t *testing.T) {
 	// Force a created_at ordering so newer is strictly newer (PutMemory uses now();
 	// two inserts in the same test may share a timestamp).
 	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID); err != nil {
 		t.Fatal(err)
 	}
 	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,9 +98,9 @@ func testReconcile_GateRejectsWrongDirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
 	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
 
 	c.SetLLM(&mockLLM{
 		detectConflictsFn: func(_ context.Context, _ []Memory) ([]ConflictPair, error) {
@@ -139,9 +142,9 @@ func testApplyReconcile_InvalidatesStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
 	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
 
 	c.SetLLM(&mockLLM{
 		detectConflictsFn: func(_ context.Context, _ []Memory) ([]ConflictPair, error) {
@@ -204,11 +207,11 @@ func testReconcile_DedupsSharedMemoryAcrossEntities(t *testing.T) {
 		t.Fatal(err)
 	}
 	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID); err != nil {
 		t.Fatal(err)
 	}
 	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -305,9 +308,9 @@ func testApplyReconcileReport_AppliesReviewed(t *testing.T) {
 		t.Fatal(err)
 	}
 	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
 	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
 
 	// A report as if produced by an earlier dry-run.
 	report := ReconcileReport{
@@ -355,9 +358,9 @@ func testApplyReconcileReport_SkipsStaleProposal(t *testing.T) {
 		t.Fatal(err)
 	}
 	older.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, older.CreatedAt, older.ID)
 	newer.CreatedAt = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
+	testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, newer.CreatedAt, newer.ID)
 
 	// The graph changed since the dry-run: the stale memory was ALREADY invalidated.
 	cut := newer.CreatedAt
@@ -424,7 +427,7 @@ func testApplyReconcile_RecordsSupersedesEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate the older one so newer.CreatedAt is strictly after.
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := testutil.H(c).DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`,
 		older.CreatedAt.Add(-1*time.Hour), older.ID); err != nil {
 		t.Fatal(err)

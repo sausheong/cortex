@@ -1,9 +1,12 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"sort"
 	"testing"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestParseExtractionJSON_AboutAndAttributes(t *testing.T) {
@@ -87,12 +90,12 @@ func testRestoreBatch_FoldsRelationshipTwin(t *testing.T) {
 	if err := c.PutRelationship(ctx, &Relationship{SourceID: a.ID, TargetID: b.ID, Type: "works_at"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.h.DB.ExecContext(ctx,
-		`INSERT INTO delete_batches (id, user_id, kind) VALUES ('b1', ?, 'forget')`, c.h.UserID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx,
+		`INSERT INTO delete_batches (id, user_id, kind) VALUES ('b1', ?, 'forget')`, testutil.H(c).UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.h.DB.ExecContext(ctx,
-		`UPDATE relationships SET deleted_at = now(), delete_batch_id = 'b1' WHERE user_id = ?`, c.h.UserID); err != nil {
+	if _, err := testutil.H(c).DB.ExecContext(ctx,
+		`UPDATE relationships SET deleted_at = now(), delete_batch_id = 'b1' WHERE user_id = ?`, testutil.H(c).UserID); err != nil {
 		t.Fatal(err)
 	}
 	// Re-assert the edge while its twin sits in the batch.

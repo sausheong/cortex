@@ -1,9 +1,11 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"strings"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 // --- Test 1: Empty graph ---

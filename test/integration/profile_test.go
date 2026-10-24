@@ -1,8 +1,10 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestTrackProfile_SetsMarker(t *testing.T) { forEachMode(t, testTrackProfile_SetsMarker) }
@@ -82,7 +84,7 @@ func testProfileEligibleIDs_OwnerAndTracked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids, err := c.profileEligibleIDs(ctx)
+	ids, err := profileEligibleIDs(c, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +111,7 @@ func testDistillBucket_RawFallbackNoLLM(t *testing.T) {
 	ctx := context.Background()
 
 	mems := []Memory{{Content: "Alice is a staff engineer"}, {Content: "Alice likes Go"}}
-	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, mems)
+	lines, distilled := distillBucket(c, ctx, "Alice", profileStaticPrompt, mems)
 	if distilled {
 		t.Error("expected distilled=false with no LLM")
 	}
@@ -130,7 +132,7 @@ func testDistillBucket_LLMBullets(t *testing.T) {
 	})
 
 	mems := []Memory{{Content: "x"}, {Content: "y"}}
-	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, mems)
+	lines, distilled := distillBucket(c, ctx, "Alice", profileStaticPrompt, mems)
 	if !distilled {
 		t.Error("expected distilled=true")
 	}
@@ -153,7 +155,7 @@ func testDistillBucket_LLMErrorFallsBack(t *testing.T) {
 	})
 
 	mems := []Memory{{Content: "raw fact"}}
-	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, mems)
+	lines, distilled := distillBucket(c, ctx, "Alice", profileStaticPrompt, mems)
 	if distilled {
 		t.Error("expected distilled=false after LLM error")
 	}
@@ -172,7 +174,7 @@ func testDistillBucket_EmptyNoCall(t *testing.T) {
 		called = true
 		return "x", nil
 	}})
-	lines, distilled := c.distillBucket(ctx, "Alice", profileStaticPrompt, nil)
+	lines, distilled := distillBucket(c, ctx, "Alice", profileStaticPrompt, nil)
 	if called {
 		t.Error("LLM should not be called for empty bucket")
 	}

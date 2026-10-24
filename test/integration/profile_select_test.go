@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestMaintain_SurvivesLLMFailureAndRunsLaterPasses(t *testing.T) {

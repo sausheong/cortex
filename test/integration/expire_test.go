@@ -1,9 +1,11 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestExpireMemories_RetiresPastDue(t *testing.T) {
