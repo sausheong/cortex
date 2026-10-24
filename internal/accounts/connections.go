@@ -420,7 +420,6 @@ func (st *Store) DeleteAccount(ctx context.Context, userID string) error {
 		return ErrNotFound
 	}
 	for _, q := range []string{
-		`DELETE FROM user_key_wraps WHERE user_id = $1 AND kind IN ('oauth_code','oauth_access','oauth_refresh') AND $2::timestamptz IS NOT NULL`,
 		`UPDATE connections SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`,
 		`DELETE FROM oauth_tokens WHERE user_id = $1 AND $2::timestamptz IS NOT NULL`,
 		`DELETE FROM oauth_codes WHERE user_id = $1 AND $2::timestamptz IS NOT NULL`,
@@ -430,8 +429,25 @@ func (st *Store) DeleteAccount(ctx context.Context, userID string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	// Every wrap except passkey and recovery goes; restore does not bring
+	// them back (the user unlocks again and mints new tokens).
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM user_key_wraps WHERE user_id = $1 AND NOT (kind = ANY($2::text[]))`,
+		userID, []string{"passkey", "recovery"}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if WorksetDrop != nil {
+		WorksetDrop(userID)
+	}
+	return nil
 }
+
+// WorksetDrop is a hook set by the workset cache (Task 11) to evict a user's
+// decrypted working set when the account is soft-deleted.
+var WorksetDrop func(userID string)
 
 // RestoreAccount clears deleted_at. Connections stay revoked.
 func (st *Store) RestoreAccount(ctx context.Context, userID string) error {
