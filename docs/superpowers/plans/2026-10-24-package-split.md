@@ -161,3 +161,10 @@ Root testdata/ was referenced by no Go test, script or doc, so it was moved to e
 - Root `ontology.go` re-declares the `Type*`/`Rel*` constants, `EntityTypes`, `RelationshipVerbs` and forwards `Canonical*`, `VocabularyPrompt`, `NormalizeType`.
 - Only new apidiff difference: `RelationshipVerbs` element type was the unexported `relSpec`, now `ontology.RelSpec` (same fields, plus exported `Single`). The old type was unnameable outside the package.
 - The three new packages import only the standard library.
+
+## Stage 4 notes
+
+- `store.Open` is split: `store.Connect` (parse, open, ping, apply options) plus `Handle.MigrationContext`/`Handle.Migrate`; root `Open` then runs `ensureVectorSchema` (still in root until stage 6) with the same migration-timeout context. Behaviour and error texts are unchanged.
+- Only `TestRebind`, `TestMigrationNamesAreIntegers` and `TestMigration007FoldsDuplicateRelationships` moved to `internal/store`. The other migration tests (`TestMigration002*`) need the root API (`Open`, `SearchMemoryVector`) or share a fixture with such a test, so they stay in root and use whitebox wrappers `migrate`/`migrateUpTo` in `whitebox_test.go`.
+- `WithGeneration` also copied the handle by value; it now deep-copies the `Handle` like `ForUser` and `WithConnection`.
+- `Cortex.AppliedMigrations` forwards to `Handle.AppliedMigrations`; the 13 tenancy methods are forwarded from `api_tenancy.go`.

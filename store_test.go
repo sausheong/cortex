@@ -12,7 +12,7 @@ import (
 func schemaVersion(t *testing.T, c *Cortex) int {
 	t.Helper()
 	var v int
-	if err := c.db.QueryRowContext(context.Background(), `SELECT max(version) FROM schema_migrations`).Scan(&v); err != nil {
+	if err := c.h.DB.QueryRowContext(context.Background(), `SELECT max(version) FROM schema_migrations`).Scan(&v); err != nil {
 		t.Fatalf("schema_migrations: %v", err)
 	}
 	return v
@@ -28,7 +28,7 @@ func TestOpenAppliesMigrations(t *testing.T) {
 		t.Errorf("version = %d, want 9", v)
 	}
 	var n int
-	err = c.db.QueryRowContext(context.Background(),
+	err = c.h.DB.QueryRowContext(context.Background(),
 		`SELECT count(*) FROM information_schema.columns
 		 WHERE table_schema = current_schema() AND table_name = 'memories' AND column_name = 'tsv'`).Scan(&n)
 	if err != nil || n != 1 {

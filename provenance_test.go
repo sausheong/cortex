@@ -28,7 +28,7 @@ func writtenByCounts(t *testing.T, c *Cortex, want string) map[string]int {
 		if want == "" {
 			arg = nil
 		}
-		if err := c.db.QueryRowContext(context.Background(), q, c.userID, arg).Scan(&n); err != nil {
+		if err := c.h.DB.QueryRowContext(context.Background(), q, c.h.UserID, arg).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		out[tbl] = n

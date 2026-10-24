@@ -1,4 +1,4 @@
-package cortex
+package tenancy
 
 import (
 	"context"
@@ -9,22 +9,24 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // ComputeUsage measures this user's rows now. Bytes is the sum of
 // pg_column_size over every row the user owns, including embeddings of all
 // generations and soft-deleted rows (they still occupy space until purged).
-func (c *Cortex) ComputeUsage(ctx context.Context) (Usage, error) {
-	var u Usage
+func (c Ops) ComputeUsage(ctx context.Context) (model.Usage, error) {
+	var u model.Usage
 	for _, t := range []string{"entities", "relationships", "memories", "memory_entities", "memory_edges", "entity_aliases", "chunks", "embeddings"} {
 		var n sql.NullInt64
-		if err := c.db.QueryRowContext(ctx,
-			`SELECT sum(pg_column_size(t.*)) FROM `+t+` t WHERE t.user_id = ?`, c.userID).Scan(&n); err != nil {
+		if err := c.DB.QueryRowContext(ctx,
+			`SELECT sum(pg_column_size(t.*)) FROM `+t+` t WHERE t.user_id = ?`, c.UserID).Scan(&n); err != nil {
 			return u, fmt.Errorf("cortex: usage bytes (%s): %w", t, err)
 		}
 		u.Bytes += n.Int64
 	}
-	err := c.db.QueryRowContext(ctx,
+	err := c.DB.QueryRowContext(ctx,
 		`SELECT
 		   (SELECT count(*) FROM memories WHERE user_id = ? AND deleted_at IS NULL),
 		   (SELECT count(*) FROM entities WHERE user_id = ? AND deleted_at IS NULL),
@@ -32,7 +34,7 @@ func (c *Cortex) ComputeUsage(ctx context.Context) (Usage, error) {
 		   (SELECT count(*) FROM memories WHERE user_id = ? AND deleted_at IS NOT NULL)
 		 + (SELECT count(*) FROM entities WHERE user_id = ? AND deleted_at IS NOT NULL)
 		 + (SELECT count(*) FROM chunks   WHERE user_id = ? AND deleted_at IS NOT NULL)`,
-		c.userID, c.userID, c.userID, c.userID, c.userID, c.userID).
+		c.UserID, c.UserID, c.UserID, c.UserID, c.UserID, c.UserID).
 		Scan(&u.Memories, &u.Entities, &u.Chunks, &u.Deleted)
 	if err != nil {
 		return u, fmt.Errorf("cortex: usage counts: %w", err)
@@ -42,13 +44,13 @@ func (c *Cortex) ComputeUsage(ctx context.Context) (Usage, error) {
 
 // RefreshUsage computes the usage and stores it in users.usage_json (the
 // nightly job calls this).
-func (c *Cortex) RefreshUsage(ctx context.Context) (Usage, error) {
+func (c Ops) RefreshUsage(ctx context.Context) (model.Usage, error) {
 	u, err := c.ComputeUsage(ctx)
 	if err != nil {
 		return u, err
 	}
 	b, _ := json.Marshal(u)
-	if _, err := c.db.ExecContext(ctx, `UPDATE users SET usage_json = ?::jsonb WHERE id = ?`, string(b), c.userID); err != nil {
+	if _, err := c.DB.ExecContext(ctx, `UPDATE users SET usage_json = ?::jsonb WHERE id = ?`, string(b), c.UserID); err != nil {
 		return u, fmt.Errorf("cortex: store usage: %w", err)
 	}
 	return u, nil
@@ -56,20 +58,20 @@ func (c *Cortex) RefreshUsage(ctx context.Context) (Usage, error) {
 
 // CachedUsage returns the figures stored by the nightly job. ok is false
 // when none are cached yet; it never measures, so it is cheap on a page load.
-func (c *Cortex) CachedUsage(ctx context.Context) (u Usage, ok bool, err error) {
+func (c Ops) CachedUsage(ctx context.Context) (u model.Usage, ok bool, err error) {
 	var raw sql.NullString
-	err = c.db.QueryRowContext(ctx, `SELECT usage_json::text FROM users WHERE id = ?`, c.userID).Scan(&raw)
+	err = c.DB.QueryRowContext(ctx, `SELECT usage_json::text FROM users WHERE id = ?`, c.UserID).Scan(&raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Usage{}, false, fmt.Errorf("cortex: read usage: %w", err)
+		return model.Usage{}, false, fmt.Errorf("cortex: read usage: %w", err)
 	}
 	if raw.Valid && json.Unmarshal([]byte(raw.String), &u) == nil {
 		return u, true, nil
 	}
-	return Usage{}, false, nil
+	return model.Usage{}, false, nil
 }
 
 // Usage returns the cached figures, or computes them live when none are cached.
-func (c *Cortex) Usage(ctx context.Context) (Usage, error) {
+func (c Ops) Usage(ctx context.Context) (model.Usage, error) {
 	if u, ok, err := c.CachedUsage(ctx); err != nil || ok {
 		return u, err
 	}
@@ -80,32 +82,32 @@ func (c *Cortex) Usage(ctx context.Context) (Usage, error) {
 // the connection that wrote them, with each group's newest perGroup
 // memories. Groups are ordered by their newest memory, newest first. It is
 // one indexed query and never calls a model.
-func (c *Cortex) NewMemoriesSince(ctx context.Context, since time.Time, perGroup int) ([]ConnectionNew, error) {
+func (c Ops) NewMemoriesSince(ctx context.Context, since time.Time, perGroup int) ([]model.ConnectionNew, error) {
 	if perGroup < 1 {
 		perGroup = 3
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT conn, n, id, content, created_at FROM (
 		   SELECT COALESCE(written_by_connection_id,'') AS conn, id, content, created_at,
 		     count(*) OVER (PARTITION BY COALESCE(written_by_connection_id,'')) AS n,
 		     row_number() OVER (PARTITION BY COALESCE(written_by_connection_id,'') ORDER BY created_at DESC, id) AS rn
 		   FROM memories WHERE user_id = ? AND deleted_at IS NULL AND created_at > ?) t
-		 WHERE rn <= ? ORDER BY conn, created_at DESC, id`, c.userID, since, perGroup)
+		 WHERE rn <= ? ORDER BY conn, created_at DESC, id`, c.UserID, since, perGroup)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: new memories: %w", err)
 	}
 	defer rows.Close()
-	var out []ConnectionNew
+	var out []model.ConnectionNew
 	for rows.Next() {
 		var conn string
 		var n int
-		var m Memory
+		var m model.Memory
 		if err := rows.Scan(&conn, &n, &m.ID, &m.Content, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan new memory: %w", err)
 		}
 		m.WrittenBy = conn
 		if len(out) == 0 || out[len(out)-1].ConnectionID != conn {
-			out = append(out, ConnectionNew{ConnectionID: conn, Count: n})
+			out = append(out, model.ConnectionNew{ConnectionID: conn, Count: n})
 		}
 		g := &out[len(out)-1]
 		g.Latest = append(g.Latest, m)
@@ -119,10 +121,10 @@ func (c *Cortex) NewMemoriesSince(ctx context.Context, since time.Time, perGroup
 
 // WrittenSince counts this user's live memories created after since, per
 // writing connection ID ("" for none).
-func (c *Cortex) WrittenSince(ctx context.Context, since time.Time) (map[string]int, error) {
-	rows, err := c.db.QueryContext(ctx,
+func (c Ops) WrittenSince(ctx context.Context, since time.Time) (map[string]int, error) {
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT COALESCE(written_by_connection_id,''), count(*) FROM memories
-		 WHERE user_id = ? AND deleted_at IS NULL AND created_at > ? GROUP BY 1`, c.userID, since)
+		 WHERE user_id = ? AND deleted_at IS NULL AND created_at > ? GROUP BY 1`, c.UserID, since)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: written since: %w", err)
 	}
@@ -142,15 +144,15 @@ func (c *Cortex) WrittenSince(ctx context.Context, since time.Time) (map[string]
 // ListMemories pages this user's live memories, newest first unless
 // f.Oldest, and returns the
 // total number matching the filter.
-func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, offset int) ([]Memory, int, error) {
+func (c Ops) ListMemories(ctx context.Context, f model.MemoryListFilter, limit, offset int) ([]model.Memory, int, error) {
 	conds := []string{"user_id = ?", "deleted_at IS NULL"}
-	args := []any{c.userID}
+	args := []any{c.UserID}
 	if f.Query != "" {
 		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Query)
 		conds = append(conds, `content ILIKE ? ESCAPE '\'`)
 		args = append(args, "%"+esc+"%")
 	}
-	if f.WrittenBy == NoConnection {
+	if f.WrittenBy == model.NoConnection {
 		conds = append(conds, "COALESCE(written_by_connection_id,'') = ''")
 	} else if f.WrittenBy != "" {
 		conds = append(conds, "written_by_connection_id = ?")
@@ -158,7 +160,7 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 	}
 	if f.EntityID != "" {
 		conds = append(conds, "id IN (SELECT memory_id FROM memory_entities WHERE user_id = ? AND entity_id = ?)")
-		args = append(args, c.userID, f.EntityID)
+		args = append(args, c.UserID, f.EntityID)
 	}
 	if f.From != nil {
 		conds = append(conds, "created_at >= ?")
@@ -174,7 +176,7 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 	}
 	where := strings.Join(conds, " AND ")
 	var total int
-	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE `+where, args...).Scan(&total); err != nil {
+	if err := c.DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("cortex: count memories: %w", err)
 	}
 	if limit <= 0 {
@@ -184,7 +186,7 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 	if f.Oldest {
 		dir = "ASC"
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT id, content, COALESCE(source,''), COALESCE(speaker,''), COALESCE(written_by_connection_id,''), confidence, created_at, updated_at
 		 FROM memories WHERE `+where+` ORDER BY created_at `+dir+`, id LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
@@ -192,9 +194,9 @@ func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, of
 		return nil, 0, fmt.Errorf("cortex: list memories: %w", err)
 	}
 	defer rows.Close()
-	var out []Memory
+	var out []model.Memory
 	for rows.Next() {
-		var m Memory
+		var m model.Memory
 		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Speaker, &m.WrittenBy, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("cortex: scan memory: %w", err)
 		}

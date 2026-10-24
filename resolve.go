@@ -61,11 +61,11 @@ func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext
 // type is of the same kind as typ (see kindMatches), preferring an exact
 // name, or nil.
 func (c *Cortex) findSameEntity(ctx context.Context, name, typ string) (*Entity, error) {
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, type FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) = lower(?)
 		 ORDER BY (name = ?) DESC, created_at, id`,
-		c.userID, name, name)
+		c.h.UserID, name, name)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find entity: %w", err)
 	}
@@ -130,11 +130,11 @@ func (c *Cortex) absorbIntoEntity(ctx context.Context, stored, e *Entity) error 
 		conf = stored.Confidence
 	}
 	now := time.Now().UTC()
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE entities SET attributes = ?::jsonb, confidence = ?, updated_at = ?,
 		   source = CASE WHEN source = 'owner' OR ? = '' THEN source ELSE ? END
 		 WHERE id = ? AND user_id = ?`,
-		string(attrsJSON), conf, now, e.Source, e.Source, stored.ID, c.userID,
+		string(attrsJSON), conf, now, e.Source, e.Source, stored.ID, c.h.UserID,
 	); err != nil {
 		return fmt.Errorf("cortex: update entity: %w", err)
 	}

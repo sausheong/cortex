@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // checkPgvectorVersion returns an error if v is older than 0.8.0.
@@ -31,7 +32,7 @@ func checkPgvectorVersion(v string) error {
 // its indexes are managed per user by migration 002 and the vector layer.
 func (c *Cortex) ensureVectorSchema(ctx context.Context) error {
 	var ver string
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT extversion FROM pg_extension WHERE extname = 'vector'`).Scan(&ver); err != nil {
 		return fmt.Errorf("cortex: pgvector extension not found: %w", err)
 	}
@@ -78,16 +79,16 @@ const reembedLockSQL = `hashtextextended('reembed:' || ?::text, 0)`
 // ordinary writers. Its embedding writes fail with ErrStaleGeneration once
 // the active generation differs from g.
 func (c *Cortex) WithGeneration(g int) *Cortex {
-	n := *c
-	n.pinnedGen = g
-	return &n
+	h2 := *c.h
+	h2.PinnedGen = g
+	return &Cortex{h: &h2}
 }
 
 // ActiveGeneration returns the user's active embedding generation.
 func (c *Cortex) ActiveGeneration(ctx context.Context) (int, error) {
 	var g int
-	err := c.db.QueryRowContext(ctx,
-		`SELECT active_embedding_generation FROM users WHERE id = ?`, c.userID).Scan(&g)
+	err := c.h.DB.QueryRowContext(ctx,
+		`SELECT active_embedding_generation FROM users WHERE id = ?`, c.h.UserID).Scan(&g)
 	if err == sql.ErrNoRows {
 		return 0, model.NotFound("cortex: user not found")
 	}
@@ -99,8 +100,8 @@ func (c *Cortex) ActiveGeneration(ctx context.Context) (int, error) {
 
 // SetActiveGeneration sets the user's active embedding generation.
 func (c *Cortex) SetActiveGeneration(ctx context.Context, g int) error {
-	res, err := c.db.ExecContext(ctx,
-		`UPDATE users SET active_embedding_generation = ? WHERE id = ?`, g, c.userID)
+	res, err := c.h.DB.ExecContext(ctx,
+		`UPDATE users SET active_embedding_generation = ? WHERE id = ?`, g, c.h.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: set active generation: %w", err)
 	}
@@ -141,17 +142,17 @@ func (c *Cortex) putEmbeddingGen(ctx context.Context, refID, refType string, v [
 	if err := checkDims(len(v)); err != nil {
 		return err
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin embedding write: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(`+reembedLockSQL+`)`, c.userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(`+reembedLockSQL+`)`, c.h.UserID); err != nil {
 		return fmt.Errorf("cortex: embedding lock: %w", err)
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT active_embedding_generation FROM users WHERE id = ?`, c.userID).Scan(&active); err != nil {
+		`SELECT active_embedding_generation FROM users WHERE id = ?`, c.h.UserID).Scan(&active); err != nil {
 		return fmt.Errorf("cortex: active generation: %w", err)
 	}
 	switch {
@@ -159,16 +160,16 @@ func (c *Cortex) putEmbeddingGen(ctx context.Context, refID, refType string, v [
 		if gen != active && gen != active+1 {
 			return fmt.Errorf("cortex: generation %d not allowed (active %d)", gen, active)
 		}
-	case c.pinnedGen > 0:
-		if c.pinnedGen != active {
+	case c.h.PinnedGen > 0:
+		if c.h.PinnedGen != active {
 			return ErrStaleGeneration
 		}
-		gen = c.pinnedGen
+		gen = c.h.PinnedGen
 	default:
 		gen = active
 	}
 	if _, err := tx.ExecContext(ctx, upsertEmbeddingSQL(),
-		newID(), c.userID, refID, refType, vectorLiteral(v), len(v), gen); err != nil {
+		store.NewID(), c.h.UserID, refID, refType, vectorLiteral(v), len(v), gen); err != nil {
 		return fmt.Errorf("cortex: insert embedding: %w", err)
 	}
 	return tx.Commit()
@@ -184,12 +185,12 @@ func (c *Cortex) FlipGeneration(ctx context.Context, newGen int,
 	if newGen < 1 {
 		return fmt.Errorf("cortex: invalid generation %d", newGen)
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin flip: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(`+reembedLockSQL+`)`, c.userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(`+reembedLockSQL+`)`, c.h.UserID); err != nil {
 		return fmt.Errorf("cortex: flip lock: %w", err)
 	}
 	if embedTail != nil {
@@ -198,7 +199,7 @@ func (c *Cortex) FlipGeneration(ctx context.Context, newGen int,
 				return err
 			}
 			_, err := tx.ExecContext(ctx, upsertEmbeddingSQL(),
-				newID(), c.userID, refID, refType, vectorLiteral(v), len(v), newGen)
+				store.NewID(), c.h.UserID, refID, refType, vectorLiteral(v), len(v), newGen)
 			if err != nil {
 				return fmt.Errorf("cortex: insert embedding: %w", err)
 			}
@@ -209,7 +210,7 @@ func (c *Cortex) FlipGeneration(ctx context.Context, newGen int,
 		}
 	}
 	res, err := tx.ExecContext(ctx,
-		`UPDATE users SET active_embedding_generation = ? WHERE id = ?`, newGen, c.userID)
+		`UPDATE users SET active_embedding_generation = ? WHERE id = ?`, newGen, c.h.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: flip generation: %w", err)
 	}
@@ -217,7 +218,7 @@ func (c *Cortex) FlipGeneration(ctx context.Context, newGen int,
 		return model.NotFound("cortex: user not found")
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM embeddings WHERE user_id = ? AND generation <> ?`, c.userID, newGen); err != nil {
+		`DELETE FROM embeddings WHERE user_id = ? AND generation <> ?`, c.h.UserID, newGen); err != nil {
 		return fmt.Errorf("cortex: drop old generations: %w", err)
 	}
 	if inTx != nil {
@@ -240,7 +241,7 @@ func (c *Cortex) EnsureVectorIndex(ctx context.Context, dims int, refType string
 	default:
 		return fmt.Errorf("cortex: unknown ref type %q", refType)
 	}
-	conn, err := c.db.DB.Conn(ctx)
+	conn, err := c.h.DB.DB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("cortex: index conn: %w", err)
 	}

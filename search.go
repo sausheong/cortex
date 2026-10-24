@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // vectorResult holds a reference ID and its cosine similarity score.
@@ -20,10 +21,10 @@ type vectorResult struct {
 // instead of re-embedding ranked results.
 func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []float32 {
 	var lit string
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ?
 		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?) LIMIT 1`,
-		c.userID, refID, refType, c.userID,
+		c.h.UserID, refID, refType, c.h.UserID,
 	).Scan(&lit)
 	if err != nil {
 		return nil
@@ -43,7 +44,7 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 	if dims < 1 || dims > 4000 {
 		return nil, fmt.Errorf("cortex: query vector has %d dims, want 1..4000", dims)
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: begin vector search: %w", err)
 	}
@@ -67,7 +68,7 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d
 		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?)%s
 		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, live, dims),
-		lit, c.userID, refType, c.userID, lit, limit,
+		lit, c.h.UserID, refType, c.h.UserID, lit, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query embeddings: %w", err)
@@ -94,11 +95,11 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 // performs a brute-force vector search over chunk embeddings and returns
 // the matching chunks ordered by similarity.
 func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]Chunk, error) {
-	if c.cfg.Embedder == nil {
+	if c.h.Cfg.Embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
 
-	vecs, err := c.cfg.Embedder.Embed(ctx, []string{query})
+	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: embed query: %w", err)
 	}
@@ -117,9 +118,9 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 		var ch Chunk
 		var entityID sql.NullString
 		var metaJSON sql.NullString
-		err := c.db.QueryRowContext(ctx,
+		err := c.h.DB.QueryRowContext(ctx,
 			`SELECT id, entity_id, content, metadata, created_at
-			 FROM chunks WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, r.refID, c.userID,
+			 FROM chunks WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, r.refID, c.h.UserID,
 		).Scan(&ch.ID, &entityID, &ch.Content, &metaJSON, &ch.CreatedAt)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but chunk was deleted
@@ -152,11 +153,11 @@ func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int
 // SearchMemoryVector. The per-row resolve query's validity predicate is
 // derived from mode (default = currently-valid).
 func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]Memory, error) {
-	if c.cfg.Embedder == nil {
+	if c.h.Cfg.Embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
 
-	vecs, err := c.cfg.Embedder.Embed(ctx, []string{query})
+	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: embed query: %w", err)
 	}
@@ -177,9 +178,9 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 		var spk sql.NullString
 		var vat, iat, eat sql.NullTime
 		// Arg order: ref id, user id, then temporal args.
-		args := []any{r.refID, c.userID}
+		args := []any{r.refID, c.h.UserID}
 		args = append(args, targs...)
-		err := c.db.QueryRowContext(ctx,
+		err := c.h.DB.QueryRowContext(ctx,
 			`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
 			 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND `+clause, args...,
 		).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
@@ -192,9 +193,9 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 		if spk.Valid {
 			m.Speaker = spk.String
 		}
-		m.ValidAt = nullTimePtr(vat)
-		m.InvalidAt = nullTimePtr(iat)
-		m.ExpiredAt = nullTimePtr(eat)
+		m.ValidAt = store.NullTimePtr(vat)
+		m.InvalidAt = store.NullTimePtr(iat)
+		m.ExpiredAt = store.NullTimePtr(eat)
 		entityIDs, err := c.loadMemoryEntityIDs(ctx, m.ID)
 		if err != nil {
 			return nil, err

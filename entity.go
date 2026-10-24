@@ -12,6 +12,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/ontology"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // PutEntity upserts an entity by (name, type), with the type normalised by
@@ -35,26 +36,26 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 
 	if e.ID != "" {
 		var storedType string
-		err := c.db.QueryRowContext(ctx,
-			`SELECT type FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, e.ID, c.userID).Scan(&storedType)
+		err := c.h.DB.QueryRowContext(ctx,
+			`SELECT type FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, e.ID, c.h.UserID).Scan(&storedType)
 		switch {
 		case err == nil:
 			if NormalizeType(storedType) == e.Type {
 				e.Type = storedType
 			}
-			if err := c.db.QueryRowContext(ctx,
+			if err := c.h.DB.QueryRowContext(ctx,
 				`UPDATE entities SET type = ?, name = ?, attributes = ?::jsonb,
 				   source = CASE WHEN source = 'owner' THEN source ELSE ? END,
 				   confidence = ?, updated_at = ?,
 				   written_by_connection_id = COALESCE(?, written_by_connection_id)
 				 WHERE id = ? AND user_id = ?
 				 RETURNING created_at`,
-				e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, c.nullConn(), e.ID, c.userID,
+				e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, c.h.NullConn(), e.ID, c.h.UserID,
 			).Scan(&e.CreatedAt); err != nil {
 				return fmt.Errorf("cortex: update entity: %w", err)
 			}
 			e.UpdatedAt = now
-			e.WrittenBy = c.connID
+			e.WrittenBy = c.h.ConnID
 			return nil
 		case !errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("cortex: load entity: %w", err)
@@ -63,7 +64,7 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 
 	// Single atomic upsert: concurrent writers with the same (name, type)
 	// converge on one row.
-	err = c.db.QueryRowContext(ctx,
+	err = c.h.DB.QueryRowContext(ctx,
 		`INSERT INTO entities (id, user_id, type, name, attributes, source, confidence, created_at, updated_at, written_by_connection_id)
 		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, name, type) WHERE deleted_at IS NULL DO UPDATE SET
@@ -73,13 +74,13 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 		   updated_at = EXCLUDED.updated_at,
 		   written_by_connection_id = COALESCE(EXCLUDED.written_by_connection_id, entities.written_by_connection_id)
 		 RETURNING id, created_at`,
-		newID(), c.userID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, now, c.nullConn(),
+		store.NewID(), c.h.UserID, e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, now, c.h.NullConn(),
 	).Scan(&e.ID, &e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("cortex: upsert entity: %w", err)
 	}
 	e.UpdatedAt = now
-	e.WrittenBy = c.connID
+	e.WrittenBy = c.h.ConnID
 	return nil
 }
 
@@ -87,12 +88,12 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '')
-		 FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.userID,
+		 FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, id, c.h.UserID,
 	).Scan(&e.ID, &e.Type, &e.Name, &attrsJSON, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt, &e.WrittenBy)
 	if err == sql.ErrNoRows {
-		return nil, errEntityNotFound()
+		return nil, store.ErrEntityNotFound()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get entity: %w", err)
@@ -111,7 +112,7 @@ func (c *Cortex) GetEntity(ctx context.Context, id string) (*Entity, error) {
 func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, error) {
 	query := `SELECT id, type, name, attributes, source, confidence, created_at, updated_at, COALESCE(written_by_connection_id, '') FROM entities`
 	conditions := []string{"user_id = ?", "deleted_at IS NULL"}
-	args := []any{c.userID}
+	args := []any{c.h.UserID}
 
 	if f.Type != "" {
 		conditions = append(conditions, ontology.NormTypeSQL("type")+" = ?")
@@ -128,7 +129,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 
 	query += " WHERE " + strings.Join(conditions, " AND ")
 
-	rows, err := c.db.QueryContext(ctx, query, args...)
+	rows, err := c.h.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find entities: %w", err)
 	}
@@ -166,16 +167,16 @@ func (c *Cortex) MergeEntities(ctx context.Context, keepID, dropID string) (Merg
 	if keepID == dropID {
 		return stats, fmt.Errorf("cortex: cannot merge an entity into itself")
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.userID, "merge")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "merge")
 	if err != nil {
 		return stats, err
 	}
-	stats, err = mergeEntitiesTx(ctx, tx, c.userID, keepID, dropID, mergeOpts{batchID: batchID, by: "user"})
+	stats, err = mergeEntitiesTx(ctx, tx, c.h.UserID, keepID, dropID, mergeOpts{batchID: batchID, by: "user"})
 	if err != nil {
 		return stats, err
 	}
@@ -194,16 +195,16 @@ func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string)
 	if keepID == dropID {
 		return stats, fmt.Errorf("cortex: cannot merge an entity into itself")
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return stats, fmt.Errorf("cortex: begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.userID, "merge")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "merge")
 	if err != nil {
 		return stats, err
 	}
-	return mergeEntitiesTx(ctx, tx, c.userID, keepID, dropID, mergeOpts{batchID: batchID, by: "user"})
+	return mergeEntitiesTx(ctx, tx, c.h.UserID, keepID, dropID, mergeOpts{batchID: batchID, by: "user"})
 }
 
 // mergeOpts controls how mergeEntitiesTx records and finishes a merge.
@@ -222,7 +223,7 @@ type mergeOpts struct {
 // recordChanges snapshots the rows of table matching where into the batch's
 // change records, before the caller modifies or deletes them. extra is a JSON
 // object merged into each snapshot (e.g. the retarget destination).
-func recordChanges(ctx context.Context, tx *dbTx, mo mergeOpts, userID, table, op, extra, where string, args ...any) error {
+func recordChanges(ctx context.Context, tx *store.Tx, mo mergeOpts, userID, table, op, extra, where string, args ...any) error {
 	if mo.batchID == "" {
 		return nil
 	}
@@ -237,7 +238,7 @@ func recordChanges(ctx context.Context, tx *dbTx, mo mergeOpts, userID, table, o
 
 // mergeEntitiesTx performs the merge against the provided transaction.
 // Caller is responsible for Commit or Rollback.
-func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID string, mo mergeOpts) (MergeStats, error) {
+func mergeEntitiesTx(ctx context.Context, tx *store.Tx, userID, keepID, dropID string, mo mergeOpts) (MergeStats, error) {
 	var stats MergeStats
 	soft := mo.batchID != ""
 	extraTo := `{"_to":` + strconv.Quote(keepID) + `}`
@@ -503,7 +504,7 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID strin
 
 // getEntityTx loads an entity by ID using the supplied transaction.
 // Returns sql.ErrNoRows if not found.
-func getEntityTx(ctx context.Context, tx *dbTx, userID, id string, includeDeleted bool) (*Entity, error) {
+func getEntityTx(ctx context.Context, tx *store.Tx, userID, id string, includeDeleted bool) (*Entity, error) {
 	var e Entity
 	var attrsJSON sql.NullString
 	err := tx.QueryRowContext(ctx,

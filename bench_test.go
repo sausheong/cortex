@@ -118,7 +118,7 @@ func loadUser(t *testing.T, ctx context.Context, c *Cortex, n int, seed int64) {
 		contents := make([]string, m)
 		vecs := make([]string, m)
 		for i := 0; i < m; i++ {
-			ids[i] = fmt.Sprintf("m_%s_%d", c.userID, off+i)
+			ids[i] = fmt.Sprintf("m_%s_%d", c.h.UserID, off+i)
 			var sb strings.Builder
 			for w := 0; w < 14; w++ {
 				if w > 0 {
@@ -129,19 +129,19 @@ func loadUser(t *testing.T, ctx context.Context, c *Cortex, n int, seed int64) {
 			contents[i] = sb.String()
 			vecs[i] = vectorLiteral(randVec(rng))
 		}
-		tx, err := c.db.BeginTx(ctx, nil)
+		tx, err := c.h.DB.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO memories (id, user_id, content, source) SELECT id, ?, content, 'bench' FROM unnest(?::text[], ?::text[]) AS u(id, content)`,
-			c.userID, ids, contents); err != nil {
+			c.h.UserID, ids, contents); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO embeddings (id, user_id, ref_id, ref_type, embedding, dims, generation)
 			 SELECT 'e_' || id, ?, id, 'memory', v::halfvec, ?, 1 FROM unnest(?::text[], ?::text[]) AS u(id, v)`,
-			c.userID, benchDims, ids, vecs); err != nil {
+			c.h.UserID, benchDims, ids, vecs); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -195,7 +195,7 @@ func TestBenchTwoUsers(t *testing.T) {
 	s := time.Now()
 	loadUser(t, ctx, a, n, 1)
 	t.Logf("TIMING load user A (%d rows, no index yet): %v", n, time.Since(s).Round(time.Second))
-	if _, err := root.db.ExecContext(ctx, `ANALYZE`); err != nil {
+	if _, err := root.h.DB.ExecContext(ctx, `ANALYZE`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,7 +208,7 @@ func TestBenchTwoUsers(t *testing.T) {
 	}
 	t.Logf("TIMING EnsureVectorIndex (%d rows, 3 ref types): %v", n, time.Since(s).Round(time.Millisecond))
 	var isz string
-	_ = root.db.QueryRowContext(ctx, `SELECT pg_size_pretty(pg_relation_size('emb_hnsw_memory_512'))`).Scan(&isz)
+	_ = root.h.DB.QueryRowContext(ctx, `SELECT pg_size_pretty(pg_relation_size('emb_hnsw_memory_512'))`).Scan(&isz)
 	t.Logf("SIZE emb_hnsw_memory_512 after A: %s", isz)
 	benchMem(t, "after A index build")
 
@@ -258,10 +258,10 @@ func TestBenchTwoUsers(t *testing.T) {
 	s = time.Now()
 	loadUser(t, ctx, b, n, 2)
 	t.Logf("TIMING load user B (%d rows, incremental into existing index): %v", n, time.Since(s).Round(time.Second))
-	if _, err := root.db.ExecContext(ctx, `ANALYZE`); err != nil {
+	if _, err := root.h.DB.ExecContext(ctx, `ANALYZE`); err != nil {
 		t.Fatal(err)
 	}
-	_ = root.db.QueryRowContext(ctx, `SELECT pg_size_pretty(pg_relation_size('emb_hnsw_memory_512'))`).Scan(&isz)
+	_ = root.h.DB.QueryRowContext(ctx, `SELECT pg_size_pretty(pg_relation_size('emb_hnsw_memory_512'))`).Scan(&isz)
 	t.Logf("SIZE emb_hnsw_memory_512 after A+B: %s", isz)
 	benchMem(t, "after B load")
 
@@ -270,7 +270,7 @@ func TestBenchTwoUsers(t *testing.T) {
 	benchMem(t, "after all queries")
 
 	// Fresh build over both users (cold-build cost for 200K rows).
-	if _, err := root.db.ExecContext(ctx, `DROP INDEX emb_hnsw_memory_512`); err != nil {
+	if _, err := root.h.DB.ExecContext(ctx, `DROP INDEX emb_hnsw_memory_512`); err != nil {
 		t.Fatal(err)
 	}
 	s = time.Now()

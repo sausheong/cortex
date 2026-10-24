@@ -8,6 +8,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 const defaultLowConfidenceThreshold = 0.3
@@ -23,33 +24,33 @@ func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, erro
 	var r LintReport
 	var err error
 
-	if r.EntityCount, err = countRows(ctx, c.db, c.userID, "entities"); err != nil {
+	if r.EntityCount, err = countRows(ctx, c.h.DB, c.h.UserID, "entities"); err != nil {
 		return r, fmt.Errorf("cortex: lint: count entities: %w", err)
 	}
-	if r.RelationshipCount, err = countRows(ctx, c.db, c.userID, "relationships"); err != nil {
+	if r.RelationshipCount, err = countRows(ctx, c.h.DB, c.h.UserID, "relationships"); err != nil {
 		return r, fmt.Errorf("cortex: lint: count relationships: %w", err)
 	}
-	if r.MemoryCount, err = countRows(ctx, c.db, c.userID, "memories"); err != nil {
+	if r.MemoryCount, err = countRows(ctx, c.h.DB, c.h.UserID, "memories"); err != nil {
 		return r, fmt.Errorf("cortex: lint: count memories: %w", err)
 	}
 
-	if r.Orphans, err = findOrphans(ctx, c.db, c.userID); err != nil {
+	if r.Orphans, err = findOrphans(ctx, c.h.DB, c.h.UserID); err != nil {
 		return r, fmt.Errorf("cortex: lint: orphans: %w", err)
 	}
-	if r.EntitiesNoMemories, err = findEntitiesNoMemories(ctx, c.db, c.userID); err != nil {
+	if r.EntitiesNoMemories, err = findEntitiesNoMemories(ctx, c.h.DB, c.h.UserID); err != nil {
 		return r, fmt.Errorf("cortex: lint: entities-no-memories: %w", err)
 	}
-	if r.NearDuplicates, err = findNearDuplicates(ctx, c.db, c.userID); err != nil {
+	if r.NearDuplicates, err = findNearDuplicates(ctx, c.h.DB, c.h.UserID); err != nil {
 		return r, fmt.Errorf("cortex: lint: near-duplicates: %w", err)
 	}
-	if r.DeadSources, err = findDeadSources(ctx, c.db, c.userID); err != nil {
+	if r.DeadSources, err = findDeadSources(ctx, c.h.DB, c.h.UserID); err != nil {
 		return r, fmt.Errorf("cortex: lint: dead-sources: %w", err)
 	}
-	if r.UnlinkedMemories, err = findUnlinkedMemories(ctx, c.db, c.userID); err != nil {
+	if r.UnlinkedMemories, err = findUnlinkedMemories(ctx, c.h.DB, c.h.UserID); err != nil {
 		return r, fmt.Errorf("cortex: lint: unlinked-memories: %w", err)
 	}
 	if cfg.LowConfidence {
-		if r.LowConfidenceMemories, err = findLowConfidenceMemories(ctx, c.db, c.userID, cfg.LowConfidenceThreshold); err != nil {
+		if r.LowConfidenceMemories, err = findLowConfidenceMemories(ctx, c.h.DB, c.h.UserID, cfg.LowConfidenceThreshold); err != nil {
 			return r, fmt.Errorf("cortex: lint: low-confidence: %w", err)
 		}
 	}
@@ -57,14 +58,14 @@ func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, erro
 	return r, nil
 }
 
-func countRows(ctx context.Context, db dbConn, userID, table string) (int, error) {
+func countRows(ctx context.Context, db store.DB, userID, table string) (int, error) {
 	var n int
 	// Table name is hard-coded by caller — safe to interpolate.
 	err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE user_id = ? AND deleted_at IS NULL", table), userID).Scan(&n)
 	return n, err
 }
 
-func findOrphans(ctx context.Context, db dbConn, userID string) ([]EntityRef, error) {
+func findOrphans(ctx context.Context, db store.DB, userID string) ([]EntityRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT e.id, e.name, e.type FROM entities e
 		WHERE e.user_id = ? AND e.deleted_at IS NULL
@@ -86,7 +87,7 @@ func findOrphans(ctx context.Context, db dbConn, userID string) ([]EntityRef, er
 	return out, rows.Err()
 }
 
-func findEntitiesNoMemories(ctx context.Context, db dbConn, userID string) ([]EntityRef, error) {
+func findEntitiesNoMemories(ctx context.Context, db store.DB, userID string) ([]EntityRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT e.id, e.name, e.type FROM entities e
 		WHERE e.user_id = ? AND e.deleted_at IS NULL
@@ -116,7 +117,7 @@ const (
 	nearDuplicateGroupCap = 3000
 )
 
-func findNearDuplicates(ctx context.Context, db dbConn, userID string) ([]DuplicatePair, error) {
+func findNearDuplicates(ctx context.Context, db store.DB, userID string) ([]DuplicatePair, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, name, type FROM entities
 		WHERE user_id = ? AND deleted_at IS NULL
@@ -162,7 +163,7 @@ func findNearDuplicates(ctx context.Context, db dbConn, userID string) ([]Duplic
 	return out, nil
 }
 
-func findDeadSources(ctx context.Context, db dbConn, userID string) ([]string, error) {
+func findDeadSources(ctx context.Context, db store.DB, userID string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT DISTINCT source FROM memories
 		WHERE user_id = ? AND deleted_at IS NULL AND source IS NOT NULL AND source != ''
@@ -186,7 +187,7 @@ func findDeadSources(ctx context.Context, db dbConn, userID string) ([]string, e
 	return out, rows.Err()
 }
 
-func findUnlinkedMemories(ctx context.Context, db dbConn, userID string) ([]MemoryRef, error) {
+func findUnlinkedMemories(ctx context.Context, db store.DB, userID string) ([]MemoryRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, content, source, confidence FROM memories m
 		WHERE m.user_id = ? AND m.deleted_at IS NULL
@@ -199,7 +200,7 @@ func findUnlinkedMemories(ctx context.Context, db dbConn, userID string) ([]Memo
 	return scanMemoryRefs(rows)
 }
 
-func findLowConfidenceMemories(ctx context.Context, db dbConn, userID string, threshold float64) ([]MemoryRef, error) {
+func findLowConfidenceMemories(ctx context.Context, db store.DB, userID string, threshold float64) ([]MemoryRef, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, content, source, confidence FROM memories
 		WHERE user_id = ? AND deleted_at IS NULL AND confidence < ?

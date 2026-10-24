@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/store"
+	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
 )
 
@@ -76,7 +78,7 @@ func normalizeAlias(kind, value string) string {
 // alias the entity already has is a no-op; one that belongs to another live
 // entity fails with ErrAliasTaken.
 func (c *Cortex) AddAlias(ctx context.Context, entityID, kind, value string) error {
-	if err := requireEntity(ctx, c.db, c.userID, entityID); err != nil {
+	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, entityID); err != nil {
 		return err
 	}
 	if kind == "" {
@@ -87,14 +89,14 @@ func (c *Cortex) AddAlias(ctx context.Context, entityID, kind, value string) err
 		return fmt.Errorf("cortex: empty alias")
 	}
 	var owner string
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
 		 VALUES (?, ?, ?, ?, ?, 'user')
 		 ON CONFLICT (user_id, kind, value_norm) DO UPDATE SET
 		   entity_id = CASE WHEN EXISTS (SELECT 1 FROM entities e WHERE e.id = entity_aliases.entity_id AND e.deleted_at IS NULL)
 		                    THEN entity_aliases.entity_id ELSE EXCLUDED.entity_id END
 		 RETURNING entity_id`,
-		c.userID, entityID, kind, strings.TrimSpace(value), norm,
+		c.h.UserID, entityID, kind, strings.TrimSpace(value), norm,
 	).Scan(&owner)
 	if err != nil {
 		return fmt.Errorf("cortex: add alias: %w", err)
@@ -112,19 +114,19 @@ func (c *Cortex) addAliasQuiet(ctx context.Context, entityID, kind, value, sourc
 	if norm == "" {
 		return
 	}
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
 		 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		c.userID, entityID, kind, strings.TrimSpace(value), norm, source); err != nil {
-		c.logf("cortex: record alias %q: %v", value, err)
+		c.h.UserID, entityID, kind, strings.TrimSpace(value), norm, source); err != nil {
+		c.h.Logf("cortex: record alias %q: %v", value, err)
 	}
 }
 
 // Aliases returns the identifiers recorded for an entity.
 func (c *Cortex) Aliases(ctx context.Context, entityID string) ([]Alias, error) {
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT entity_id, kind, value, COALESCE(source, ''), created_at FROM entity_aliases
-		 WHERE user_id = ? AND entity_id = ? ORDER BY kind, value_norm`, c.userID, entityID)
+		 WHERE user_id = ? AND entity_id = ? ORDER BY kind, value_norm`, c.h.UserID, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list aliases: %w", err)
 	}
@@ -145,9 +147,9 @@ func (c *Cortex) RemoveAlias(ctx context.Context, kind, value string) error {
 	if kind == "" {
 		kind = DetectAliasKind(value)
 	}
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`DELETE FROM entity_aliases WHERE user_id = ? AND kind = ? AND value_norm = ?`,
-		c.userID, kind, normalizeAlias(kind, value)); err != nil {
+		c.h.UserID, kind, normalizeAlias(kind, value)); err != nil {
 		return fmt.Errorf("cortex: remove alias: %w", err)
 	}
 	return nil
@@ -211,14 +213,14 @@ func (c *Cortex) owner(ctx context.Context, rc *resolveContext) (string, map[str
 	}
 	rc.ownerReady = true
 	rc.ownerNames = map[string]bool{}
-	id, err := c.OwnerEntityID(ctx)
+	id, err := tenancy.New(c.h).OwnerEntityID(ctx)
 	if err != nil {
 		return "", rc.ownerNames
 	}
 	var entName, userName, email sql.NullString
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT e.name, u.name, u.email FROM users u JOIN entities e ON e.id = u.owner_entity_id
-		 WHERE u.id = ? AND e.deleted_at IS NULL`, c.userID).Scan(&entName, &userName, &email); err != nil {
+		 WHERE u.id = ? AND e.deleted_at IS NULL`, c.h.UserID).Scan(&entName, &userName, &email); err != nil {
 		return "", rc.ownerNames
 	}
 	for _, n := range []string{entName.String, userName.String} {
@@ -287,8 +289,8 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	if !useLLM || best.Score < fuzzyAsk {
 		return res, nil
 	}
-	dis, ok := c.cfg.LLM.(EntityDisambiguator)
-	if c.cfg.LLM == nil || !ok {
+	dis, ok := c.h.Cfg.LLM.(EntityDisambiguator)
+	if c.h.Cfg.LLM == nil || !ok {
 		return res, nil
 	}
 	top := cands
@@ -301,7 +303,7 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	}
 	choice, err := dis.DisambiguateEntity(ctx, EntityMention{Name: mention, Type: typ, Context: rc.content}, ents)
 	if err != nil {
-		c.logf("cortex: disambiguate %q: %v", mention, err)
+		c.h.Logf("cortex: disambiguate %q: %v", mention, err)
 		return res, nil
 	}
 	if choice.ID == "" || choice.Confidence < llmMinConfidence {
@@ -346,12 +348,12 @@ func identifiers(mention string, attrs map[string]any) [][2]string {
 // nothing.
 func (c *Cortex) matchAlias(ctx context.Context, mention, typ string, attrs map[string]any) (*Entity, error) {
 	conds := []string{"(a.kind = 'name' AND a.value_norm = ?)"}
-	args := []any{c.userID, normalizeAlias(AliasName, mention)}
+	args := []any{c.h.UserID, normalizeAlias(AliasName, mention)}
 	for _, id := range identifiers(mention, attrs) {
 		conds = append(conds, "(a.kind = ? AND a.value_norm = ?)")
 		args = append(args, id[0], normalizeAlias(id[0], id[1]))
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT a.entity_id, a.kind, e.type FROM entity_aliases a
 		 JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
 		 WHERE a.user_id = ? AND (`+strings.Join(conds, " OR ")+`)`, args...)
@@ -396,10 +398,10 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 	if len(likes) == 0 {
 		return nil, nil
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, type, name, confidence FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) LIKE ANY(?)
-		 LIMIT `+fmt.Sprint(fuzzyCandidates), c.userID, likes)
+		 LIMIT `+fmt.Sprint(fuzzyCandidates), c.h.UserID, likes)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
 	}
@@ -446,11 +448,11 @@ func (c *Cortex) neighbours(ctx context.Context, ids []string) (map[string]bool,
 	if len(ids) == 0 {
 		return near, nil
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT CASE WHEN source_id = ANY(?) THEN target_id ELSE source_id END
 		 FROM relationships
 		 WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ANY(?) OR target_id = ANY(?))`,
-		ids, c.userID, ids, ids)
+		ids, c.h.UserID, ids, ids)
 	if err != nil {
 		return nil, err
 	}

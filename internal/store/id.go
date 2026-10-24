@@ -1,4 +1,4 @@
-package cortex
+package store
 
 import (
 	"math/rand"
@@ -13,8 +13,8 @@ var (
 	entropyMu sync.Mutex
 )
 
-// newID generates a new ULID string.
-func newID() string {
+// NewID generates a new ULID string.
+func NewID() string {
 	entropyMu.Lock()
 	defer entropyMu.Unlock()
 	return ulid.MustNew(ulid.Timestamp(time.Now()), entropy).String()

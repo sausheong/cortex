@@ -32,12 +32,12 @@ var reembedKinds = []struct{ refType, table, col string }{
 // of this handle's user that have no embedding at generation gen, with the
 // text to embed for each.
 func (c *Cortex) PendingEmbeddings(ctx context.Context, gen, limit int) ([]EmbedItem, error) {
-	return pendingEmbeddings(ctx, c.db.DB, c.userID, gen, limit)
+	return pendingEmbeddings(ctx, c.h.DB.DB, c.h.UserID, gen, limit)
 }
 
 // PendingEmbeddingsTx is PendingEmbeddings inside an open transaction.
 func (c *Cortex) PendingEmbeddingsTx(ctx context.Context, tx *sql.Tx, gen, limit int) ([]EmbedItem, error) {
-	return pendingEmbeddings(ctx, tx, c.userID, gen, limit)
+	return pendingEmbeddings(ctx, tx, c.h.UserID, gen, limit)
 }
 
 func pendingEmbeddings(ctx context.Context, q rowsQuerier, userID string, gen, limit int) ([]EmbedItem, error) {
@@ -128,13 +128,13 @@ func (c *Cortex) countEmbeddable(ctx context.Context, gen int, pendingOnly bool)
 	for _, k := range reembedKinds {
 		var n int
 		q := fmt.Sprintf(`SELECT count(*) FROM %s t WHERE t.user_id = $1`, k.table)
-		args := []any{c.userID}
+		args := []any{c.h.UserID}
 		if pendingOnly {
 			q += ` AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.user_id = t.user_id
 				AND e.ref_type = $2 AND e.ref_id = t.id AND e.generation = $3)`
 			args = append(args, k.refType, gen)
 		}
-		if err := c.db.DB.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+		if err := c.h.DB.DB.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 			return 0, fmt.Errorf("cortex: count embeddable: %w", err)
 		}
 		total += n

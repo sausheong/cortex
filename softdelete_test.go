@@ -26,7 +26,7 @@ func openSD(t *testing.T) *Cortex {
 func sdCount(t *testing.T, c *Cortex, q string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := c.db.QueryRowContext(context.Background(), q, args...).Scan(&n); err != nil {
+	if err := c.h.DB.QueryRowContext(context.Background(), q, args...).Scan(&n); err != nil {
 		t.Fatalf("%s: %v", q, err)
 	}
 	return n
@@ -34,7 +34,7 @@ func sdCount(t *testing.T, c *Cortex, q string, args ...any) int {
 
 func sdEmbed(t *testing.T, c *Cortex, id, typ, text string) {
 	t.Helper()
-	vecs, _ := c.cfg.Embedder.Embed(context.Background(), []string{text})
+	vecs, _ := c.h.Cfg.Embedder.Embed(context.Background(), []string{text})
 	if err := c.putEmbedding(context.Background(), id, typ, vecs[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +77,11 @@ func TestSoftDeleteHidesEverywhere(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "relationships":
-				if _, err := c.db.ExecContext(ctx, `UPDATE relationships SET deleted_at = now() WHERE id = ?`, rel.ID); err != nil {
+				if _, err := c.h.DB.ExecContext(ctx, `UPDATE relationships SET deleted_at = now() WHERE id = ?`, rel.ID); err != nil {
 					t.Fatal(err)
 				}
 			case "chunks":
-				if _, err := c.db.ExecContext(ctx, `UPDATE chunks SET deleted_at = now() WHERE id = ?`, ch.ID); err != nil {
+				if _, err := c.h.DB.ExecContext(ctx, `UPDATE chunks SET deleted_at = now() WHERE id = ?`, ch.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -300,7 +300,7 @@ func snapMerge(t *testing.T, c *Cortex, ids ...string) mergeSnap {
 	t.Helper()
 	ctx := context.Background()
 	collect := func(q string, args ...any) string {
-		rows, err := c.db.QueryContext(ctx, q, args...)
+		rows, err := c.h.DB.QueryContext(ctx, q, args...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,9 +317,9 @@ func snapMerge(t *testing.T, c *Cortex, ids ...string) mergeSnap {
 		return strings.Join(out, "\n")
 	}
 	var s mergeSnap
-	s.ents = collect(`SELECT id||'|'||COALESCE(deleted_at::text,'')||'|'||attributes::text||'|'||updated_at::text FROM entities WHERE user_id = ?`, c.userID)
-	s.links = collect(`SELECT memory_id||'|'||entity_id FROM memory_entities WHERE user_id = ?`, c.userID)
-	s.rels = collect(`SELECT id||'|'||source_id||'|'||target_id||'|'||type FROM relationships WHERE user_id = ? AND deleted_at IS NULL`, c.userID)
+	s.ents = collect(`SELECT id||'|'||COALESCE(deleted_at::text,'')||'|'||attributes::text||'|'||updated_at::text FROM entities WHERE user_id = ?`, c.h.UserID)
+	s.links = collect(`SELECT memory_id||'|'||entity_id FROM memory_entities WHERE user_id = ?`, c.h.UserID)
+	s.rels = collect(`SELECT id||'|'||source_id||'|'||target_id||'|'||type FROM relationships WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
 	return s
 }
 
@@ -405,7 +405,7 @@ func TestPurgeAfter30Days(t *testing.T) {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 	set := func(id string, days int) {
-		if _, err := c.db.ExecContext(ctx, `UPDATE memories SET deleted_at = now() - make_interval(days => ?) WHERE id = ?`, days, id); err != nil {
+		if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET deleted_at = now() - make_interval(days => ?) WHERE id = ?`, days, id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -438,7 +438,7 @@ func TestPurgeRemovesEmbeddingsAndLinks(t *testing.T) {
 		}
 		sdEmbed(t, c, m.ID, "memory", m.Content)
 		// A second generation row for the same memory.
-		vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+		vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 		if err := c.PutEmbeddingGen(ctx, m.ID, "memory", 2, vecs[0]); err != nil {
 			t.Fatal(err)
 		}
@@ -453,10 +453,10 @@ func TestPurgeRemovesEmbeddingsAndLinks(t *testing.T) {
 	if _, n, _ := c.SoftDeleteMemories(ctx, DeleteFilter{All: true}, "user"); n != 2 {
 		t.Fatalf("deleted %d", n)
 	}
-	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET deleted_at = now() - interval '31 days'`); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET deleted_at = now() - interval '31 days'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx, `UPDATE entities SET deleted_at = now() - interval '31 days'`); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET deleted_at = now() - interval '31 days'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.PurgeDeleted(ctx, 30*24*time.Hour); err != nil {
@@ -511,11 +511,11 @@ func TestPurgeRemovesBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE delete_batches SET created_at = now() - interval '31 days' WHERE id = ?`, oldMerge.BatchID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE entities SET deleted_at = now() - interval '31 days' WHERE delete_batch_id = ?`, oldMerge.BatchID); err != nil {
 		t.Fatal(err)
 	}
@@ -553,10 +553,10 @@ func TestSoftDeleteByConnection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET written_by_connection_id = 'c1' WHERE id = ?`, m.ID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET written_by_connection_id = 'c1' WHERE id = ?`, m.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx, `UPDATE entities SET written_by_connection_id = 'c1' WHERE id = ?`, e.ID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET written_by_connection_id = 'c1' WHERE id = ?`, e.ID); err != nil {
 		t.Fatal(err)
 	}
 	batch, n, err := c.SoftDeleteByConnection(ctx, "c1")

@@ -24,7 +24,7 @@ func TestMaintain_RunsAllThreePasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate older so newer is strictly newer (reconcile gate) and so decay has age.
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`,
 		newer.CreatedAt.Add(-48*time.Hour), older.ID); err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestMaintain_DryRunWritesNothing(t *testing.T) {
 	if err := c.PutMemory(ctx, newer); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`,
 		newer.CreatedAt.Add(-48*time.Hour), older.ID); err != nil {
 		t.Fatal(err)

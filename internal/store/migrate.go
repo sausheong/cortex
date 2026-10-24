@@ -1,4 +1,4 @@
-package cortex
+package store
 
 import (
 	"context"
@@ -12,18 +12,19 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-type migration struct {
-	version int
-	name    string
-	sql     string
+// Migration is one embedded schema migration.
+type Migration struct {
+	Version int
+	Name    string
+	SQL     string
 }
 
-func loadMigrations() ([]migration, error) {
+func LoadMigrations() ([]Migration, error) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {
 		return nil, err
 	}
-	var out []migration
+	var out []Migration
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasSuffix(name, ".sql") {
@@ -38,26 +39,26 @@ func loadMigrations() ([]migration, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, migration{version: v, name: name, sql: string(body)})
+		out = append(out, Migration{Version: v, Name: name, SQL: string(body)})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
 	return out, nil
 }
 
-// migrate applies unapplied migrations in order. A transaction-scoped
+// Migrate applies unapplied migrations in order. A transaction-scoped
 // advisory lock serialises concurrent Opens.
-func (c *Cortex) migrate(ctx context.Context) error {
-	return c.migrateUpTo(ctx, 0)
+func (h *Handle) Migrate(ctx context.Context) error {
+	return h.MigrateUpTo(ctx, 0)
 }
 
-// migrateUpTo applies unapplied migrations with version <= max (all of them
+// MigrateUpTo applies unapplied migrations with version <= max (all of them
 // when max <= 0). It is a test hook for upgrade-path tests.
-func (c *Cortex) migrateUpTo(ctx context.Context, max int) error {
-	migs, err := loadMigrations()
+func (h *Handle) MigrateUpTo(ctx context.Context, max int) error {
+	migs, err := LoadMigrations()
 	if err != nil {
 		return err
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin migration: %w", err)
 	}
@@ -92,22 +93,22 @@ func (c *Cortex) migrateUpTo(ctx context.Context, max int) error {
 	rows.Close()
 
 	for _, m := range migs {
-		if applied[m.version] || (max > 0 && m.version > max) {
+		if applied[m.Version] || (max > 0 && m.Version > max) {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-			return fmt.Errorf("cortex: migration %s: %w", m.name, err)
+		if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
+			return fmt.Errorf("cortex: migration %s: %w", m.Name, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES (?)`, m.version); err != nil {
-			return fmt.Errorf("cortex: record migration %s: %w", m.name, err)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version) VALUES (?)`, m.Version); err != nil {
+			return fmt.Errorf("cortex: record migration %s: %w", m.Name, err)
 		}
 	}
 	return tx.Commit()
 }
 
 // AppliedMigrations returns the versions recorded in schema_migrations, ascending.
-func (c *Cortex) AppliedMigrations(ctx context.Context) ([]int, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
+func (h *Handle) AppliedMigrations(ctx context.Context) ([]int, error) {
+	rows, err := h.DB.QueryContext(ctx, `SELECT version FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: read schema_migrations: %w", err)
 	}

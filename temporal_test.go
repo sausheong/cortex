@@ -17,7 +17,7 @@ func TestValidAtNonUTCRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate created_at so only valid_at gates the as-of window.
-	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`,
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`,
 		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), m.ID); err != nil {
 		t.Fatal(err)
 	}

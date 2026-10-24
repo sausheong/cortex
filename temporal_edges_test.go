@@ -99,19 +99,19 @@ func TestRecall_TrackAccessAndDecayClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := c.db.QueryRowContext(ctx, `SELECT access_count FROM memories WHERE id = ?`, m.ID).Scan(&n); err != nil || n != 0 {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT access_count FROM memories WHERE id = ?`, m.ID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("access_count after untracked recall = %d %v", n, err)
 	}
 	if _, err := c.Recall(ctx, "oolong", WithTrackAccess()); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.db.QueryRowContext(ctx, `SELECT access_count FROM memories WHERE id = ?`, m.ID).Scan(&n); err != nil || n != 1 {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT access_count FROM memories WHERE id = ?`, m.ID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("access_count after tracked recall = %d %v", n, err)
 	}
 
 	// Pretend the memory is a year old but was used just now: decay should
 	// barely touch it.
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = now() - interval '365 days' WHERE id = ?`, m.ID); err != nil {
 		t.Fatal(err)
 	}

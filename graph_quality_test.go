@@ -100,12 +100,12 @@ func TestRestoreBatch_FoldsRelationshipTwin(t *testing.T) {
 	if err := c.PutRelationship(ctx, &Relationship{SourceID: a.ID, TargetID: b.ID, Type: "works_at"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx,
-		`INSERT INTO delete_batches (id, user_id, kind) VALUES ('b1', ?, 'forget')`, c.userID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx,
+		`INSERT INTO delete_batches (id, user_id, kind) VALUES ('b1', ?, 'forget')`, c.h.UserID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx,
-		`UPDATE relationships SET deleted_at = now(), delete_batch_id = 'b1' WHERE user_id = ?`, c.userID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx,
+		`UPDATE relationships SET deleted_at = now(), delete_batch_id = 'b1' WHERE user_id = ?`, c.h.UserID); err != nil {
 		t.Fatal(err)
 	}
 	// Re-assert the edge while its twin sits in the batch.
@@ -177,7 +177,7 @@ func TestRemember_ReusesEntityAcrossCaseAndKeepsAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate a row written before types were normalised.
-	if _, err := c.db.ExecContext(ctx, `UPDATE entities SET type = 'Person' WHERE id = ?`, stored.ID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET type = 'Person' WHERE id = ?`, stored.ID); err != nil {
 		t.Fatal(err)
 	}
 	c.SetExtractor(&mockExtractor{
@@ -214,7 +214,7 @@ func TestPutEntity_ReadModifyWriteKeepsLegacyRow(t *testing.T) {
 	if err := c.PutEntity(ctx, legacy); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.db.ExecContext(ctx, `UPDATE entities SET type = 'Person' WHERE id = ?`, legacy.ID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET type = 'Person' WHERE id = ?`, legacy.ID); err != nil {
 		t.Fatal(err)
 	}
 	other := &Entity{Name: "Sau Sheong", Type: "person"} // the lower-case twin

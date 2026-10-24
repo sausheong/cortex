@@ -168,7 +168,7 @@ func TestRecallVectorSearch(t *testing.T) {
 		t.Fatalf("PutChunk(2): %v", err)
 	}
 
-	vecs, err := c.cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
+	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
 		if err := c.PutMemory(ctx, m); err != nil {
 			t.Fatal(err)
 		}
-		vecs, _ := c.cfg.Embedder.Embed(ctx, []string{content})
+		vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{content})
 		if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 			t.Fatal(err)
 		}
@@ -335,7 +335,7 @@ func TestRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
 		if err := c.PutMemory(ctx, m); err != nil {
 			t.Fatal(err)
 		}
-		vecs, _ := c.cfg.Embedder.Embed(ctx, []string{content})
+		vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{content})
 		if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 			t.Fatal(err)
 		}
@@ -532,7 +532,7 @@ func TestRecall_UsesMemoryVector(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}
@@ -738,7 +738,7 @@ func TestRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestRecallWithStrength_AbstainMatchesCosineThreshold(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}
@@ -925,7 +925,7 @@ func TestRecall_WithAsOf(t *testing.T) {
 	}
 	// Backdate created_at so the as-of window is meaningful.
 	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	// Invalidate as of 2026-03-01 (fact stopped being true then).
@@ -971,7 +971,7 @@ func TestRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
 	}
 	// Backdate created_at so the as-of window is meaningful.
 	ingest := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
+	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, ingest, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	// Invalidate as of 2026-03-01 (fact stopped being true then).

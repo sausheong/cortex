@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/sausheong/cortex/internal/tenancy"
 )
 
 func TestNameSimilarity(t *testing.T) {
@@ -85,7 +87,7 @@ func ownerCortex(t *testing.T, name, email string) (*Cortex, string) {
 		t.Fatal(err)
 	}
 	c := base.ForUser(u.ID)
-	ownerID, err := c.OwnerEntityID(context.Background())
+	ownerID, err := tenancy.New(c.h).OwnerEntityID(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

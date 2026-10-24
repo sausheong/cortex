@@ -16,7 +16,7 @@ func TestDecayConfidence_DecaysOldMemory(t *testing.T) {
 	}
 	// Backdate created_at to ~one 30-day half-life ago and leave last_decay_at NULL.
 	anchor := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`, anchor, m.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestDecayConfidence_AutoPrunesBelowFloor(t *testing.T) {
 	}
 	// Backdate far past so decayed confidence falls well below the floor.
 	anchor := time.Now().UTC().Add(-3650 * 24 * time.Hour) // ~10 years
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`, anchor, m.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestDecayConfidence_DryRunWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	anchor := time.Now().UTC().Add(-60 * 24 * time.Hour)
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET created_at = ? WHERE id = ?`, anchor, m.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestDecay_SkipsStaticMemories(t *testing.T) {
 	// Age both far back so decay would fire.
 	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, id := range []string{stat.ID, dyn.ID} {
-		if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ?, last_decay_at = NULL WHERE id = ?`, old, id); err != nil {
+		if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ?, last_decay_at = NULL WHERE id = ?`, old, id); err != nil {
 			t.Fatal(err)
 		}
 	}

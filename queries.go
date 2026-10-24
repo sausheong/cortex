@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
+	"github.com/sausheong/cortex/internal/tenancy"
 )
 
 // Curated graph queries: the questions agents ask most, answered in one call
@@ -106,8 +108,8 @@ func (c *Cortex) entityNames(ctx context.Context, ids map[string]bool) (map[stri
 	for id := range ids {
 		list = append(list, id)
 	}
-	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, name FROM entities WHERE user_id = ? AND id = ANY(?)`, c.userID, list)
+	rows, err := c.h.DB.QueryContext(ctx,
+		`SELECT id, name FROM entities WHERE user_id = ? AND id = ANY(?)`, c.h.UserID, list)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: entity names: %w", err)
 	}
@@ -131,10 +133,10 @@ const maxPathHops = 6
 // only used as an end, never as a stepping stone: everything connects
 // through the owner, which says nothing.
 func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]NamedEdge, error) {
-	if err := requireEntity(ctx, c.db, c.userID, fromID); err != nil {
+	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, fromID); err != nil {
 		return nil, err
 	}
-	if err := requireEntity(ctx, c.db, c.userID, toID); err != nil {
+	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, toID); err != nil {
 		return nil, err
 	}
 	if fromID == toID {
@@ -146,14 +148,14 @@ func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]
 	if maxHops > maxPathHops {
 		maxHops = maxPathHops
 	}
-	ownerID, _ := c.OwnerEntityID(ctx)
+	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
 	validity, vargs := edgeValidityClause("r", false, nil)
 	const next = `CASE WHEN r.source_id = w.node THEN r.target_id ELSE r.source_id END`
-	args := []any{fromID, fromID, c.userID}
+	args := []any{fromID, fromID, c.h.UserID}
 	args = append(args, vargs...)
 	args = append(args, maxHops, ownerID, toID, toID)
 	var edgeIDs string
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`WITH RECURSIVE walk(node, visited, edges, depth) AS (
 		   SELECT ?::text, ARRAY[?::text], ARRAY[]::text[], 0
 		   UNION ALL
@@ -190,9 +192,9 @@ func (c *Cortex) getRelationship(ctx context.Context, id string) (*Relationship,
 	var r Relationship
 	var attrsJSON sql.NullString
 	var validAt, invalidAt sql.NullTime
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`SELECT id, source_id, target_id, type, attributes, source, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
-		 FROM relationships WHERE id = ? AND user_id = ?`, id, c.userID,
+		 FROM relationships WHERE id = ? AND user_id = ?`, id, c.h.UserID,
 	).Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.Confidence, &r.CreatedAt, &r.EvidenceCount, &r.LastSeenAt, &validAt, &invalidAt)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get relationship: %w", err)
@@ -202,7 +204,7 @@ func (c *Cortex) getRelationship(ctx context.Context, id string) (*Relationship,
 			return nil, fmt.Errorf("cortex: unmarshal relationship attributes: %w", err)
 		}
 	}
-	r.ValidAt, r.InvalidAt = nullTimePtr(validAt), nullTimePtr(invalidAt)
+	r.ValidAt, r.InvalidAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt)
 	return &r, nil
 }
 
@@ -284,10 +286,10 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 	}
 	ch := &Changes{Since: since}
 
-	erows, err := c.db.QueryContext(ctx,
+	erows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, type, name, COALESCE(source, ''), confidence, created_at, updated_at FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
-		c.userID, since, limit)
+		c.h.UserID, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: changed entities: %w", err)
 	}
@@ -302,9 +304,9 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 	erows.Close()
 
 	memQuery := func(where string) ([]Memory, error) {
-		rows, err := c.db.QueryContext(ctx,
+		rows, err := c.h.DB.QueryContext(ctx,
 			`SELECT id, content, COALESCE(source, ''), confidence, created_at, valid_at, invalid_at, expired_at FROM memories
-			 WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.userID, since, limit)
+			 WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.h.UserID, since, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -316,7 +318,7 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 			if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &validAt, &invalidAt, &expiredAt); err != nil {
 				return nil, err
 			}
-			m.ValidAt, m.InvalidAt, m.ExpiredAt = nullTimePtr(validAt), nullTimePtr(invalidAt), nullTimePtr(expiredAt)
+			m.ValidAt, m.InvalidAt, m.ExpiredAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt), store.NullTimePtr(expiredAt)
 			out = append(out, m)
 		}
 		return out, rows.Err()
@@ -329,8 +331,8 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 	}
 
 	relQuery := func(where string) ([]NamedEdge, error) {
-		rows, err := c.db.QueryContext(ctx,
-			`SELECT id FROM relationships WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.userID, since, limit)
+		rows, err := c.h.DB.QueryContext(ctx,
+			`SELECT id FROM relationships WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.h.UserID, since, limit)
 		if err != nil {
 			return nil, err
 		}

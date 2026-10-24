@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // GraphNeighbourhood returns the centre entity with up to Limit-1 of its
@@ -27,7 +29,7 @@ func (c *Cortex) GraphNeighbourhood(ctx context.Context, centerID string, f Grap
 	g := &Neighbourhood{Nodes: []GraphNode{{ID: center.ID, Type: center.Type, Name: center.Name, Center: true}}}
 
 	where := ""
-	args := []any{centerID, c.userID, centerID, centerID, c.userID, centerID}
+	args := []any{centerID, c.h.UserID, centerID, centerID, c.h.UserID, centerID}
 	if len(f.Types) > 0 {
 		where += " AND e.type = ANY(?)"
 		args = append(args, f.Types)
@@ -40,7 +42,7 @@ func (c *Cortex) GraphNeighbourhood(ctx context.Context, centerID string, f Grap
 	// The limit counts the centre, so fetching `limit` rows is one more than
 	// fits, which is how truncation is detected.
 	args = append(args, limit)
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT e.id, e.type, e.name, count(*) AS rels
 		 FROM (SELECT CASE WHEN source_id = ? THEN target_id ELSE source_id END AS nid, created_at
 		       FROM relationships WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ? OR target_id = ?)) inc
@@ -71,10 +73,10 @@ func (c *Cortex) GraphNeighbourhood(ctx context.Context, centerID string, f Grap
 	}
 	rows.Close()
 
-	erows, err := c.db.QueryContext(ctx,
+	erows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, source_id, target_id, type FROM relationships
 		 WHERE user_id = ? AND deleted_at IS NULL AND source_id = ANY(?) AND target_id = ANY(?)
-		 ORDER BY created_at DESC, id LIMIT ?`, c.userID, ids, ids, limit*6)
+		 ORDER BY created_at DESC, id LIMIT ?`, c.h.UserID, ids, ids, limit*6)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: graph edges: %w", err)
 	}
@@ -98,27 +100,27 @@ func (c *Cortex) RenameEntity(ctx context.Context, id, name string) error {
 	if name == "" {
 		return errors.New("cortex: entity name is empty")
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin rename: %w", err)
 	}
 	defer tx.Rollback()
 	var typ string
-	err = tx.QueryRowContext(ctx, `SELECT type FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL FOR UPDATE`, id, c.userID).Scan(&typ)
+	err = tx.QueryRowContext(ctx, `SELECT type FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL FOR UPDATE`, id, c.h.UserID).Scan(&typ)
 	if err != nil {
-		return errEntityNotFound()
+		return store.ErrEntityNotFound()
 	}
 	var other string
 	err = tx.QueryRowContext(ctx,
 		`SELECT id FROM entities WHERE user_id = ? AND name = ? AND type = ? AND deleted_at IS NULL AND id <> ?`,
-		c.userID, name, typ, id).Scan(&other)
+		c.h.UserID, name, typ, id).Scan(&other)
 	if err == nil {
 		return &ErrEntityNameTaken{ConflictID: other}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE entities SET name = ?, updated_at = now() WHERE id = ? AND user_id = ?`, name, id, c.userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE entities SET name = ?, updated_at = now() WHERE id = ? AND user_id = ?`, name, id, c.h.UserID); err != nil {
 		return fmt.Errorf("cortex: rename entity: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM embeddings WHERE user_id = ? AND ref_type = 'entity' AND ref_id = ?`, c.userID, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embeddings WHERE user_id = ? AND ref_type = 'entity' AND ref_id = ?`, c.h.UserID, id); err != nil {
 		return fmt.Errorf("cortex: drop stale entity embedding: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -144,7 +146,7 @@ func (c *Cortex) SearchEntities(ctx context.Context, q string, types []string, e
 	}
 	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
 	conds := `user_id = ? AND deleted_at IS NULL AND name ILIKE ? ESCAPE '\'`
-	args := []any{c.userID, "%" + esc + "%"}
+	args := []any{c.h.UserID, "%" + esc + "%"}
 	if len(types) > 0 {
 		conds += ` AND type = ANY(?)`
 		args = append(args, types)
@@ -154,7 +156,7 @@ func (c *Cortex) SearchEntities(ctx context.Context, q string, types []string, e
 		args = append(args, excludeID)
 	}
 	args = append(args, esc+"%", limit)
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, type, name, source FROM entities WHERE `+conds+`
 		 ORDER BY (name ILIKE ? ESCAPE '\') DESC, name, id LIMIT ?`, args...)
 	if err != nil {
@@ -178,7 +180,7 @@ func (c *Cortex) SearchEntities(ctx context.Context, q string, types []string, e
 
 // EntityTypes lists the distinct types of this user's live entities.
 func (c *Cortex) EntityTypes(ctx context.Context) ([]string, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT DISTINCT type FROM entities WHERE user_id = ? AND deleted_at IS NULL ORDER BY type`, c.userID)
+	rows, err := c.h.DB.QueryContext(ctx, `SELECT DISTINCT type FROM entities WHERE user_id = ? AND deleted_at IS NULL ORDER BY type`, c.h.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: entity types: %w", err)
 	}
@@ -202,19 +204,19 @@ func (c *Cortex) EntityRelations(ctx context.Context, id string, limit int) ([]E
 		limit = 50
 	}
 	var total int
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM relationships r
 		 JOIN entities o ON o.user_id = r.user_id AND o.deleted_at IS NULL AND o.id = CASE WHEN r.source_id = ? THEN r.target_id ELSE r.source_id END
 		 WHERE r.user_id = ? AND r.deleted_at IS NULL AND (r.source_id = ? OR r.target_id = ?)`,
-		id, c.userID, id, id).Scan(&total); err != nil {
+		id, c.h.UserID, id, id).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("cortex: count relations: %w", err)
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT r.id, r.type, r.source_id = ?, o.id, o.name, o.type, r.created_at FROM relationships r
 		 JOIN entities o ON o.user_id = r.user_id AND o.deleted_at IS NULL AND o.id = CASE WHEN r.source_id = ? THEN r.target_id ELSE r.source_id END
 		 WHERE r.user_id = ? AND r.deleted_at IS NULL AND (r.source_id = ? OR r.target_id = ?)
 		 ORDER BY r.created_at DESC, r.id LIMIT ?`,
-		id, id, c.userID, id, id, limit)
+		id, id, c.h.UserID, id, id, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cortex: entity relations: %w", err)
 	}

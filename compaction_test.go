@@ -18,7 +18,7 @@ func compactSeed(t *testing.T, c *Cortex, content string, static bool, vec []flo
 		t.Fatal(err)
 	}
 	if age > 0 {
-		if _, err := c.db.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, time.Now().Add(-age), m.ID); err != nil {
+		if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`, time.Now().Add(-age), m.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,8 +48,8 @@ func nearAxis(i int) []float32 {
 
 func liveSnapshot(t *testing.T, c *Cortex) map[string]string {
 	t.Helper()
-	rows, err := c.db.QueryContext(context.Background(),
-		`SELECT id, content FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.userID)
+	rows, err := c.h.DB.QueryContext(context.Background(),
+		`SELECT id, content FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
 	if err != nil {
 		t.Fatal(err)
 	}

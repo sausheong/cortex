@@ -35,11 +35,11 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 	now := time.Now().UTC()
 	report := DecayReport{DryRun: cfg.DryRun}
 
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, content, confidence, created_at, last_decay_at, last_accessed_at
 		 FROM memories
 		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND NOT static`,
-		c.userID,
+		c.h.UserID,
 	)
 	if err != nil {
 		return DecayReport{}, fmt.Errorf("cortex: decay scan: %w", err)
@@ -99,9 +99,9 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 			continue
 		}
 
-		if _, err := c.db.ExecContext(ctx,
+		if _, err := c.h.DB.ExecContext(ctx,
 			`UPDATE memories SET confidence = ?, last_decay_at = ? WHERE id = ? AND user_id = ?`,
-			newConf, now, cd.id, c.userID,
+			newConf, now, cd.id, c.h.UserID,
 		); err != nil {
 			return report, fmt.Errorf("cortex: decay update %s: %w", cd.id, err)
 		}

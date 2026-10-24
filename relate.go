@@ -21,8 +21,8 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 		o(cfg)
 	}
 
-	det, ok := c.cfg.LLM.(RelationDetector)
-	if c.cfg.LLM == nil || !ok {
+	det, ok := c.h.Cfg.LLM.(RelationDetector)
+	if c.h.Cfg.LLM == nil || !ok {
 		return RelationReport{
 			Skipped:    true,
 			SkipReason: "no RelationDetector-capable LLM configured",
@@ -59,8 +59,8 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 			}
 			report.EntitiesSkipped++
 			llmutil.AddReportError(&report.Errors, "detect relations for entity %s: %v", eid, err)
-			if c.cfg.Logf != nil {
-				c.cfg.Logf("cortex: relate: skipping entity %s: %v", eid, err)
+			if c.h.Cfg.Logf != nil {
+				c.h.Cfg.Logf("cortex: relate: skipping entity %s: %v", eid, err)
 			}
 			continue
 		}

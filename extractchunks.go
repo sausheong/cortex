@@ -25,7 +25,7 @@ func IsExtractPartial(err error) bool {
 // (nil extraction).
 func (c *Cortex) extractParts(ctx context.Context, content string, parts []string, contentType string) (*Extraction, error) {
 	if len(parts) <= 1 {
-		return c.cfg.Extractor.Extract(ctx, content, contentType)
+		return c.h.Cfg.Extractor.Extract(ctx, content, contentType)
 	}
 	results := make([]*Extraction, len(parts))
 	errs := make([]error, len(parts))
@@ -37,7 +37,7 @@ func (c *Cortex) extractParts(ctx context.Context, content string, parts []strin
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i], errs[i] = c.cfg.Extractor.Extract(ctx, p, contentType)
+			results[i], errs[i] = c.h.Cfg.Extractor.Extract(ctx, p, contentType)
 		}()
 	}
 	wg.Wait()

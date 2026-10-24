@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
 )
 
@@ -35,14 +36,14 @@ func (c *Cortex) querySeeds(ctx context.Context, query string) ([]string, error)
 	if len(grams) == 0 {
 		return nil, nil
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT e.id, lower(e.name) FROM entities e
 		 WHERE e.user_id = ? AND e.deleted_at IS NULL AND lower(e.name) = ANY(?)
 		 UNION
 		 SELECT e.id, a.value_norm FROM entity_aliases a
 		 JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
 		 WHERE a.user_id = ? AND a.value_norm = ANY(?)`,
-		c.userID, grams, c.userID, grams)
+		c.h.UserID, grams, c.h.UserID, grams)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query seeds: %w", err)
 	}
@@ -123,11 +124,11 @@ func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mo
 	if len(seeds) == 0 {
 		return dist, nil
 	}
-	ownerID, _ := c.OwnerEntityID(ctx)
+	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
 	validity, vargs := edgeValidityClause("r", mode.IncludeInvalid, mode.AsOf)
-	args := append([]any{seeds, c.userID}, vargs...)
-	args = append(args, hops, ownerID, c.userID)
-	rows, err := c.db.QueryContext(ctx,
+	args := append([]any{seeds, c.h.UserID}, vargs...)
+	args = append(args, hops, ownerID, c.h.UserID)
+	rows, err := c.h.DB.QueryContext(ctx,
 		`WITH RECURSIVE walk(id, depth) AS (
 		   SELECT unnest(?::text[]), 0
 		   UNION
@@ -164,7 +165,7 @@ type graphContext struct {
 func (c *Cortex) buildGraphContext(ctx context.Context, query string, mode model.TemporalMode) graphContext {
 	seeds, err := c.querySeeds(ctx, query)
 	if err != nil {
-		c.logf("cortex: recall graph seeds: %v", err)
+		c.h.Logf("cortex: recall graph seeds: %v", err)
 		return graphContext{}
 	}
 	if len(seeds) == 0 {
@@ -172,7 +173,7 @@ func (c *Cortex) buildGraphContext(ctx context.Context, query string, mode model
 	}
 	dist, err := c.neighbourhood(ctx, seeds, seedHops, mode)
 	if err != nil {
-		c.logf("cortex: recall graph neighbourhood: %v", err)
+		c.h.Logf("cortex: recall graph neighbourhood: %v", err)
 		return graphContext{seeds: seeds}
 	}
 	return graphContext{seeds: seeds, dist: dist}
@@ -202,10 +203,10 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 		return nil, nil
 	}
 	clause, targs := mode.Clause("m")
-	args := []any{c.userID, g.seeds}
+	args := []any{c.h.UserID, g.seeds}
 	args = append(args, targs...)
 	args = append(args, limit)
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT m.id, m.content, COALESCE(m.source, ''), COALESCE(m.speaker, ''), m.confidence
 		 FROM memories m
 		 JOIN memory_entities me ON me.memory_id = m.id AND me.user_id = m.user_id
@@ -214,7 +215,7 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 		 ORDER BY count(*) DESC, m.confidence DESC, m.created_at DESC, m.id
 		 LIMIT ?`, args...)
 	if err != nil {
-		c.logf("cortex: recall seed memories: %v", err)
+		c.h.Logf("cortex: recall seed memories: %v", err)
 		return nil, nil
 	}
 	defer rows.Close()
@@ -223,7 +224,7 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 	for rows.Next() {
 		var r Result
 		if err := rows.Scan(&r.ID, &r.Content, &r.Source, &r.Speaker, &r.Confidence); err != nil {
-			c.logf("cortex: scan seed memory: %v", err)
+			c.h.Logf("cortex: scan seed memory: %v", err)
 			return nil, nil
 		}
 		r.Type = "memory"
@@ -232,7 +233,7 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 		results[key] = r
 	}
 	if err := rows.Err(); err != nil {
-		c.logf("cortex: recall seed memories: %v", err)
+		c.h.Logf("cortex: recall seed memories: %v", err)
 		return nil, nil
 	}
 	// Load each memory's full entity links so boosting sees all of them.
@@ -271,10 +272,10 @@ func (c *Cortex) accessCounts(ctx context.Context, items []vecmath.Ranked) map[s
 	if len(ids) == 0 {
 		return out
 	}
-	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, access_count FROM memories WHERE user_id = ? AND id = ANY(?) AND access_count > 0`, c.userID, ids)
+	rows, err := c.h.DB.QueryContext(ctx,
+		`SELECT id, access_count FROM memories WHERE user_id = ? AND id = ANY(?) AND access_count > 0`, c.h.UserID, ids)
 	if err != nil {
-		c.logf("cortex: recall access counts: %v", err)
+		c.h.Logf("cortex: recall access counts: %v", err)
 		return out
 	}
 	defer rows.Close()
@@ -301,9 +302,9 @@ func (c *Cortex) markAccessed(ctx context.Context, results []Result) {
 	if len(ids) == 0 {
 		return
 	}
-	if _, err := c.db.ExecContext(ctx,
+	if _, err := c.h.DB.ExecContext(ctx,
 		`UPDATE memories SET access_count = access_count + 1, last_accessed_at = now()
-		 WHERE user_id = ? AND id = ANY(?)`, c.userID, ids); err != nil {
-		c.logf("cortex: record recall access: %v", err)
+		 WHERE user_id = ? AND id = ANY(?)`, c.h.UserID, ids); err != nil {
+		c.h.Logf("cortex: record recall access: %v", err)
 	}
 }

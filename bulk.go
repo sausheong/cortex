@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // MemoriesByEntityAll returns every currently-valid memory grouped by the
@@ -16,8 +17,8 @@ import (
 // ordered oldest first; EntityIDs is filled from the same links.
 func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, error) {
 	clause, targs := model.TemporalMode{}.Clause("m")
-	args := append([]any{c.userID}, targs...)
-	rows, err := c.db.QueryContext(ctx,
+	args := append([]any{c.h.UserID}, targs...)
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT me.entity_id, m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id AND me.user_id = m.user_id
@@ -44,10 +45,10 @@ func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, 
 		if spk.Valid {
 			m.Speaker = spk.String
 		}
-		m.ValidAt = nullTimePtr(vat)
-		m.InvalidAt = nullTimePtr(iat)
-		m.ExpiredAt = nullTimePtr(eat)
-		m.ForgetAfter = nullTimePtr(fa)
+		m.ValidAt = store.NullTimePtr(vat)
+		m.InvalidAt = store.NullTimePtr(iat)
+		m.ExpiredAt = store.NullTimePtr(eat)
+		m.ForgetAfter = store.NullTimePtr(fa)
 		out[eid] = append(out[eid], m)
 		links[m.ID] = append(links[m.ID], eid)
 	}
@@ -66,12 +67,12 @@ func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, 
 // AllRelationships returns every live relationship for the user in one
 // query, ordered by id. It is the bulk form of GetRelationships.
 func (c *Cortex) AllRelationships(ctx context.Context) ([]Relationship, error) {
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, source_id, target_id, type, attributes, source, confidence, created_at
 		 FROM relationships
 		 WHERE user_id = ? AND deleted_at IS NULL
 		 ORDER BY id`,
-		c.userID,
+		c.h.UserID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: all relationships: %w", err)

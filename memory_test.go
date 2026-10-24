@@ -183,7 +183,7 @@ func TestPutMemory_PopulatesFTS(t *testing.T) {
 
 	// The generated tsv column must match the memory.
 	var got string
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`SELECT content FROM memories WHERE tsv @@ plainto_tsquery('english', ?)`, "Stripe",
 	).Scan(&got)
 	if err != nil {
@@ -319,7 +319,7 @@ func TestInvalidateMemory(t *testing.T) {
 
 	// Row still exists; expired_at set, invalid_at = eventTime.
 	var expired, invalid sql.NullTime
-	err := c.db.QueryRowContext(ctx,
+	err := c.h.DB.QueryRowContext(ctx,
 		`SELECT expired_at, invalid_at FROM memories WHERE id = ?`, m.ID,
 	).Scan(&expired, &invalid)
 	if err != nil {

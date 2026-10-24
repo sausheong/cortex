@@ -50,7 +50,7 @@ func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...R
 	// which actually discriminates relevant from irrelevant top hits (the RRF
 	// top score is ~constant and cannot). On any embed failure we log and fall
 	// through to the RRF fallback so a dead embedder degrades, never errors.
-	if c.cfg.Embedder != nil {
+	if c.h.Cfg.Embedder != nil {
 		if s, ok := c.cosineStrength(ctx, query, results); ok {
 			out.Strength = s
 			out.Abstain = s < AbstainRelevanceThreshold
@@ -79,13 +79,13 @@ func (c *Cortex) cosineStrength(ctx context.Context, query string, results []Res
 		contents[i] = results[i].Content
 	}
 
-	vecs, err := c.cfg.Embedder.Embed(ctx, append([]string{query}, contents...))
+	vecs, err := c.h.Cfg.Embedder.Embed(ctx, append([]string{query}, contents...))
 	if err != nil {
-		c.logf("cortex: abstention cosine embed failed: %v", err)
+		c.h.Logf("cortex: abstention cosine embed failed: %v", err)
 		return 0, false
 	}
 	if len(vecs) < 1+n {
-		c.logf("cortex: abstention cosine embed returned %d vectors, want %d", len(vecs), 1+n)
+		c.h.Logf("cortex: abstention cosine embed returned %d vectors, want %d", len(vecs), 1+n)
 		return 0, false
 	}
 
@@ -227,7 +227,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// ~15-20pts on FTS-only) and rescues nothing, so we keep the fusion order.
 	// This also makes a dead vector path (e.g. embedder over quota → empty
 	// list) degrade cleanly to keyword order rather than a worse reranked one.
-	if cfg.Rerank && c.cfg.Embedder != nil && len(lists) > 1 && len(merged) > 1 {
+	if cfg.Rerank && c.h.Cfg.Embedder != nil && len(lists) > 1 && len(merged) > 1 {
 		cands := make([]vecmath.MMRCand, 0, len(merged))
 		for _, item := range merged {
 			r, ok := resultMap[item.ID]
@@ -319,8 +319,8 @@ func rrfScore(merged []vecmath.Ranked, key string) float64 {
 // Falls back to keyword_search + memory_lookup if no LLM is configured
 // or if decomposition returns no results.
 func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQuery {
-	if c.cfg.LLM != nil {
-		sqs, err := c.cfg.LLM.Decompose(ctx, query)
+	if c.h.Cfg.LLM != nil {
+		sqs, err := c.h.Cfg.LLM.Decompose(ctx, query)
 		if err == nil && len(sqs) > 0 {
 			return sqs
 		}
@@ -394,18 +394,18 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mo
 // otherwise swallows, so a dead embedding endpoint doesn't masquerade as
 // "no results".
 func (c *Cortex) logf(format string, args ...any) {
-	if c.cfg.Logf != nil {
-		c.cfg.Logf(format, args...)
+	if c.h.Cfg.Logf != nil {
+		c.h.Cfg.Logf(format, args...)
 	}
 }
 
 func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]vecmath.Ranked, map[string]Result) {
-	if c.cfg.Embedder == nil {
+	if c.h.Cfg.Embedder == nil {
 		return nil, nil
 	}
 	mems, err := c.searchMemoryVectorMode(ctx, query, limit, mode)
 	if err != nil {
-		c.logf("cortex: recall memory_vector embed/search failed: %v", err)
+		c.h.Logf("cortex: recall memory_vector embed/search failed: %v", err)
 		return nil, nil
 	}
 	if len(mems) == 0 {
@@ -463,13 +463,13 @@ func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]
 }
 
 func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]vecmath.Ranked, map[string]Result) {
-	if c.cfg.Embedder == nil {
+	if c.h.Cfg.Embedder == nil {
 		return nil, nil
 	}
 
 	chunks, err := c.SearchVector(ctx, query, limit)
 	if err != nil {
-		c.logf("cortex: recall vector_search embed/search failed: %v", err)
+		c.h.Logf("cortex: recall vector_search embed/search failed: %v", err)
 		return nil, nil
 	}
 	if len(chunks) == 0 {

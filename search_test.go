@@ -74,7 +74,7 @@ func TestStoreAndSearchEmbedding(t *testing.T) {
 	}
 
 	// Generate embeddings and store them.
-	vecs, err := c.cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
+	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
 	if err != nil {
 		t.Fatalf("Embed() error: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestSearchMemoryVector(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, err := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSearchMemoryVector_HidesInvalidated(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -190,14 +190,14 @@ func TestEmbeddingByRef(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatal(err)
 	}
 
 	got := c.embeddingByRef(ctx, m.ID, "memory")
-	if len(got) != c.cfg.Embedder.Dimensions() {
-		t.Fatalf("expected %d-dim vector, got %d", c.cfg.Embedder.Dimensions(), len(got))
+	if len(got) != c.h.Cfg.Embedder.Dimensions() {
+		t.Fatalf("expected %d-dim vector, got %d", c.h.Cfg.Embedder.Dimensions(), len(got))
 	}
 
 	// Missing ref → nil.

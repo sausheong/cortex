@@ -57,7 +57,7 @@ func TestNormalizeGraph_RetypesMergesAndUndoes(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Write the legacy type label directly, as pre-normalisation rows have.
-		if _, err := c.db.ExecContext(ctx, `UPDATE entities SET type = ? WHERE id = ?`, typ, e.ID); err != nil {
+		if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET type = ? WHERE id = ?`, typ, e.ID); err != nil {
 			t.Fatal(err)
 		}
 		return e.ID
@@ -140,7 +140,7 @@ func TestNormalizeGraph_FoldsConceptIntoSpecificNamesake(t *testing.T) {
 		if err := c.PutEntity(ctx, e); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.db.ExecContext(ctx, `UPDATE entities SET type = ? WHERE id = ?`, typ, e.ID); err != nil {
+		if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET type = ? WHERE id = ?`, typ, e.ID); err != nil {
 			t.Fatal(err)
 		}
 		return e.ID

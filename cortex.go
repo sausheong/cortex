@@ -19,7 +19,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		o(cfg)
 	}
 
-	if c.cfg.Extractor == nil {
+	if c.h.Cfg.Extractor == nil {
 		return fmt.Errorf("cortex: no extractor configured")
 	}
 
@@ -122,7 +122,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		}
 		chunkTargets = append(chunkTargets, embedTarget{ch.ID, "chunk", ch.Content})
 	}
-	if c.cfg.Embedder != nil {
+	if c.h.Cfg.Embedder != nil {
 		unembedded.Merge(c.embedAndStoreBatch(ctx, chunkTargets))
 	}
 
@@ -155,7 +155,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		// The stored content and FTS index keep the original text.
 		memTargets = append(memTargets, embedTarget{m.ID, "memory", augmentForEmbedding(m.Content, entityNames)})
 	}
-	if c.cfg.Embedder != nil {
+	if c.h.Cfg.Embedder != nil {
 		unembedded.Merge(c.embedAndStoreBatch(ctx, memTargets))
 	}
 
@@ -208,13 +208,13 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 	if f.Source == "" {
 		return fmt.Errorf("cortex: forget requires EntityID or Source filter")
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM entities WHERE user_id = ? AND source = ? AND deleted_at IS NULL`, c.userID, f.Source)
+		`SELECT id FROM entities WHERE user_id = ? AND source = ? AND deleted_at IS NULL`, c.h.UserID, f.Source)
 	if err != nil {
 		return fmt.Errorf("cortex: query entities by source: %w", err)
 	}
@@ -234,7 +234,7 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	batchID, err := newBatch(ctx, tx, c.userID, "forget")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "forget")
 	if err != nil {
 		return err
 	}

@@ -71,7 +71,7 @@ func TestSearchVectorUsesRowDims(t *testing.T) {
 		t.Fatalf("SearchVector = %+v, want only %s", got, ch.ID)
 	}
 	var dims int
-	if err := c.db.QueryRowContext(ctx, `SELECT dims FROM embeddings WHERE ref_id = ?`, ch.ID).Scan(&dims); err != nil || dims != 8 {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT dims FROM embeddings WHERE ref_id = ?`, ch.ID).Scan(&dims); err != nil || dims != 8 {
 		t.Fatalf("dims = %d err=%v, want 8", dims, err)
 	}
 }
@@ -116,7 +116,7 @@ func unitVec(n int) []float32 {
 func indexExists(t *testing.T, c *Cortex, name string) bool {
 	t.Helper()
 	var n int
-	if err := c.db.QueryRowContext(context.Background(),
+	if err := c.h.DB.QueryRowContext(context.Background(),
 		`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, name).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestEnsureVectorIndexRejectsBadDims(t *testing.T) {
 	}
 	wg.Wait()
 	var n int
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'emb_hnsw_chunk_24'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
@@ -231,8 +231,8 @@ func TestVectorGenerationIsolation(t *testing.T) {
 func countEmb(t *testing.T, c *Cortex, gen int) int {
 	t.Helper()
 	var n int
-	if err := c.db.QueryRowContext(context.Background(),
-		`SELECT count(*) FROM embeddings WHERE user_id = ? AND generation = ?`, c.userID, gen).Scan(&n); err != nil {
+	if err := c.h.DB.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM embeddings WHERE user_id = ? AND generation = ?`, c.h.UserID, gen).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -256,7 +256,7 @@ func TestStaleGenerationWriteRejected(t *testing.T) {
 		t.Fatalf("err = %v, want ErrStaleGeneration", err)
 	}
 	var n int
-	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM embeddings WHERE ref_id = 'late'`).Scan(&n); err != nil || n != 0 {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM embeddings WHERE ref_id = 'late'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("late rows = %d err=%v", n, err)
 	}
 	if err := c.PutEmbeddingGen(ctx, "x", "chunk", 5, unitVec(8)); err == nil {
@@ -326,11 +326,11 @@ func TestVectorWriteTakesSharedLock(t *testing.T) {
 	}
 	defer c.Close()
 	bg := context.Background()
-	tx, err := c.db.BeginTx(bg, nil)
+	tx, err := c.h.DB.BeginTx(bg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(bg, `SELECT pg_advisory_xact_lock(`+reembedLockSQL+`)`, c.userID); err != nil {
+	if _, err := tx.ExecContext(bg, `SELECT pg_advisory_xact_lock(`+reembedLockSQL+`)`, c.h.UserID); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(bg, 500*time.Millisecond)

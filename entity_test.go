@@ -657,7 +657,7 @@ func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 		t.Errorf("Embeddings = %d, want 1", stats.Embeddings)
 	}
 	var count int
-	if err := cx.db.QueryRowContext(ctx,
+	if err := cx.h.DB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE ref_id = ?`, drop.ID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
@@ -781,7 +781,7 @@ func TestMergeEntities_LocksRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A concurrent writer holds the keep row; the merge must wait for it.
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

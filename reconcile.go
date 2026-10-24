@@ -24,8 +24,8 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 		o(cfg)
 	}
 
-	rec, ok := c.cfg.LLM.(Reconciler)
-	if c.cfg.LLM == nil || !ok {
+	rec, ok := c.h.Cfg.LLM.(Reconciler)
+	if c.h.Cfg.LLM == nil || !ok {
 		return ReconcileReport{
 			Skipped:    true,
 			SkipReason: "no Reconciler-capable LLM configured",
@@ -63,8 +63,8 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 			// A provider failure for one entity must not abort the run.
 			report.EntitiesSkipped++
 			llmutil.AddReportError(&report.Errors, "detect conflicts for entity %s: %v", eid, err)
-			if c.cfg.Logf != nil {
-				c.cfg.Logf("cortex: reconcile: skipping entity %s: %v", eid, err)
+			if c.h.Cfg.Logf != nil {
+				c.h.Cfg.Logf("cortex: reconcile: skipping entity %s: %v", eid, err)
 			}
 			continue
 		}
@@ -143,7 +143,7 @@ func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (R
 
 // allEntityIDs returns every entity id in the graph.
 func (c *Cortex) allEntityIDs(ctx context.Context) ([]string, error) {
-	rows, err := c.db.QueryContext(ctx, `SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL`, c.userID)
+	rows, err := c.h.DB.QueryContext(ctx, `SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list entity ids: %w", err)
 	}

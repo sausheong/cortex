@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 func errBatchNotFound() error { return model.NotFound("cortex: delete batch not found") }
 
 // newBatch inserts a delete_batches row for userID and returns its ID.
-func newBatch(ctx context.Context, tx *dbTx, userID, kind string) (string, error) {
-	id := newID()
+func newBatch(ctx context.Context, tx *store.Tx, userID, kind string) (string, error) {
+	id := store.NewID()
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO delete_batches (id, user_id, kind) VALUES (?, ?, ?)`, id, userID, kind); err != nil {
 		return "", fmt.Errorf("cortex: create delete batch: %w", err)
@@ -32,7 +33,7 @@ func rowsAffected(res sql.Result) int {
 // CountMemories.
 func (c *Cortex) deleteWhere(f DeleteFilter) (string, []any, error) {
 	conds := []string{"user_id = ?", "deleted_at IS NULL"}
-	args := []any{c.userID}
+	args := []any{c.h.UserID}
 	set := f.All
 	if len(f.IDs) > 0 {
 		set = true
@@ -73,7 +74,7 @@ func (c *Cortex) CountMemories(ctx context.Context, f DeleteFilter) (int, error)
 		return 0, err
 	}
 	var n int
-	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE `+where, args...).Scan(&n); err != nil {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE `+where, args...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("cortex: count memories: %w", err)
 	}
 	return n, nil
@@ -86,7 +87,7 @@ func (c *Cortex) SampleMemories(ctx context.Context, f DeleteFilter, limit int) 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, content, created_at FROM memories WHERE `+where+` ORDER BY created_at DESC, id LIMIT ?`,
 		append(args, limit)...)
 	if err != nil {
@@ -114,20 +115,20 @@ func (c *Cortex) CountByConnection(ctx context.Context, connID string) (int, err
 	total := 0
 	for _, table := range []string{"memories", "entities", "chunks"} {
 		var n int
-		if err := c.db.QueryRowContext(ctx,
+		if err := c.h.DB.QueryRowContext(ctx,
 			`SELECT count(*) FROM `+table+` WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?`,
-			c.userID, connID).Scan(&n); err != nil {
+			c.h.UserID, connID).Scan(&n); err != nil {
 			return 0, fmt.Errorf("cortex: count %s: %w", table, err)
 		}
 		total += n
 	}
 	var n int
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM relationships WHERE user_id = ? AND deleted_at IS NULL
 		   AND (written_by_connection_id = ?
 		     OR source_id IN (SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?)
 		     OR target_id IN (SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?))`,
-		c.userID, connID, c.userID, connID, c.userID, connID).Scan(&n); err != nil {
+		c.h.UserID, connID, c.h.UserID, connID, c.h.UserID, connID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("cortex: count relationships: %w", err)
 	}
 	return total + n, nil
@@ -141,12 +142,12 @@ func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by stri
 		return "", 0, err
 	}
 
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", 0, fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.userID, "memories")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "memories")
 	if err != nil {
 		return "", 0, err
 	}
@@ -168,23 +169,23 @@ func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by stri
 
 // softDeleteEntityTx soft-deletes one live entity with its relationships and
 // chunks into batchID. Memory links are kept.
-func (c *Cortex) softDeleteEntityTx(ctx context.Context, tx *dbTx, batchID, by, id string) error {
+func (c *Cortex) softDeleteEntityTx(ctx context.Context, tx *store.Tx, batchID, by, id string) error {
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE relationships SET deleted_at = now(), deleted_by = ?, delete_batch_id = ?
 		 WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ? OR target_id = ?)`,
-		by, batchID, c.userID, id, id); err != nil {
+		by, batchID, c.h.UserID, id, id); err != nil {
 		return fmt.Errorf("cortex: soft delete relationships: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE chunks SET deleted_at = now(), deleted_by = ?, delete_batch_id = ?
 		 WHERE user_id = ? AND deleted_at IS NULL AND entity_id = ?`,
-		by, batchID, c.userID, id); err != nil {
+		by, batchID, c.h.UserID, id); err != nil {
 		return fmt.Errorf("cortex: soft delete chunks: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE entities SET deleted_at = now(), deleted_by = ?, delete_batch_id = ?
 		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-		by, batchID, id, c.userID); err != nil {
+		by, batchID, id, c.h.UserID); err != nil {
 		return fmt.Errorf("cortex: soft delete entity: %w", err)
 	}
 	return nil
@@ -196,15 +197,15 @@ func (c *Cortex) SoftDeleteEntity(ctx context.Context, id, by string) (string, e
 }
 
 func (c *Cortex) softDeleteEntity(ctx context.Context, id, by, kind string) (string, error) {
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-	if err := requireEntity(ctx, tx, c.userID, id); err != nil {
+	if err := store.RequireEntity(ctx, tx, c.h.UserID, id); err != nil {
 		return "", err
 	}
-	batchID, err := newBatch(ctx, tx, c.userID, kind)
+	batchID, err := newBatch(ctx, tx, c.h.UserID, kind)
 	if err != nil {
 		return "", err
 	}
@@ -225,12 +226,12 @@ func (c *Cortex) SoftDeleteByConnection(ctx context.Context, connID string) (str
 		return "", 0, fmt.Errorf("cortex: connection id required")
 	}
 	by := "connection:" + connID
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", 0, fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.userID, "connection")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "connection")
 	if err != nil {
 		return "", 0, err
 	}
@@ -239,7 +240,7 @@ func (c *Cortex) SoftDeleteByConnection(ctx context.Context, connID string) (str
 		res, err := tx.ExecContext(ctx,
 			`UPDATE `+table+` SET deleted_at = now(), deleted_by = ?, delete_batch_id = ?
 			 WHERE user_id = ? AND deleted_at IS NULL AND written_by_connection_id = ?`,
-			by, batchID, c.userID, connID)
+			by, batchID, c.h.UserID, connID)
 		if err != nil {
 			return "", 0, fmt.Errorf("cortex: soft delete %s: %w", table, err)
 		}
@@ -250,7 +251,7 @@ func (c *Cortex) SoftDeleteByConnection(ctx context.Context, connID string) (str
 		 WHERE user_id = ? AND deleted_at IS NULL
 		   AND (source_id IN (SELECT id FROM entities WHERE user_id = ? AND delete_batch_id = ?)
 		     OR target_id IN (SELECT id FROM entities WHERE user_id = ? AND delete_batch_id = ?))`,
-		by, batchID, c.userID, c.userID, batchID, c.userID, batchID)
+		by, batchID, c.h.UserID, c.h.UserID, batchID, c.h.UserID, batchID)
 	if err != nil {
 		return "", 0, fmt.Errorf("cortex: soft delete relationships: %w", err)
 	}
@@ -272,7 +273,7 @@ type batchChange struct {
 // (newest first), then un-deletes the batch's rows. An entity whose (name,
 // type) is now taken by a live entity is merged into it instead.
 func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin transaction: %w", err)
 	}
@@ -281,7 +282,7 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 	var kind string
 	err = tx.QueryRowContext(ctx,
 		`SELECT kind FROM delete_batches WHERE id = ? AND user_id = ? AND restored_at IS NULL FOR UPDATE`,
-		batchID, c.userID).Scan(&kind)
+		batchID, c.h.UserID).Scan(&kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errBatchNotFound()
 	}
@@ -292,7 +293,7 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 	// 1. Undo recorded changes, newest first.
 	rows, err := tx.QueryContext(ctx,
 		`SELECT table_name, op, row_json::text FROM delete_batch_changes
-		 WHERE batch_id = ? AND user_id = ? ORDER BY id DESC`, batchID, c.userID)
+		 WHERE batch_id = ? AND user_id = ? ORDER BY id DESC`, batchID, c.h.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: load batch changes: %w", err)
 	}
@@ -323,7 +324,7 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 		 FROM relationships d
 		 WHERE d.user_id = ? AND d.delete_batch_id = ? AND l.user_id = d.user_id AND l.deleted_at IS NULL
 		   AND l.source_id = d.source_id AND l.target_id = d.target_id AND l.type = d.type`,
-		c.userID, batchID); err != nil {
+		c.h.UserID, batchID); err != nil {
 		return fmt.Errorf("cortex: fold restored relationships: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -331,20 +332,20 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 		 WHERE d.user_id = ? AND d.delete_batch_id = ?
 		   AND EXISTS (SELECT 1 FROM relationships l WHERE l.user_id = d.user_id AND l.deleted_at IS NULL
 		               AND l.source_id = d.source_id AND l.target_id = d.target_id AND l.type = d.type)`,
-		c.userID, batchID); err != nil {
+		c.h.UserID, batchID); err != nil {
 		return fmt.Errorf("cortex: drop folded relationships: %w", err)
 	}
 	for _, table := range []string{"relationships", "chunks", "memories"} {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE `+table+` SET deleted_at = NULL, deleted_by = NULL, delete_batch_id = NULL
-			 WHERE user_id = ? AND delete_batch_id = ?`, c.userID, batchID); err != nil {
+			 WHERE user_id = ? AND delete_batch_id = ?`, c.h.UserID, batchID); err != nil {
 			return fmt.Errorf("cortex: restore %s: %w", table, err)
 		}
 	}
 
 	// 3. Entities, merging into a live namesake when one exists.
 	erows, err := tx.QueryContext(ctx,
-		`SELECT id FROM entities WHERE user_id = ? AND delete_batch_id = ? ORDER BY id`, c.userID, batchID)
+		`SELECT id FROM entities WHERE user_id = ? AND delete_batch_id = ? ORDER BY id`, c.h.UserID, batchID)
 	if err != nil {
 		return fmt.Errorf("cortex: load batch entities: %w", err)
 	}
@@ -366,16 +367,16 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 		err := tx.QueryRowContext(ctx,
 			`SELECT l.id FROM entities l JOIN entities d ON d.name = l.name AND d.type = l.type
 			 WHERE d.id = ? AND l.user_id = ? AND l.deleted_at IS NULL AND l.id <> d.id`,
-			id, c.userID).Scan(&liveID)
+			id, c.h.UserID).Scan(&liveID)
 		switch {
 		case err == nil:
-			if _, err := mergeEntitiesTx(ctx, tx, c.userID, liveID, id, mergeOpts{}); err != nil {
+			if _, err := mergeEntitiesTx(ctx, tx, c.h.UserID, liveID, id, mergeOpts{}); err != nil {
 				return fmt.Errorf("cortex: restore merge: %w", err)
 			}
 		case errors.Is(err, sql.ErrNoRows):
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE entities SET deleted_at = NULL, deleted_by = NULL, delete_batch_id = NULL
-				 WHERE id = ? AND user_id = ?`, id, c.userID); err != nil {
+				 WHERE id = ? AND user_id = ?`, id, c.h.UserID); err != nil {
 				return fmt.Errorf("cortex: restore entity: %w", err)
 			}
 		default:
@@ -384,7 +385,7 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE delete_batches SET restored_at = now() WHERE id = ? AND user_id = ?`, batchID, c.userID); err != nil {
+		`UPDATE delete_batches SET restored_at = now() WHERE id = ? AND user_id = ?`, batchID, c.h.UserID); err != nil {
 		return fmt.Errorf("cortex: mark batch restored: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -395,7 +396,7 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 
 // undoChange reverses one recorded merge change. Table names are checked
 // against a fixed list before they reach SQL.
-func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error {
+func (c *Cortex) undoChange(ctx context.Context, tx *store.Tx, ch batchChange) error {
 	var q string
 	var args []any
 	switch ch.op {
@@ -413,22 +414,22 @@ func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error
 			q = `UPDATE memory_entities t SET entity_id = r.entity_id
 			     FROM jsonb_populate_record(NULL::memory_entities, ?::jsonb) r
 			     WHERE t.user_id = ? AND t.memory_id = r.memory_id AND t.entity_id = (?::jsonb)->>'_to'`
-			args = []any{ch.row, c.userID, ch.row}
+			args = []any{ch.row, c.h.UserID, ch.row}
 		case "relationships":
 			q = `UPDATE relationships t SET source_id = r.source_id, target_id = r.target_id
 			     FROM jsonb_populate_record(NULL::relationships, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
-			args = []any{ch.row, c.userID}
+			args = []any{ch.row, c.h.UserID}
 		case "entity_aliases":
 			q = `UPDATE entity_aliases t SET entity_id = r.entity_id
 			     FROM jsonb_populate_record(NULL::entity_aliases, ?::jsonb) r
 			     WHERE t.user_id = ? AND t.kind = r.kind AND t.value_norm = r.value_norm`
-			args = []any{ch.row, c.userID}
+			args = []any{ch.row, c.h.UserID}
 		case "chunks":
 			q = `UPDATE chunks t SET entity_id = r.entity_id
 			     FROM jsonb_populate_record(NULL::chunks, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
-			args = []any{ch.row, c.userID}
+			args = []any{ch.row, c.h.UserID}
 		default:
 			return fmt.Errorf("cortex: unexpected batch table %q", ch.table)
 		}
@@ -439,7 +440,7 @@ func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error
 		q = `DELETE FROM entity_aliases t
 		     USING jsonb_populate_record(NULL::entity_aliases, ?::jsonb) r
 		     WHERE t.user_id = ? AND t.kind = r.kind AND t.value_norm = r.value_norm AND t.entity_id = r.entity_id`
-		args = []any{ch.row, c.userID}
+		args = []any{ch.row, c.h.UserID}
 	case "update":
 		switch ch.table {
 		case "entities":
@@ -454,7 +455,7 @@ func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error
 		default:
 			return fmt.Errorf("cortex: unexpected batch table %q", ch.table)
 		}
-		args = []any{ch.row, c.userID}
+		args = []any{ch.row, c.h.UserID}
 	default:
 		return fmt.Errorf("cortex: unexpected batch op %q", ch.op)
 	}
@@ -469,10 +470,10 @@ func (c *Cortex) ListDeleted(ctx context.Context, limit, offset int) ([]Memory, 
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, content, source, speaker, confidence, created_at, updated_at
 		 FROM memories WHERE user_id = ? AND deleted_at IS NOT NULL
-		 ORDER BY deleted_at DESC, id LIMIT ? OFFSET ?`, c.userID, limit, offset)
+		 ORDER BY deleted_at DESC, id LIMIT ? OFFSET ?`, c.h.UserID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list deleted: %w", err)
 	}
@@ -492,14 +493,14 @@ func (c *Cortex) ListDeleted(ctx context.Context, limit, offset int) ([]Memory, 
 
 // ListDeleteBatches lists this user's unrestored batches, newest first.
 func (c *Cortex) ListDeleteBatches(ctx context.Context) ([]DeleteBatch, error) {
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT b.id, b.kind, b.created_at,
 		   (SELECT count(*) FROM memories      WHERE delete_batch_id = b.id AND user_id = b.user_id),
 		   (SELECT count(*) FROM entities      WHERE delete_batch_id = b.id AND user_id = b.user_id),
 		   (SELECT count(*) FROM relationships WHERE delete_batch_id = b.id AND user_id = b.user_id),
 		   (SELECT count(*) FROM chunks        WHERE delete_batch_id = b.id AND user_id = b.user_id)
 		 FROM delete_batches b WHERE b.user_id = ? AND b.restored_at IS NULL
-		 ORDER BY b.created_at DESC, b.id DESC`, c.userID)
+		 ORDER BY b.created_at DESC, b.id DESC`, c.h.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list delete batches: %w", err)
 	}
@@ -522,7 +523,7 @@ func (c *Cortex) ListDeleteBatches(ctx context.Context) ([]DeleteBatch, error) {
 // memories, entities, relationships and chunks removed.
 func (c *Cortex) PurgeDeleted(ctx context.Context, olderThan time.Duration) (int, error) {
 	cutoff := time.Now().UTC().Add(-olderThan)
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("cortex: begin transaction: %w", err)
 	}
@@ -535,7 +536,7 @@ func (c *Cortex) PurgeDeleted(ctx context.Context, olderThan time.Duration) (int
 		}
 		return rowsAffected(res), nil
 	}
-	u := c.userID
+	u := c.h.UserID
 	total := 0
 
 	memSel := `SELECT id FROM memories WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`
@@ -582,17 +583,17 @@ func (c *Cortex) SoftDeleteChunks(ctx context.Context, ids []string, by string) 
 		return "", 0, fmt.Errorf("cortex: no chunk ids given")
 	}
 	ph := make([]string, len(ids))
-	args := []any{c.userID}
+	args := []any{c.h.UserID}
 	for i, id := range ids {
 		ph[i] = "?"
 		args = append(args, id)
 	}
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", 0, fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.userID, "chunks")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "chunks")
 	if err != nil {
 		return "", 0, err
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/tenancy"
 )
 
 // NormalizeGraph brings an existing graph onto the curated vocabulary, in one
@@ -28,18 +29,18 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 	}
 	report := NormalizeReport{DryRun: cfg.DryRun, UnmappedVerbs: map[string]int{}}
 
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return report, fmt.Errorf("cortex: begin normalize: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.userID, "normalize")
+	batchID, err := newBatch(ctx, tx, c.h.UserID, "normalize")
 	if err != nil {
 		return report, err
 	}
 	mo := mergeOpts{batchID: batchID, by: "normalize", sameKind: true}
 
-	ownerID, _ := c.OwnerEntityID(ctx)
+	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
 	ownerNames := map[string]bool{}
 	if ownerID != "" {
 		_, ownerNames = c.owner(ctx, &resolveContext{})
@@ -55,7 +56,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 	rows, err := tx.QueryContext(ctx,
 		`SELECT e.id, e.name, e.type, COALESCE(e.attributes, 'null'::jsonb)::text,
 		        (SELECT count(*) FROM memory_entities me WHERE me.user_id = e.user_id AND me.entity_id = e.id)
-		 FROM entities e WHERE e.user_id = ? AND e.deleted_at IS NULL ORDER BY e.created_at, e.id`, c.userID)
+		 FROM entities e WHERE e.user_id = ? AND e.deleted_at IS NULL ORDER BY e.created_at, e.id`, c.h.UserID)
 	if err != nil {
 		return report, fmt.Errorf("cortex: normalize scan entities: %w", err)
 	}
@@ -148,7 +149,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 			}
 		}
 		for _, drop := range g[1:] {
-			if _, err := mergeEntitiesTx(ctx, tx, c.userID, keep.id, drop.id, mo); err != nil {
+			if _, err := mergeEntitiesTx(ctx, tx, c.h.UserID, keep.id, drop.id, mo); err != nil {
 				return report, fmt.Errorf("cortex: normalize merge %q into %q: %w", drop.name, keep.name, err)
 			}
 			report.Merged = append(report.Merged, MergedEntity{KeepID: keep.id, DropID: drop.id, Name: keep.name, DropName: drop.name, Type: keep.typ})
@@ -159,13 +160,13 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		if keep.typ == keep.orig && !keep.labelled {
 			continue
 		}
-		if err := recordChanges(ctx, tx, mo, c.userID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keep.id, c.userID); err != nil {
+		if err := recordChanges(ctx, tx, mo, c.h.UserID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keep.id, c.h.UserID); err != nil {
 			return report, err
 		}
 		// Re-read attributes: the merges above may have added provenance.
 		var attrs string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COALESCE(attributes, 'null'::jsonb)::text FROM entities WHERE id = ? AND user_id = ?`, keep.id, c.userID).Scan(&attrs); err != nil {
+			`SELECT COALESCE(attributes, 'null'::jsonb)::text FROM entities WHERE id = ? AND user_id = ?`, keep.id, c.h.UserID).Scan(&attrs); err != nil {
 			return report, fmt.Errorf("cortex: normalize reload %q: %w", keep.name, err)
 		}
 		var current map[string]any
@@ -184,7 +185,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE entities SET type = ?, attributes = ?::jsonb WHERE id = ? AND user_id = ?`,
-			keep.typ, string(attrsJSON), keep.id, c.userID); err != nil {
+			keep.typ, string(attrsJSON), keep.id, c.h.UserID); err != nil {
 			return report, fmt.Errorf("cortex: normalize retype %q: %w", keep.name, err)
 		}
 	}
@@ -200,7 +201,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		 FROM relationships r
 		 JOIN entities s ON s.id = r.source_id
 		 JOIN entities t ON t.id = r.target_id
-		 WHERE r.user_id = ? AND r.deleted_at IS NULL ORDER BY r.created_at, r.id`, c.userID)
+		 WHERE r.user_id = ? AND r.deleted_at IS NULL ORDER BY r.created_at, r.id`, c.h.UserID)
 	if err != nil {
 		return report, fmt.Errorf("cortex: normalize scan relationships: %w", err)
 	}
@@ -245,19 +246,19 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		err := tx.QueryRowContext(ctx,
 			`SELECT id FROM relationships WHERE user_id = ? AND deleted_at IS NULL
 			   AND source_id = ? AND target_id = ? AND type = ? AND id <> ?`,
-			c.userID, src, tgt, verb, r.id).Scan(&twin)
+			c.h.UserID, src, tgt, verb, r.id).Scan(&twin)
 		if err == nil {
-			if err := recordChanges(ctx, tx, mo, c.userID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", twin, c.userID); err != nil {
+			if err := recordChanges(ctx, tx, mo, c.h.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", twin, c.h.UserID); err != nil {
 				return report, err
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE relationships SET evidence_count = evidence_count + ? WHERE id = ? AND user_id = ?`,
-				r.evidence, twin, c.userID); err != nil {
+				r.evidence, twin, c.h.UserID); err != nil {
 				return report, fmt.Errorf("cortex: normalize fold relationship: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE relationships SET deleted_at = now(), deleted_by = 'normalize', delete_batch_id = ? WHERE id = ? AND user_id = ?`,
-				batchID, r.id, c.userID); err != nil {
+				batchID, r.id, c.h.UserID); err != nil {
 				return report, fmt.Errorf("cortex: normalize drop folded relationship: %w", err)
 			}
 			report.RelationshipsFolded++
@@ -267,12 +268,12 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		if err != nil {
 			return report, fmt.Errorf("cortex: marshal relationship attributes: %w", err)
 		}
-		if err := recordChanges(ctx, tx, mo, c.userID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", r.id, c.userID); err != nil {
+		if err := recordChanges(ctx, tx, mo, c.h.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", r.id, c.h.UserID); err != nil {
 			return report, err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE relationships SET type = ?, source_id = ?, target_id = ?, attributes = ?::jsonb WHERE id = ? AND user_id = ?`,
-			verb, src, tgt, string(attrsJSON), r.id, c.userID); err != nil {
+			verb, src, tgt, string(attrsJSON), r.id, c.h.UserID); err != nil {
 			return report, fmt.Errorf("cortex: normalize retype relationship: %w", err)
 		}
 		report.RelationshipsRetyped++

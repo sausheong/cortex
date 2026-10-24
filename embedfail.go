@@ -37,7 +37,7 @@ func (c *Cortex) embedAndStoreBatch(ctx context.Context, targets []embedTarget) 
 		for i, t := range batch {
 			texts[i] = truncateEmbedText(t.text)
 		}
-		vecs, err := c.cfg.Embedder.Embed(ctx, texts)
+		vecs, err := c.h.Cfg.Embedder.Embed(ctx, texts)
 		if err != nil {
 			fails.AddN(len(batch), fmt.Errorf("embed %s: %w", batch[0].refType, err))
 			continue
@@ -61,7 +61,7 @@ func (c *Cortex) embedAndStoreBatch(ctx context.Context, targets []embedTarget) 
 // active generation (for example after a provider outage during Remember).
 // It returns how many rows it embedded; a provider error stops the batch.
 func (c *Cortex) BackfillEmbeddings(ctx context.Context, limit int) (int, error) {
-	if c.cfg.Embedder == nil {
+	if c.h.Cfg.Embedder == nil {
 		return 0, nil
 	}
 	gen, err := c.ActiveGeneration(ctx)
@@ -79,7 +79,7 @@ func (c *Cortex) BackfillEmbeddings(ctx context.Context, limit int) (int, error)
 		for i, it := range batch {
 			texts[i] = it.Text
 		}
-		vecs, err := c.cfg.Embedder.Embed(ctx, texts)
+		vecs, err := c.h.Cfg.Embedder.Embed(ctx, texts)
 		if err != nil {
 			return done, fmt.Errorf("cortex: backfill embedding: %w", err)
 		}

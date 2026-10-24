@@ -9,6 +9,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/ontology"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // PutRelationship upserts a relationship keyed on (source, target, type),
@@ -17,10 +18,10 @@ import (
 // LastSeenAt, keeps the higher confidence and merges attributes (new keys
 // win), and the existing ID is set on the passed relationship.
 func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
-	if err := requireEntity(ctx, c.db, c.userID, r.SourceID); err != nil {
+	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, r.SourceID); err != nil {
 		return err
 	}
-	if err := requireEntity(ctx, c.db, c.userID, r.TargetID); err != nil {
+	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, r.TargetID); err != nil {
 		return err
 	}
 	r.Type = NormalizeType(r.Type)
@@ -36,7 +37,7 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 		return fmt.Errorf("cortex: marshal relationship attributes: %w", err)
 	}
 
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.h.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin relationship: %w", err)
 	}
@@ -59,13 +60,13 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 		                   ELSE COALESCE(relationships.valid_at, EXCLUDED.valid_at) END,
 		   invalid_at = EXCLUDED.invalid_at
 		 RETURNING id, created_at, evidence_count, confidence, valid_at, invalid_at`,
-		newID(), c.userID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, now, now,
-		r.ValidAt, r.InvalidAt, c.nullConn(),
+		store.NewID(), c.h.UserID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, now, now,
+		r.ValidAt, r.InvalidAt, c.h.NullConn(),
 	).Scan(&r.ID, &r.CreatedAt, &r.EvidenceCount, &r.Confidence, &validAt, &invalidAt)
 	if err != nil {
 		return fmt.Errorf("cortex: upsert relationship: %w", err)
 	}
-	r.ValidAt, r.InvalidAt = nullTimePtr(validAt), nullTimePtr(invalidAt)
+	r.ValidAt, r.InvalidAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt)
 
 	// A single-valued verb (lives_in, reports_to) holds one current target per
 	// source: asserting a new one closes the others.
@@ -81,7 +82,7 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 			`UPDATE relationships SET invalid_at = COALESCE(?::timestamptz, now())
 			 WHERE user_id = ? AND deleted_at IS NULL AND invalid_at IS NULL
 			   AND source_id = ? AND type = ? AND target_id <> ?`,
-			closeAt, c.userID, r.SourceID, r.Type, r.TargetID); err != nil {
+			closeAt, c.h.UserID, r.SourceID, r.Type, r.TargetID); err != nil {
 			return fmt.Errorf("cortex: close superseded relationships: %w", err)
 		}
 	}
@@ -96,9 +97,9 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 // stays in the graph: as-of reads before t and RelIncludeInvalid still see
 // it. Re-asserting it with PutRelationship reopens it.
 func (c *Cortex) InvalidateRelationship(ctx context.Context, id string, t time.Time) error {
-	res, err := c.db.ExecContext(ctx,
+	res, err := c.h.DB.ExecContext(ctx,
 		`UPDATE relationships SET invalid_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
-		t.UTC(), id, c.userID)
+		t.UTC(), id, c.h.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: invalidate relationship: %w", err)
 	}
@@ -134,7 +135,7 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 	for _, f := range filters {
 		f(cfg)
 	}
-	if err := requireEntity(ctx, c.db, c.userID, entityID); err != nil {
+	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, entityID); err != nil {
 		return nil, err
 	}
 
@@ -142,14 +143,14 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 	query := `SELECT id, source_id, target_id, type, attributes, source, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
 		FROM relationships
 		WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ? OR target_id = ?) AND ` + validity
-	args := append([]any{c.userID, entityID, entityID}, vargs...)
+	args := append([]any{c.h.UserID, entityID, entityID}, vargs...)
 
 	if cfg.RelType != "" {
 		query += " AND type = ?"
 		args = append(args, NormalizeType(cfg.RelType))
 	}
 
-	rows, err := c.db.QueryContext(ctx, query, args...)
+	rows, err := c.h.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get relationships: %w", err)
 	}
@@ -168,7 +169,7 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 				return nil, fmt.Errorf("cortex: unmarshal relationship attributes: %w", err)
 			}
 		}
-		r.ValidAt, r.InvalidAt = nullTimePtr(validAt), nullTimePtr(invalidAt)
+		r.ValidAt, r.InvalidAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt)
 		rels = append(rels, r)
 	}
 	if err := rows.Err(); err != nil {

@@ -23,11 +23,11 @@ func (c *Cortex) ExpireMemories(ctx context.Context, opts ...ExpireOption) (Expi
 	now := time.Now().UTC()
 	report := ExpireReport{DryRun: cfg.DryRun}
 
-	rows, err := c.db.QueryContext(ctx,
+	rows, err := c.h.DB.QueryContext(ctx,
 		`SELECT id, content, forget_after
 		 FROM memories
 		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND forget_after IS NOT NULL AND forget_after <= ?`,
-		c.userID, now,
+		c.h.UserID, now,
 	)
 	if err != nil {
 		return ExpireReport{}, fmt.Errorf("cortex: expire scan: %w", err)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
 )
 
@@ -159,15 +160,15 @@ func (c *Cortex) distillBucketErr(ctx context.Context, name, instruction string,
 		raw[i] = m.Content
 	}
 
-	if c.cfg.LLM == nil {
+	if c.h.Cfg.LLM == nil {
 		return raw, false, nil
 	}
 
 	texts := append([]string{fmt.Sprintf(instruction, name)}, raw...)
-	out, err := llmutil.RetryLLM(ctx, func() (string, error) { return c.cfg.LLM.Summarize(ctx, texts) })
+	out, err := llmutil.RetryLLM(ctx, func() (string, error) { return c.h.Cfg.LLM.Summarize(ctx, texts) })
 	if err != nil {
-		if c.cfg.Logf != nil {
-			c.cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
+		if c.h.Cfg.Logf != nil {
+			c.h.Cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
 		}
 		return raw, false, err
 	}
@@ -229,7 +230,7 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 	}
 
 	// A cached undistilled digest is rebuilt once an LLM is available.
-	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.cfg.LLM == nil) {
+	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.h.Cfg.LLM == nil) {
 		return Profile{
 			EntityID:  e.ID,
 			Name:      e.Name,
@@ -248,7 +249,7 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 // building one or calling a model. ok is false when the user has no owner
 // entity or no digest has been built yet.
 func (c *Cortex) CachedProfile(ctx context.Context) (Profile, bool, error) {
-	id, err := c.OwnerEntityID(ctx)
+	id, err := tenancy.New(c.h).OwnerEntityID(ctx)
 	if errors.Is(err, ErrNotFound) {
 		return Profile{}, false, nil
 	}
@@ -375,8 +376,8 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 				return rep, ctx.Err()
 			}
 			rep.Skipped = append(rep.Skipped, id)
-			if c.cfg.Logf != nil {
-				c.cfg.Logf("cortex: refresh profile %s: %v", id, err)
+			if c.h.Cfg.Logf != nil {
+				c.h.Cfg.Logf("cortex: refresh profile %s: %v", id, err)
 			}
 			continue
 		}

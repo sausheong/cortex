@@ -4,13 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"os"
-	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/sausheong/cortex/internal/pgtest"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // rawCortex opens a Cortex without migrating, for upgrade-path tests.
@@ -21,13 +19,13 @@ func rawCortex(t *testing.T, dsn string) *Cortex {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sdb.Close() })
-	return &Cortex{db: dbConn{sdb}, userID: BootstrapUserID}
+	return &Cortex{h: &store.Handle{DB: store.DB{DB: sdb}, UserID: BootstrapUserID}}
 }
 
 func execAll(t *testing.T, c *Cortex, stmts ...string) {
 	t.Helper()
 	for _, s := range stmts {
-		if _, err := c.db.ExecContext(context.Background(), s); err != nil {
+		if _, err := c.h.DB.ExecContext(context.Background(), s); err != nil {
 			t.Fatalf("exec %q: %v", s, err)
 		}
 	}
@@ -73,7 +71,7 @@ func TestMigration002FromLegacy(t *testing.T) {
 	before := map[string]int{}
 	for _, tb := range tables {
 		var n int
-		if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM `+tb).Scan(&n); err != nil {
+		if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM `+tb).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		before[tb] = n
@@ -83,7 +81,7 @@ func TestMigration002FromLegacy(t *testing.T) {
 	}
 	for _, tb := range tables {
 		var n, boot int
-		if err := c.db.QueryRowContext(ctx, `SELECT count(*), count(*) FILTER (WHERE user_id = 'u_bootstrap') FROM `+tb).Scan(&n, &boot); err != nil {
+		if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*), count(*) FILTER (WHERE user_id = 'u_bootstrap') FROM `+tb).Scan(&n, &boot); err != nil {
 			t.Fatal(err)
 		}
 		if n != before[tb] || boot != n {
@@ -91,12 +89,12 @@ func TestMigration002FromLegacy(t *testing.T) {
 		}
 	}
 	var dims, gen int
-	if err := c.db.QueryRowContext(ctx, `SELECT dims, generation FROM embeddings WHERE id = 'b1'`).Scan(&dims, &gen); err != nil || dims != 512 || gen != 1 {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT dims, generation FROM embeddings WHERE id = 'b1'`).Scan(&dims, &gen); err != nil || dims != 512 || gen != 1 {
 		t.Fatalf("dims=%d gen=%d err=%v", dims, gen, err)
 	}
 	has := func(name string) bool {
 		var n int
-		if err := c.db.QueryRowContext(ctx,
+		if err := c.h.DB.QueryRowContext(ctx,
 			`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, name).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +104,7 @@ func TestMigration002FromLegacy(t *testing.T) {
 		t.Errorf("index conversion wrong: new=%v old=%v", has("emb_hnsw_memory_512"), has("idx_embeddings_hnsw_memory"))
 	}
 	var meta int
-	_ = c.db.QueryRowContext(ctx, `SELECT count(*) FROM cortex_meta WHERE key = 'embedding_dims'`).Scan(&meta)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM cortex_meta WHERE key = 'embedding_dims'`).Scan(&meta)
 	if meta != 0 {
 		t.Error("cortex_meta embedding_dims row not deleted")
 	}
@@ -133,7 +131,7 @@ func TestMigration002SetsBootstrapOwnerEntity(t *testing.T) {
 		t.Fatal(err)
 	}
 	var owner string
-	if err := c.db.QueryRowContext(ctx, `SELECT owner_entity_id FROM users WHERE id = 'u_bootstrap'`).Scan(&owner); err != nil || owner != "e1" {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT owner_entity_id FROM users WHERE id = 'u_bootstrap'`).Scan(&owner); err != nil || owner != "e1" {
 		t.Fatalf("owner_entity_id = %q err=%v, want e1", owner, err)
 	}
 }
@@ -146,18 +144,18 @@ func TestMigration002FreshDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	var typ string
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a
 		 WHERE a.attrelid = 'embeddings'::regclass AND a.attname = 'embedding'`).Scan(&typ); err != nil || typ != "halfvec" {
 		t.Fatalf("embedding type = %q err=%v, want untyped halfvec", typ, err)
 	}
 	var n int
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
 		 AND table_name = 'embeddings' AND column_name IN ('dims', 'generation')`).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("dims/generation columns = %d err=%v", n, err)
 	}
-	if err := c.db.QueryRowContext(ctx,
+	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname LIKE 'emb_hnsw_%'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("emb_hnsw indexes = %d err=%v, want 0", n, err)
 	}
@@ -169,19 +167,6 @@ func TestMigration002FreshDB(t *testing.T) {
 	defer c2.Close()
 	if v := schemaVersion(t, c2); v != 9 {
 		t.Errorf("version = %d", v)
-	}
-}
-
-func TestMigrationNamesAreIntegers(t *testing.T) {
-	re := regexp.MustCompile(`^\d+_[a-z_]+\.sql$`)
-	entries, err := os.ReadDir("migrations")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if !re.MatchString(e.Name()) {
-			t.Errorf("migration %q does not match ^\\d+_[a-z_]+\\.sql$", e.Name())
-		}
 	}
 }
 
@@ -212,9 +197,9 @@ func TestPutEntityConflictPerUser(t *testing.T) {
 		}
 	}
 	var n, na, nb int
-	_ = c.db.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND deleted_at IS NULL`).Scan(&n)
-	_ = c.db.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND user_id = ?`, a.ID).Scan(&na)
-	_ = c.db.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND user_id = ?`, b.ID).Scan(&nb)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND deleted_at IS NULL`).Scan(&n)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND user_id = ?`, a.ID).Scan(&na)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND user_id = ?`, b.ID).Scan(&nb)
 	if n != 2 || na != 1 || nb != 1 {
 		t.Fatalf("rows total=%d a=%d b=%d, want 2/1/1", n, na, nb)
 	}
@@ -260,7 +245,7 @@ func TestPutEntityDoesNotDemoteOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	var src string
-	if err := c.db.QueryRowContext(ctx, `SELECT source FROM entities WHERE name = 'Sau'`).Scan(&src); err != nil || src != "owner" {
+	if err := c.h.DB.QueryRowContext(ctx, `SELECT source FROM entities WHERE name = 'Sau'`).Scan(&src); err != nil || src != "owner" {
 		t.Fatalf("source = %q err=%v, want owner", src, err)
 	}
 }
@@ -301,42 +286,5 @@ func TestResolveUserRef(t *testing.T) {
 	}
 	if _, err := c.ResolveUserRef(ctx, "nobody@x.com"); err != ErrNotFound {
 		t.Errorf("unknown: %v, want ErrNotFound", err)
-	}
-}
-
-func TestMigration007FoldsDuplicateRelationships(t *testing.T) {
-	ctx := context.Background()
-	c := rawCortex(t, pgtest.DSN(t))
-	if err := c.migrateUpTo(ctx, 6); err != nil {
-		t.Fatal(err)
-	}
-	execAll(t, c,
-		`INSERT INTO users (id) VALUES ('u1')`,
-		`INSERT INTO entities (id, user_id, type, name) VALUES ('e1', 'u1', 'person', 'Ann'), ('e2', 'u1', 'organization', 'Acme')`,
-		`INSERT INTO relationships (id, user_id, source_id, target_id, type, confidence, created_at) VALUES
-		   ('r1', 'u1', 'e1', 'e2', 'works_at', 0.5, '2026-01-01'),
-		   ('r2', 'u1', 'e1', 'e2', 'Works At', 0.9, '2026-02-01'),
-		   ('r3', 'u1', 'e1', 'e2', 'works-at', 0.7, '2026-03-01'),
-		   ('r4', 'u1', 'e2', 'e1', 'employs', 1.0, '2026-01-01')`,
-	)
-	if err := c.migrateUpTo(ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	var n, evidence int
-	var conf float64
-	var last time.Time
-	if err := c.db.QueryRowContext(ctx, `SELECT count(*) FROM relationships WHERE type = 'works_at'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.db.QueryRowContext(ctx,
-		`SELECT evidence_count, confidence, last_seen_at FROM relationships WHERE id = 'r1'`).Scan(&evidence, &conf, &last); err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 || evidence != 3 || conf != 0.9 || last.Month() != time.March {
-		t.Errorf("got rows=%d evidence=%d conf=%v last=%v, want 1/3/0.9/March", n, evidence, conf, last)
-	}
-	if _, err := c.db.ExecContext(ctx,
-		`INSERT INTO relationships (id, user_id, source_id, target_id, type) VALUES ('r5', 'u1', 'e1', 'e2', 'works_at')`); err == nil {
-		t.Error("duplicate live edge inserted; want unique violation")
 	}
 }
