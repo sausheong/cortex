@@ -25,7 +25,7 @@ type Usage struct {
 // generations and soft-deleted rows (they still occupy space until purged).
 func (c *Cortex) ComputeUsage(ctx context.Context) (Usage, error) {
 	var u Usage
-	for _, t := range []string{"entities", "relationships", "memories", "memory_entities", "memory_edges", "chunks", "embeddings"} {
+	for _, t := range []string{"entities", "relationships", "memories", "memory_entities", "memory_edges", "entity_aliases", "chunks", "embeddings"} {
 		var n sql.NullInt64
 		if err := c.db.QueryRowContext(ctx,
 			`SELECT sum(pg_column_size(t.*)) FROM `+t+` t WHERE t.user_id = ?`, c.userID).Scan(&n); err != nil {

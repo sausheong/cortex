@@ -365,6 +365,38 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID strin
 		stats.DupesDropped += int(n)
 	}
 
+	// Re-target aliases (an alias value names one entity, so none collide),
+	// then keep the dropped entity's name as an alias of the keeper so later
+	// mentions of it resolve here.
+	if err := recordChanges(ctx, tx, mo, userID, "entity_aliases", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+		return stats, err
+	}
+	res, err = tx.ExecContext(ctx,
+		`UPDATE entity_aliases SET entity_id = ? WHERE entity_id = ? AND user_id = ?`, keepID, dropID, userID)
+	if err != nil {
+		return stats, fmt.Errorf("cortex: re-target aliases: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		stats.Aliases = int(n)
+	}
+	if norm := normalizeAlias(AliasName, drop.Name); norm != normalizeAlias(AliasName, keep.Name) {
+		var inserted bool
+		if err := tx.QueryRowContext(ctx,
+			`WITH ins AS (
+			   INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
+			   VALUES (?, ?, 'name', ?, ?, 'merge') ON CONFLICT DO NOTHING RETURNING 1)
+			 SELECT EXISTS (SELECT 1 FROM ins)`,
+			userID, keepID, drop.Name, norm).Scan(&inserted); err != nil {
+			return stats, fmt.Errorf("cortex: alias merged name: %w", err)
+		}
+		if inserted {
+			if err := recordChanges(ctx, tx, mo, userID, "entity_aliases", "insert", "{}",
+				"t.user_id = ? AND t.kind = 'name' AND t.value_norm = ?", userID, norm); err != nil {
+				return stats, err
+			}
+		}
+	}
+
 	// Drop the stale entity embedding.
 	if err := recordChanges(ctx, tx, mo, userID, "embeddings", "delete", "{}", "t.ref_id = ? AND t.ref_type = 'entity' AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err

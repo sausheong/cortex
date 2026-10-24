@@ -37,10 +37,10 @@ func renderLintMarkdown(r LintReport) string {
 			word = "pair"
 		}
 		fmt.Fprintf(&b, "\n## Near-duplicate entity names (%d %s)\n\n", len(r.NearDuplicates), word)
-		b.WriteString("Same type + case-insensitively-equal name. Consider `cortex merge`.\n\n")
+		b.WriteString("Same type and the same or a very similar name. Consider `cortex merge`.\n\n")
 		for _, p := range r.NearDuplicates {
-			fmt.Fprintf(&b, "- %q / %q (%s): `%s` / `%s`\n",
-				p.A.Name, p.B.Name, p.Type, p.A.ID, p.B.ID)
+			fmt.Fprintf(&b, "- %q / %q (%s, %.0f%% alike): `%s` / `%s`\n",
+				p.A.Name, p.B.Name, p.Type, p.Score*100, p.A.ID, p.B.ID)
 		}
 	}
 

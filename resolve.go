@@ -9,23 +9,40 @@ import (
 	"time"
 )
 
-// ingestEntity stores an extracted entity, reusing a live entity that is the
-// same thing rather than creating a near-duplicate. A match is the same name
-// ignoring case with the same normalised type. On a match the extracted
-// attributes fill in keys the stored entity lacks (stored values win, so a
-// cached profile or merge provenance is never clobbered), confidence keeps
-// the higher value, and e.ID is set to the stored entity. Otherwise the
-// entity is created via PutEntity.
-func (c *Cortex) ingestEntity(ctx context.Context, e *Entity) error {
+// ingestEntity stores an extracted entity, reusing the stored entity it
+// refers to rather than creating a near-duplicate. Resolution runs the
+// cascade in resolve: aliases, the owner, the same name ignoring case, fuzzy
+// similarity, then an EntityDisambiguator when one is configured. On a match
+// the extracted attributes fill in keys the stored entity lacks (stored
+// values win, so a cached profile or merge provenance is never clobbered),
+// confidence keeps the higher value, e.ID is set to the stored entity, and a
+// differing extracted name is remembered as an alias. Identifiers found in
+// the attributes (email, phone, handle) are recorded as aliases either way.
+func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext) error {
 	e.Type = NormalizeType(e.Type)
-	existing, err := c.findSameEntity(ctx, e.Name, e.Type)
+	extracted := e.Name
+	res, err := c.resolve(ctx, e.Name, e.Type, e.Attributes, rc, true)
 	if err != nil {
 		return err
 	}
-	if existing == nil {
-		return c.PutEntity(ctx, e)
+	if res.Entity == nil {
+		if err := c.PutEntity(ctx, e); err != nil {
+			return err
+		}
+	} else {
+		if err := c.absorbIntoEntity(ctx, res.Entity, e); err != nil {
+			return err
+		}
+		if res.Method != ResolvedByExact && normalizeAlias(AliasName, extracted) != normalizeAlias(AliasName, e.Name) &&
+			!selfMentions[normalizeAlias(AliasName, extracted)] && DetectAliasKind(extracted) == AliasName {
+			c.addAliasQuiet(ctx, e.ID, AliasName, extracted, "ingest")
+		}
 	}
-	return c.absorbIntoEntity(ctx, existing, e)
+	for _, id := range identifiers(extracted, e.Attributes) {
+		c.addAliasQuiet(ctx, e.ID, id[0], id[1], "ingest")
+	}
+	rc.resolved = append(rc.resolved, e.ID)
+	return nil
 }
 
 // findSameEntity returns the live entity named name (ignoring case) whose

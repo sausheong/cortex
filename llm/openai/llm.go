@@ -315,3 +315,29 @@ var _ cortex.RelationDetector = (*LLM)(nil)
 func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
 	return cortex.ParseExtractionJSON(raw)
 }
+
+// DisambiguateEntity implements cortex.EntityDisambiguator.
+func (l *LLM) DisambiguateEntity(ctx context.Context, m cortex.EntityMention, candidates []cortex.Entity) (cortex.EntityChoice, error) {
+	if len(candidates) == 0 {
+		return cortex.EntityChoice{}, nil
+	}
+	resp, err := l.client.CreateChatCompletion(ctx, oai.ChatCompletionRequest{
+		Model: l.model,
+		Messages: []oai.ChatCompletionMessage{
+			{Role: oai.ChatMessageRoleSystem, Content: cortex.DisambiguatePrompt},
+			{Role: oai.ChatMessageRoleUser, Content: cortex.FormatDisambiguation(m, candidates)},
+		},
+		ResponseFormat: &oai.ChatCompletionResponseFormat{
+			Type: oai.ChatCompletionResponseFormatTypeJSONObject,
+		},
+	})
+	if err != nil {
+		return cortex.EntityChoice{}, fmt.Errorf("openai: disambiguate entity: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return cortex.EntityChoice{}, fmt.Errorf("openai: no choices in disambiguate response")
+	}
+	return cortex.ParseEntityChoice(resp.Choices[0].Message.Content)
+}
+
+var _ cortex.EntityDisambiguator = (*LLM)(nil)

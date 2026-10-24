@@ -303,3 +303,22 @@ func extractText(msg *anthropic.Message) string {
 func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
 	return cortex.ParseExtractionJSON(raw)
 }
+
+// DisambiguateEntity implements cortex.EntityDisambiguator.
+func (l *LLM) DisambiguateEntity(ctx context.Context, m cortex.EntityMention, candidates []cortex.Entity) (cortex.EntityChoice, error) {
+	if len(candidates) == 0 {
+		return cortex.EntityChoice{}, nil
+	}
+	msg, err := l.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:     l.model,
+		MaxTokens: 512,
+		System:    []anthropic.TextBlockParam{{Text: cortex.DisambiguatePrompt}},
+		Messages:  []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(cortex.FormatDisambiguation(m, candidates)))},
+	})
+	if err != nil {
+		return cortex.EntityChoice{}, fmt.Errorf("anthropic: disambiguate entity: %w", err)
+	}
+	return cortex.ParseEntityChoice(extractText(msg))
+}
+
+var _ cortex.EntityDisambiguator = (*LLM)(nil)

@@ -438,6 +438,11 @@ func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error
 			     FROM jsonb_populate_record(NULL::relationships, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
 			args = []any{ch.row, c.userID}
+		case "entity_aliases":
+			q = `UPDATE entity_aliases t SET entity_id = r.entity_id
+			     FROM jsonb_populate_record(NULL::entity_aliases, ?::jsonb) r
+			     WHERE t.user_id = ? AND t.kind = r.kind AND t.value_norm = r.value_norm`
+			args = []any{ch.row, c.userID}
 		case "chunks":
 			q = `UPDATE chunks t SET entity_id = r.entity_id
 			     FROM jsonb_populate_record(NULL::chunks, ?::jsonb) r
@@ -446,6 +451,14 @@ func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error
 		default:
 			return fmt.Errorf("cortex: unexpected batch table %q", ch.table)
 		}
+	case "insert":
+		if ch.table != "entity_aliases" {
+			return fmt.Errorf("cortex: unexpected batch table %q", ch.table)
+		}
+		q = `DELETE FROM entity_aliases t
+		     USING jsonb_populate_record(NULL::entity_aliases, ?::jsonb) r
+		     WHERE t.user_id = ? AND t.kind = r.kind AND t.value_norm = r.value_norm AND t.entity_id = r.entity_id`
+		args = []any{ch.row, c.userID}
 	case "update":
 		if ch.table != "entities" {
 			return fmt.Errorf("cortex: unexpected batch table %q", ch.table)

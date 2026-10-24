@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 )
 
 const defaultLowConfidenceThreshold = 0.3
@@ -104,31 +105,58 @@ func findEntitiesNoMemories(ctx context.Context, db dbConn, userID string) ([]En
 	return out, rows.Err()
 }
 
+// nearDuplicateMin is the NameSimilarity at or above which lint reports two
+// same-type entities as possible duplicates; nearDuplicateGroupCap bounds the
+// pairwise comparison within one type.
+const (
+	nearDuplicateMin      = 0.75
+	nearDuplicateGroupCap = 3000
+)
+
 func findNearDuplicates(ctx context.Context, db dbConn, userID string) ([]DuplicatePair, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT a.id, a.name, a.type, b.id, b.name, b.type
-		FROM entities a
-		JOIN entities b
-		  ON a.type = b.type
-		 AND LOWER(a.name) = LOWER(b.name)
-		 AND a.id < b.id
-		 AND b.user_id = a.user_id AND b.deleted_at IS NULL
-		WHERE a.user_id = ? AND a.deleted_at IS NULL
-		ORDER BY a.type, LOWER(a.name)`, userID)
+		SELECT id, name, type FROM entities
+		WHERE user_id = ? AND deleted_at IS NULL
+		ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []DuplicatePair
+	groups := map[string][]EntityRef{}
+	var types []string
 	for rows.Next() {
-		var p DuplicatePair
-		if err := rows.Scan(&p.A.ID, &p.A.Name, &p.A.Type, &p.B.ID, &p.B.Name, &p.B.Type); err != nil {
+		var e EntityRef
+		if err := rows.Scan(&e.ID, &e.Name, &e.Type); err != nil {
 			return nil, err
 		}
-		p.Type = p.A.Type
-		out = append(out, p)
+		t := NormalizeType(e.Type)
+		if _, ok := groups[t]; !ok {
+			types = append(types, t)
+		}
+		groups[t] = append(groups[t], e)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Strings(types)
+	var out []DuplicatePair
+	for _, t := range types {
+		g := groups[t]
+		if len(g) > nearDuplicateGroupCap {
+			g = g[:nearDuplicateGroupCap]
+		}
+		var pairs []DuplicatePair
+		for i := 0; i < len(g); i++ {
+			for j := i + 1; j < len(g); j++ {
+				if s := NameSimilarity(g[i].Name, g[j].Name); s >= nearDuplicateMin {
+					pairs = append(pairs, DuplicatePair{Type: t, A: g[i], B: g[j], Score: s})
+				}
+			}
+		}
+		sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].Score > pairs[j].Score })
+		out = append(out, pairs...)
+	}
+	return out, nil
 }
 
 func findDeadSources(ctx context.Context, db dbConn, userID string) ([]string, error) {

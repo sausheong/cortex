@@ -36,13 +36,14 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// for resolving relationships and memory links.
 	nameToID := make(map[string]string)
 	var entityIDs []string // distinct, in extraction order
+	rc := &resolveContext{content: truncateRunes(content, 2000)}
 	for i := range extraction.Entities {
 		e := &extraction.Entities[i]
 		if cfg.source != "" && e.Source == "" {
 			e.Source = cfg.source
 		}
 		extracted := e.Name
-		if err := c.ingestEntity(ctx, e); err != nil {
+		if err := c.ingestEntity(ctx, e, rc); err != nil {
 			return fmt.Errorf("cortex: store entity %q: %w", extracted, err)
 		}
 		if !contains(entityIDs, e.ID) {
@@ -136,6 +137,15 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	}
 
 	return errors.Join(extractPartial, unembedded.err())
+}
+
+// truncateRunes returns s cut to at most n runes.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // nameKey is the key an extracted entity name is looked up by: lower-cased

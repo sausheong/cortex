@@ -473,6 +473,7 @@ type MergeStats struct {
 	Embeddings    int // dropped (stale embedding for drop entity)
 	DupesDropped  int // duplicate relationships + memory_entity rows removed during dedup
 	AttrConflicts int // count of attributes where keep already had a value (keep won)
+	Aliases       int // aliases re-targeted
 	// BatchID identifies the soft-delete batch; RestoreBatch undoes the merge.
 	BatchID string `json:"batch_id,omitempty"`
 }
@@ -551,12 +552,14 @@ type EntityRef struct {
 	Type string
 }
 
-// DuplicatePair is one pair of entities that share a type and have
-// case-insensitively-equal names.
+// DuplicatePair is one pair of entities that share a (normalised) type and
+// whose names are equal ignoring case or similar enough (Score, from
+// NameSimilarity) that they may be the same thing.
 type DuplicatePair struct {
-	Type string
-	A    EntityRef
-	B    EntityRef
+	Type  string
+	A     EntityRef
+	B     EntityRef
+	Score float64
 }
 
 // MemoryRef is a minimal memory descriptor for lint findings.
