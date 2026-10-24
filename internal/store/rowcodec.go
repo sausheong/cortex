@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -77,6 +78,18 @@ func (h *Handle) OpenStr(table, rowID, col string, ct []byte) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// OpenCol reads one text column of a row of either form: the plain value for
+// a legacy row, the opened ciphertext for an enc row, after the row-form guard.
+func (h *Handle) OpenCol(table, rowID, col string, enc bool, plain sql.NullString, ct []byte) (string, error) {
+	if err := h.CheckRowForm(enc); err != nil {
+		return "", err
+	}
+	if !enc {
+		return plain.String, nil
+	}
+	return h.OpenStr(table, rowID, col, ct)
 }
 
 // OpenOptStr opens an optional string column: NULL yields "".

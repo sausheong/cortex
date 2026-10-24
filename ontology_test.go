@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-func TestRemember_MapsOntoVocabulary(t *testing.T) {
+func TestRemember_MapsOntoVocabulary(t *testing.T) { forEachMode(t, testRemember_MapsOntoVocabulary) }
+
+func testRemember_MapsOntoVocabulary(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{
@@ -132,6 +134,7 @@ func TestNormalizeGraph_RetypesMergesAndUndoes(t *testing.T) {
 	}
 }
 
+// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestNormalizeGraph_FoldsConceptIntoSpecificNamesake(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -182,6 +185,10 @@ func TestNormalizeGraph_FoldsConceptIntoSpecificNamesake(t *testing.T) {
 }
 
 func TestRemember_ConceptNamesakeIsReused(t *testing.T) {
+	forEachMode(t, testRemember_ConceptNamesakeIsReused)
+}
+
+func testRemember_ConceptNamesakeIsReused(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	loose := &Entity{Name: "FileSG", Type: "concept"}

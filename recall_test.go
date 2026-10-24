@@ -9,7 +9,9 @@ import (
 	"github.com/sausheong/cortex/internal/vecmath"
 )
 
-func TestRecallFindsMemories(t *testing.T) {
+func TestRecallFindsMemories(t *testing.T) { forEachMode(t, testRecallFindsMemories) }
+
+func testRecallFindsMemories(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -68,7 +70,9 @@ func TestRecallFindsMemories(t *testing.T) {
 	}
 }
 
-func TestRecallNoResults(t *testing.T) {
+func TestRecallNoResults(t *testing.T) { forEachMode(t, testRecallNoResults) }
+
+func testRecallNoResults(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -81,7 +85,9 @@ func TestRecallNoResults(t *testing.T) {
 	}
 }
 
-func TestRecallFallbackWithoutLLM(t *testing.T) {
+func TestRecallFallbackWithoutLLM(t *testing.T) { forEachMode(t, testRecallFallbackWithoutLLM) }
+
+func testRecallFallbackWithoutLLM(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(nil) // no LLM configured
@@ -110,7 +116,9 @@ func TestRecallFallbackWithoutLLM(t *testing.T) {
 	}
 }
 
-func TestRecallWithLimit(t *testing.T) {
+func TestRecallWithLimit(t *testing.T) { forEachMode(t, testRecallWithLimit) }
+
+func testRecallWithLimit(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -154,7 +162,9 @@ func TestRecallWithLimit(t *testing.T) {
 	}
 }
 
-func TestRecallVectorSearch(t *testing.T) {
+func TestRecallVectorSearch(t *testing.T) { forEachMode(t, testRecallVectorSearch) }
+
+func testRecallVectorSearch(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -206,7 +216,9 @@ func TestRecallVectorSearch(t *testing.T) {
 	}
 }
 
-func TestRecallWithGraphTraverse(t *testing.T) {
+func TestRecallWithGraphTraverse(t *testing.T) { forEachMode(t, testRecallWithGraphTraverse) }
+
+func testRecallWithGraphTraverse(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -265,6 +277,10 @@ func resultTypes(results []Result) []string {
 }
 
 func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
+	forEachMode(t, testRecall_MMRRerankReordersForDiversity)
+}
+
+func testRecall_MMRRerankReordersForDiversity(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -327,6 +343,10 @@ func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
 // observable guarantee is that the single-mode order is the plain fusion order,
 // identical with rerank on or off.
 func TestRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
+	forEachMode(t, testRecall_MMRSkippedForSingleRetrievalMode)
+}
+
+func testRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -448,6 +468,10 @@ func TestMockLLM_SatisfiesRelationDetector(t *testing.T) {
 }
 
 func TestRecall_ResultIncludesConfidence(t *testing.T) {
+	forEachMode(t, testRecall_ResultIncludesConfidence)
+}
+
+func testRecall_ResultIncludesConfidence(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -481,6 +505,10 @@ func TestRecall_ResultIncludesConfidence(t *testing.T) {
 }
 
 func TestRecall_WithMinConfidence_FiltersBelow(t *testing.T) {
+	forEachMode(t, testRecall_WithMinConfidence_FiltersBelow)
+}
+
+func testRecall_WithMinConfidence_FiltersBelow(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -524,7 +552,9 @@ func TestRecall_WithMinConfidence_FiltersBelow(t *testing.T) {
 	}
 }
 
-func TestRecall_UsesMemoryVector(t *testing.T) {
+func TestRecall_UsesMemoryVector(t *testing.T) { forEachMode(t, testRecall_UsesMemoryVector) }
+
+func testRecall_UsesMemoryVector(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -556,6 +586,10 @@ func TestRecall_UsesMemoryVector(t *testing.T) {
 }
 
 func TestRecall_ConfidenceWeightsRanking(t *testing.T) {
+	forEachMode(t, testRecall_ConfidenceWeightsRanking)
+}
+
+func testRecall_ConfidenceWeightsRanking(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -591,6 +625,10 @@ func TestRecall_ConfidenceWeightsRanking(t *testing.T) {
 }
 
 func TestRecall_ZeroConfidenceRanksLast(t *testing.T) {
+	forEachMode(t, testRecall_ZeroConfidenceRanksLast)
+}
+
+func testRecall_ZeroConfidenceRanksLast(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -627,7 +665,9 @@ func TestRecall_ZeroConfidenceRanksLast(t *testing.T) {
 	}
 }
 
-func TestRecall_ReinjectsSourceChunk(t *testing.T) {
+func TestRecall_ReinjectsSourceChunk(t *testing.T) { forEachMode(t, testRecall_ReinjectsSourceChunk) }
+
+func testRecall_ReinjectsSourceChunk(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -676,6 +716,10 @@ func TestRecall_ReinjectsSourceChunk(t *testing.T) {
 }
 
 func TestRecallWithStrength_AbstainsWhenEmpty(t *testing.T) {
+	forEachMode(t, testRecallWithStrength_AbstainsWhenEmpty)
+}
+
+func testRecallWithStrength_AbstainsWhenEmpty(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -701,6 +745,10 @@ func TestRecallWithStrength_AbstainsWhenEmpty(t *testing.T) {
 }
 
 func TestRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
+	forEachMode(t, testRecallWithStrength_DoesNotAbstainWhenConfident)
+}
+
+func testRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -731,6 +779,10 @@ func TestRecallWithStrength_DoesNotAbstainWhenConfident(t *testing.T) {
 // embedder configured, Strength is the max query-result cosine similarity (the
 // real relevance signal) rather than the ~constant RRF top score (~0.0164).
 func TestRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
+	forEachMode(t, testRecallWithStrength_CosineStrengthFromEmbedder)
+}
+
+func testRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -789,6 +841,10 @@ func TestRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
 // boundary wiring: with an embedder and results, Abstain is exactly
 // Strength < AbstainRelevanceThreshold.
 func TestRecallWithStrength_AbstainMatchesCosineThreshold(t *testing.T) {
+	forEachMode(t, testRecallWithStrength_AbstainMatchesCosineThreshold)
+}
+
+func testRecallWithStrength_AbstainMatchesCosineThreshold(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -878,7 +934,9 @@ func TestRecallWithStrength_EmbedErrorFallsBack(t *testing.T) {
 	}
 }
 
-func TestRecall_WithIncludeInvalid(t *testing.T) {
+func TestRecall_WithIncludeInvalid(t *testing.T) { forEachMode(t, testRecall_WithIncludeInvalid) }
+
+func testRecall_WithIncludeInvalid(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -915,7 +973,9 @@ func TestRecall_WithIncludeInvalid(t *testing.T) {
 	}
 }
 
-func TestRecall_WithAsOf(t *testing.T) {
+func TestRecall_WithAsOf(t *testing.T) { forEachMode(t, testRecall_WithAsOf) }
+
+func testRecall_WithAsOf(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -962,6 +1022,10 @@ func TestRecall_WithAsOf(t *testing.T) {
 }
 
 func TestRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
+	forEachMode(t, testRecall_IncludeInvalidBeatsAsOf)
+}
+
+func testRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -999,7 +1063,9 @@ func TestRecall_IncludeInvalidBeatsAsOf(t *testing.T) {
 	}
 }
 
-func TestRecall_SurfacesSpeaker(t *testing.T) {
+func TestRecall_SurfacesSpeaker(t *testing.T) { forEachMode(t, testRecall_SurfacesSpeaker) }
+
+func testRecall_SurfacesSpeaker(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -1029,6 +1095,10 @@ func TestRecall_SurfacesSpeaker(t *testing.T) {
 }
 
 func TestRecall_TemporalFilterNarrowsByEventTime(t *testing.T) {
+	forEachMode(t, testRecall_TemporalFilterNarrowsByEventTime)
+}
+
+func testRecall_TemporalFilterNarrowsByEventTime(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

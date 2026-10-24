@@ -9,6 +9,10 @@ import (
 )
 
 func TestReconcile_DryRun_ProposesSupersession(t *testing.T) {
+	forEachMode(t, testReconcile_DryRun_ProposesSupersession)
+}
+
+func testReconcile_DryRun_ProposesSupersession(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -71,6 +75,10 @@ func TestReconcile_DryRun_ProposesSupersession(t *testing.T) {
 }
 
 func TestReconcile_GateRejectsWrongDirection(t *testing.T) {
+	forEachMode(t, testReconcile_GateRejectsWrongDirection)
+}
+
+func testReconcile_GateRejectsWrongDirection(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -111,6 +119,10 @@ func TestReconcile_GateRejectsWrongDirection(t *testing.T) {
 }
 
 func TestApplyReconcile_InvalidatesStale(t *testing.T) {
+	forEachMode(t, testApplyReconcile_InvalidatesStale)
+}
+
+func testApplyReconcile_InvalidatesStale(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -165,6 +177,10 @@ func TestApplyReconcile_InvalidatesStale(t *testing.T) {
 }
 
 func TestReconcile_DedupsSharedMemoryAcrossEntities(t *testing.T) {
+	forEachMode(t, testReconcile_DedupsSharedMemoryAcrossEntities)
+}
+
+func testReconcile_DedupsSharedMemoryAcrossEntities(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -216,6 +232,10 @@ func TestReconcile_DedupsSharedMemoryAcrossEntities(t *testing.T) {
 }
 
 func TestReconcile_SkipsWithoutReconciler(t *testing.T) {
+	forEachMode(t, testReconcile_SkipsWithoutReconciler)
+}
+
+func testReconcile_SkipsWithoutReconciler(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	// Default: no LLM set, so no Reconciler.
@@ -265,6 +285,10 @@ func TestReconcileReport_JSONRoundTrip(t *testing.T) {
 }
 
 func TestApplyReconcileReport_AppliesReviewed(t *testing.T) {
+	forEachMode(t, testApplyReconcileReport_AppliesReviewed)
+}
+
+func testApplyReconcileReport_AppliesReviewed(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -311,6 +335,10 @@ func TestApplyReconcileReport_AppliesReviewed(t *testing.T) {
 }
 
 func TestApplyReconcileReport_SkipsStaleProposal(t *testing.T) {
+	forEachMode(t, testApplyReconcileReport_SkipsStaleProposal)
+}
+
+func testApplyReconcileReport_SkipsStaleProposal(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -357,6 +385,10 @@ func TestApplyReconcileReport_SkipsStaleProposal(t *testing.T) {
 }
 
 func TestApplyReconcileReport_SkippedInputUnchanged(t *testing.T) {
+	forEachMode(t, testApplyReconcileReport_SkippedInputUnchanged)
+}
+
+func testApplyReconcileReport_SkippedInputUnchanged(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	in := ReconcileReport{Skipped: true, SkipReason: "no reconciler"}
@@ -370,6 +402,10 @@ func TestApplyReconcileReport_SkippedInputUnchanged(t *testing.T) {
 }
 
 func TestApplyReconcile_RecordsSupersedesEdge(t *testing.T) {
+	forEachMode(t, testApplyReconcile_RecordsSupersedesEdge)
+}
+
+func testApplyReconcile_RecordsSupersedesEdge(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

@@ -70,6 +70,14 @@ func (e *Env) NewUser(sub, state string) string {
 	if _, err := e.DB.Exec(`UPDATE users SET encryption_state = $1 WHERE id = $2`, state, u.ID); err != nil {
 		e.T.Fatal(err)
 	}
+	if state == "encrypted" {
+		// CreateUser writes a plaintext owner entity that the Task 16
+		// enrollment encrypts; until then the row-form guard (rightly)
+		// rejects it when the working set loads, so the fixture drops it.
+		if _, err := e.DB.Exec(`DELETE FROM entities WHERE user_id = $1 AND enc IS NOT TRUE`, u.ID); err != nil {
+			e.T.Fatal(err)
+		}
+	}
 	return u.ID
 }
 

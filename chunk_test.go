@@ -7,7 +7,9 @@ import (
 	"testing"
 )
 
-func TestPutChunk(t *testing.T) {
+func TestPutChunk(t *testing.T) { forEachMode(t, testPutChunk) }
+
+func testPutChunk(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -33,7 +35,9 @@ func TestPutChunk(t *testing.T) {
 	}
 }
 
-func TestSearchKeyword(t *testing.T) {
+func TestSearchKeyword(t *testing.T) { forEachMode(t, testSearchKeyword) }
+
+func testSearchKeyword(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -74,7 +78,9 @@ func TestSearchKeyword(t *testing.T) {
 	}
 }
 
-func TestPutChunkWithoutEntity(t *testing.T) {
+func TestPutChunkWithoutEntity(t *testing.T) { forEachMode(t, testPutChunkWithoutEntity) }
+
+func testPutChunkWithoutEntity(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -98,7 +104,9 @@ func TestPutChunkWithoutEntity(t *testing.T) {
 	}
 }
 
-func TestPutChunkMetadataRoundtrip(t *testing.T) {
+func TestPutChunkMetadataRoundtrip(t *testing.T) { forEachMode(t, testPutChunkMetadataRoundtrip) }
+
+func testPutChunkMetadataRoundtrip(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -130,7 +138,9 @@ func TestPutChunkMetadataRoundtrip(t *testing.T) {
 	}
 }
 
-func TestSearchKeywordLimit(t *testing.T) {
+func TestSearchKeywordLimit(t *testing.T) { forEachMode(t, testSearchKeywordLimit) }
+
+func testSearchKeywordLimit(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -156,7 +166,9 @@ func TestSearchKeywordLimit(t *testing.T) {
 	}
 }
 
-func TestSearchKeywordNoResults(t *testing.T) {
+func TestSearchKeywordNoResults(t *testing.T) { forEachMode(t, testSearchKeywordNoResults) }
+
+func testSearchKeywordNoResults(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -182,7 +194,9 @@ func TestSearchKeywordNoResults(t *testing.T) {
 	}
 }
 
-func TestPutChunkHuge(t *testing.T) {
+func TestPutChunkHuge(t *testing.T) { forEachMode(t, testPutChunkHuge) }
+
+func testPutChunkHuge(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	// Many distinct lexemes, ~1M chars, so the tsvector would exceed 1MB if

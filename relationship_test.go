@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-func TestPutAndGetRelationships(t *testing.T) {
+func TestPutAndGetRelationships(t *testing.T) { forEachMode(t, testPutAndGetRelationships) }
+
+func testPutAndGetRelationships(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -59,7 +61,9 @@ func TestPutAndGetRelationships(t *testing.T) {
 	}
 }
 
-func TestGetRelationshipsFilterByType(t *testing.T) {
+func TestGetRelationshipsFilterByType(t *testing.T) { forEachMode(t, testGetRelationshipsFilterByType) }
+
+func testGetRelationshipsFilterByType(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -99,6 +103,10 @@ func TestGetRelationshipsFilterByType(t *testing.T) {
 }
 
 func TestGetRelationshipsNoRelationships(t *testing.T) {
+	forEachMode(t, testGetRelationshipsNoRelationships)
+}
+
+func testGetRelationshipsNoRelationships(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -117,6 +125,10 @@ func TestGetRelationshipsNoRelationships(t *testing.T) {
 }
 
 func TestGetRelationshipsAttributesRoundtrip(t *testing.T) {
+	forEachMode(t, testGetRelationshipsAttributesRoundtrip)
+}
+
+func testGetRelationshipsAttributesRoundtrip(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -162,6 +174,10 @@ func TestGetRelationshipsAttributesRoundtrip(t *testing.T) {
 }
 
 func TestGetRelationshipsFromEitherDirection(t *testing.T) {
+	forEachMode(t, testGetRelationshipsFromEitherDirection)
+}
+
+func testGetRelationshipsFromEitherDirection(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -193,6 +209,10 @@ func TestGetRelationshipsFromEitherDirection(t *testing.T) {
 }
 
 func TestPutRelationship_ConfidenceDefaultsToOne(t *testing.T) {
+	forEachMode(t, testPutRelationship_ConfidenceDefaultsToOne)
+}
+
+func testPutRelationship_ConfidenceDefaultsToOne(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 	a := &Entity{Type: "person", Name: "RelA"}
@@ -220,6 +240,10 @@ func TestPutRelationship_ConfidenceDefaultsToOne(t *testing.T) {
 }
 
 func TestPutRelationship_ConfidenceClamped(t *testing.T) {
+	forEachMode(t, testPutRelationship_ConfidenceClamped)
+}
+
+func testPutRelationship_ConfidenceClamped(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 	a := &Entity{Type: "person", Name: "RelClampA"}

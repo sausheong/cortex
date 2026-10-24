@@ -3,7 +3,6 @@ package query
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -112,15 +111,22 @@ func (c Ops) entityNames(ctx context.Context, ids map[string]bool) (map[string]s
 		list = append(list, id)
 	}
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, name FROM entities WHERE user_id = ? AND id = ANY(?)`, c.UserID, list)
+		`SELECT id, enc, name, name_ct FROM entities WHERE user_id = ? AND id = ANY(?)`, c.UserID, list)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: entity names: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var id string
+		var enc bool
+		var plain sql.NullString
+		var ct []byte
+		if err := rows.Scan(&id, &enc, &plain, &ct); err != nil {
 			return nil, fmt.Errorf("cortex: scan entity name: %w", err)
+		}
+		name, err := c.OpenCol(store.TblEntities, id, "name", enc, plain, ct)
+		if err != nil {
+			return nil, err
 		}
 		names[id] = name
 	}
@@ -193,19 +199,19 @@ func (c Ops) Path(ctx context.Context, fromID, toID string, maxHops int) ([]mode
 // getRelationship loads one relationship by ID.
 func (c Ops) getRelationship(ctx context.Context, id string) (*model.Relationship, error) {
 	var r model.Relationship
-	var attrsJSON sql.NullString
+	var enc bool
+	var typ, attrsJSON, source sql.NullString
+	var typeCT, attrsCT, sourceCT []byte
 	var validAt, invalidAt sql.NullTime
 	err := c.DB.QueryRowContext(ctx,
-		`SELECT id, source_id, target_id, type, attributes, source, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
+		`SELECT id, source_id, target_id, enc, type, attributes, source, type_ct, attributes_ct, source_ct, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
 		 FROM relationships WHERE id = ? AND user_id = ?`, id, c.UserID,
-	).Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.Confidence, &r.CreatedAt, &r.EvidenceCount, &r.LastSeenAt, &validAt, &invalidAt)
+	).Scan(&r.ID, &r.SourceID, &r.TargetID, &enc, &typ, &attrsJSON, &source, &typeCT, &attrsCT, &sourceCT, &r.Confidence, &r.CreatedAt, &r.EvidenceCount, &r.LastSeenAt, &validAt, &invalidAt)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get relationship: %w", err)
 	}
-	if attrsJSON.Valid && attrsJSON.String != "" {
-		if err := json.Unmarshal([]byte(attrsJSON.String), &r.Attributes); err != nil {
-			return nil, fmt.Errorf("cortex: unmarshal relationship attributes: %w", err)
-		}
+	if err := c.OpenRelFields(&r, enc, typ, source, attrsJSON, typeCT, sourceCT, attrsCT); err != nil {
+		return nil, err
 	}
 	r.ValidAt, r.InvalidAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt)
 	return &r, nil
@@ -290,7 +296,7 @@ func (c Ops) WhatChanged(ctx context.Context, since time.Time, limit int) (*mode
 	ch := &model.Changes{Since: since}
 
 	erows, err := c.DB.QueryContext(ctx,
-		`SELECT id, type, name, COALESCE(source, ''), confidence, created_at, updated_at FROM entities
+		`SELECT id, enc, name, type, source, attributes::text, name_ct, type_ct, source_ct, attributes_ct, confidence, created_at, updated_at FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
 		c.UserID, since, limit)
 	if err != nil {
@@ -298,17 +304,25 @@ func (c Ops) WhatChanged(ctx context.Context, since time.Time, limit int) (*mode
 	}
 	for erows.Next() {
 		var e model.Entity
-		if err := erows.Scan(&e.ID, &e.Type, &e.Name, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var enc bool
+		var name, typ, source, attrs sql.NullString
+		var nameCT, typeCT, sourceCT, attrsCT []byte
+		if err := erows.Scan(&e.ID, &enc, &name, &typ, &source, &attrs, &nameCT, &typeCT, &sourceCT, &attrsCT, &e.Confidence, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			erows.Close()
 			return nil, fmt.Errorf("cortex: scan changed entity: %w", err)
 		}
+		if err := c.OpenEntityFields(&e, enc, name, typ, source, attrs, nameCT, typeCT, sourceCT, attrsCT); err != nil {
+			erows.Close()
+			return nil, err
+		}
+		e.Attributes = nil
 		ch.NewEntities = append(ch.NewEntities, e)
 	}
 	erows.Close()
 
 	memQuery := func(where string) ([]model.Memory, error) {
 		rows, err := c.DB.QueryContext(ctx,
-			`SELECT id, content, COALESCE(source, ''), confidence, created_at, valid_at, invalid_at, expired_at FROM memories
+			`SELECT id, enc, content, source, content_ct, source_ct, confidence, created_at, valid_at, invalid_at, expired_at FROM memories
 			 WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.UserID, since, limit)
 		if err != nil {
 			return nil, err
@@ -317,8 +331,14 @@ func (c Ops) WhatChanged(ctx context.Context, since time.Time, limit int) (*mode
 		var out []model.Memory
 		for rows.Next() {
 			var m model.Memory
+			var enc bool
+			var content, source sql.NullString
+			var contentCT, sourceCT []byte
 			var validAt, invalidAt, expiredAt sql.NullTime
-			if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &validAt, &invalidAt, &expiredAt); err != nil {
+			if err := rows.Scan(&m.ID, &enc, &content, &source, &contentCT, &sourceCT, &m.Confidence, &m.CreatedAt, &validAt, &invalidAt, &expiredAt); err != nil {
+				return nil, err
+			}
+			if err := c.OpenMemoryFields(&m, enc, content, source, sql.NullString{}, contentCT, sourceCT, nil); err != nil {
 				return nil, err
 			}
 			m.ValidAt, m.InvalidAt, m.ExpiredAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt), store.NullTimePtr(expiredAt)

@@ -35,6 +35,13 @@ func (c Ops) Lint(ctx context.Context, opts ...model.LintOption) (model.LintRepo
 		return r, fmt.Errorf("cortex: lint: count memories: %w", err)
 	}
 
+	if c.Encrypted() {
+		if err := c.lintEnc(ctx, cfg, &r); err != nil {
+			return r, err
+		}
+		return r, nil
+	}
+
 	if r.Orphans, err = findOrphans(ctx, c.DB, c.UserID); err != nil {
 		return r, fmt.Errorf("cortex: lint: orphans: %w", err)
 	}

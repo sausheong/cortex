@@ -29,6 +29,9 @@ func (c Ops) GraphNeighbourhood(ctx context.Context, centerID string, f model.Gr
 		limit = 500
 	}
 	g := &model.Neighbourhood{Nodes: []model.GraphNode{{ID: center.ID, Type: center.Type, Name: center.Name, Center: true}}}
+	if c.Encrypted() {
+		return g, c.graphNeighbourhoodEnc(ctx, g, centerID, f, limit)
+	}
 
 	where := ""
 	args := []any{centerID, c.UserID, centerID, centerID, c.UserID, centerID}
@@ -152,6 +155,9 @@ func (c Ops) SearchEntities(ctx context.Context, q string, types []string, exclu
 	if limit > 100 {
 		limit = 100
 	}
+	if c.Encrypted() {
+		return c.searchEntitiesEnc(ctx, q, types, excludeID, limit)
+	}
 	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
 	conds := `user_id = ? AND deleted_at IS NULL AND name ILIKE ? ESCAPE '\'`
 	args := []any{c.UserID, "%" + esc + "%"}
@@ -188,6 +194,9 @@ func (c Ops) SearchEntities(ctx context.Context, q string, types []string, exclu
 
 // EntityTypes lists the distinct types of this user's live entities.
 func (c Ops) EntityTypes(ctx context.Context) ([]string, error) {
+	if c.Encrypted() {
+		return c.entityTypesEnc(ctx)
+	}
 	rows, err := c.DB.QueryContext(ctx, `SELECT DISTINCT type FROM entities WHERE user_id = ? AND deleted_at IS NULL ORDER BY type`, c.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: entity types: %w", err)
@@ -210,6 +219,9 @@ func (c Ops) EntityTypes(ctx context.Context) ([]string, error) {
 func (c Ops) EntityRelations(ctx context.Context, id string, limit int) ([]model.EntityRelation, int, error) {
 	if limit < 1 {
 		limit = 50
+	}
+	if c.Encrypted() {
+		return c.entityRelationsEnc(ctx, id, limit)
 	}
 	var total int
 	if err := c.DB.QueryRowContext(ctx,

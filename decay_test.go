@@ -7,6 +7,10 @@ import (
 )
 
 func TestDecayConfidence_DecaysOldMemory(t *testing.T) {
+	forEachMode(t, testDecayConfidence_DecaysOldMemory)
+}
+
+func testDecayConfidence_DecaysOldMemory(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -40,6 +44,10 @@ func TestDecayConfidence_DecaysOldMemory(t *testing.T) {
 }
 
 func TestDecayConfidence_AutoPrunesBelowFloor(t *testing.T) {
+	forEachMode(t, testDecayConfidence_AutoPrunesBelowFloor)
+}
+
+func testDecayConfidence_AutoPrunesBelowFloor(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -86,6 +94,10 @@ func TestDecayConfidence_AutoPrunesBelowFloor(t *testing.T) {
 }
 
 func TestDecayConfidence_DryRunWritesNothing(t *testing.T) {
+	forEachMode(t, testDecayConfidence_DryRunWritesNothing)
+}
+
+func testDecayConfidence_DryRunWritesNothing(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -117,7 +129,9 @@ func TestDecayConfidence_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-func TestDecay_SkipsStaticMemories(t *testing.T) {
+func TestDecay_SkipsStaticMemories(t *testing.T) { forEachMode(t, testDecay_SkipsStaticMemories) }
+
+func testDecay_SkipsStaticMemories(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

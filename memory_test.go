@@ -9,7 +9,9 @@ import (
 	"github.com/sausheong/cortex/internal/model"
 )
 
-func TestPutAndSearchMemory(t *testing.T) {
+func TestPutAndSearchMemory(t *testing.T) { forEachMode(t, testPutAndSearchMemory) }
+
+func testPutAndSearchMemory(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -78,7 +80,9 @@ func TestPutAndSearchMemory(t *testing.T) {
 	}
 }
 
-func TestGetMemoriesByEntity(t *testing.T) {
+func TestGetMemoriesByEntity(t *testing.T) { forEachMode(t, testGetMemoriesByEntity) }
+
+func testGetMemoriesByEntity(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -138,6 +142,10 @@ func TestGetMemoriesByEntity(t *testing.T) {
 }
 
 func TestPutMemory_ConfidenceDefaultsToOne(t *testing.T) {
+	forEachMode(t, testPutMemory_ConfidenceDefaultsToOne)
+}
+
+func testPutMemory_ConfidenceDefaultsToOne(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 	m := &Memory{Content: "alice did X"}
@@ -156,7 +164,9 @@ func TestPutMemory_ConfidenceDefaultsToOne(t *testing.T) {
 	}
 }
 
-func TestPutMemory_ConfidenceClamped(t *testing.T) {
+func TestPutMemory_ConfidenceClamped(t *testing.T) { forEachMode(t, testPutMemory_ConfidenceClamped) }
+
+func testPutMemory_ConfidenceClamped(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 	m := &Memory{Content: "alice did Y", Confidence: -0.5}
@@ -172,6 +182,7 @@ func TestPutMemory_ConfidenceClamped(t *testing.T) {
 	}
 }
 
+// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestPutMemory_PopulatesFTS(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -194,7 +205,9 @@ func TestPutMemory_PopulatesFTS(t *testing.T) {
 	}
 }
 
-func TestSearchMemoriesOddQueries(t *testing.T) {
+func TestSearchMemoriesOddQueries(t *testing.T) { forEachMode(t, testSearchMemoriesOddQueries) }
+
+func testSearchMemoriesOddQueries(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	if err := c.PutMemory(ctx, &Memory{Content: "Alice joined Stripe"}); err != nil {
@@ -217,7 +230,9 @@ func TestSearchMemoriesOddQueries(t *testing.T) {
 	}
 }
 
-func TestSearchMemoriesOrSemantics(t *testing.T) {
+func TestSearchMemoriesOrSemantics(t *testing.T) { forEachMode(t, testSearchMemoriesOrSemantics) }
+
+func testSearchMemoriesOrSemantics(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	if err := c.PutMemory(ctx, &Memory{Content: "Alice joined Stripe"}); err != nil {
@@ -233,6 +248,10 @@ func TestSearchMemoriesOrSemantics(t *testing.T) {
 }
 
 func TestSearchMemories_RanksByRelevance(t *testing.T) {
+	forEachMode(t, testSearchMemories_RanksByRelevance)
+}
+
+func testSearchMemories_RanksByRelevance(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -260,6 +279,10 @@ func TestSearchMemories_RanksByRelevance(t *testing.T) {
 }
 
 func TestMemory_TemporalColumnsRoundTrip(t *testing.T) {
+	forEachMode(t, testMemory_TemporalColumnsRoundTrip)
+}
+
+func testMemory_TemporalColumnsRoundTrip(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -282,7 +305,9 @@ func TestMemory_TemporalColumnsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestInvalidateMemory(t *testing.T) {
+func TestInvalidateMemory(t *testing.T) { forEachMode(t, testInvalidateMemory) }
+
+func testInvalidateMemory(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -312,7 +337,9 @@ func TestInvalidateMemory(t *testing.T) {
 	}
 }
 
-func TestInvalidateMemory_NotFound(t *testing.T) {
+func TestInvalidateMemory_NotFound(t *testing.T) { forEachMode(t, testInvalidateMemory_NotFound) }
+
+func testInvalidateMemory_NotFound(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	if err := c.InvalidateMemory(ctx, "nonexistent-id", nil); err == nil {
@@ -321,6 +348,10 @@ func TestInvalidateMemory_NotFound(t *testing.T) {
 }
 
 func TestSearchMemories_HidesInvalidated(t *testing.T) {
+	forEachMode(t, testSearchMemories_HidesInvalidated)
+}
+
+func testSearchMemories_HidesInvalidated(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -356,7 +387,9 @@ func TestSearchMemories_HidesInvalidated(t *testing.T) {
 	}
 }
 
-func TestPutMemory_PersistsValidAt(t *testing.T) {
+func TestPutMemory_PersistsValidAt(t *testing.T) { forEachMode(t, testPutMemory_PersistsValidAt) }
+
+func testPutMemory_PersistsValidAt(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -385,7 +418,9 @@ func TestPutMemory_PersistsValidAt(t *testing.T) {
 	}
 }
 
-func TestPutMemory_PersistsSpeaker(t *testing.T) {
+func TestPutMemory_PersistsSpeaker(t *testing.T) { forEachMode(t, testPutMemory_PersistsSpeaker) }
+
+func testPutMemory_PersistsSpeaker(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -413,6 +448,10 @@ func TestPutMemory_PersistsSpeaker(t *testing.T) {
 }
 
 func TestSearchMemoriesMode_EventTimeWindow(t *testing.T) {
+	forEachMode(t, testSearchMemoriesMode_EventTimeWindow)
+}
+
+func testSearchMemoriesMode_EventTimeWindow(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -441,6 +480,10 @@ func TestSearchMemoriesMode_EventTimeWindow(t *testing.T) {
 }
 
 func TestMemory_StaticColumnExistsAndDefaultsFalse(t *testing.T) {
+	forEachMode(t, testMemory_StaticColumnExistsAndDefaultsFalse)
+}
+
+func testMemory_StaticColumnExistsAndDefaultsFalse(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -465,7 +508,9 @@ func TestMemory_StaticColumnExistsAndDefaultsFalse(t *testing.T) {
 	}
 }
 
-func TestMemory_StaticRoundTrips(t *testing.T) {
+func TestMemory_StaticRoundTrips(t *testing.T) { forEachMode(t, testMemory_StaticRoundTrips) }
+
+func testMemory_StaticRoundTrips(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -498,6 +543,10 @@ func TestMemory_StaticRoundTrips(t *testing.T) {
 }
 
 func TestMemory_ForgetAfterColumnExistsAndDefaultsNil(t *testing.T) {
+	forEachMode(t, testMemory_ForgetAfterColumnExistsAndDefaultsNil)
+}
+
+func testMemory_ForgetAfterColumnExistsAndDefaultsNil(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -521,7 +570,9 @@ func TestMemory_ForgetAfterColumnExistsAndDefaultsNil(t *testing.T) {
 	}
 }
 
-func TestMemory_ForgetAfterRoundTrips(t *testing.T) {
+func TestMemory_ForgetAfterRoundTrips(t *testing.T) { forEachMode(t, testMemory_ForgetAfterRoundTrips) }
+
+func testMemory_ForgetAfterRoundTrips(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -558,6 +609,10 @@ func TestMemory_ForgetAfterRoundTrips(t *testing.T) {
 // A rare query token must outrank a common one: the memory holding the
 // distinctive keyword wins over memories that only share a frequent word.
 func TestSearchMemories_RareTokenOutranksCommon(t *testing.T) {
+	forEachMode(t, testSearchMemories_RareTokenOutranksCommon)
+}
+
+func testSearchMemories_RareTokenOutranksCommon(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	for _, content := range []string{

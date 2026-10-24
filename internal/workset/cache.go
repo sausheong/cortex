@@ -3,6 +3,7 @@ package workset
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,7 +28,71 @@ type globalState struct {
 
 var g = &globalState{users: map[string]*userSet{}, cap: defaultCap, idle: defaultIdle, now: time.Now}
 
-func init() { store.OnWrite = onWrite }
+func init() {
+	store.OnWrite = onWrite
+	store.OnExec = onExec
+}
+
+// onExec is the store.OnExec catch-all: every committed write statement that
+// names a content table invalidates the matching slices of the user it
+// belongs to, found by looking for a cached user id among the arguments (all
+// content writes are scoped by user_id). When no argument names a cached user
+// the slices of every cached user are dropped, which is safe and rare.
+// Recall's access bookkeeping is exempt: it is mirrored by RecordAccess and
+// must not force a memories reload.
+func onExec(q string, args []any) {
+	lq := strings.ToLower(q)
+	if strings.Contains(lq, "set access_count = access_count + 1") {
+		return
+	}
+	var kinds []Kind
+	add := func(k Kind) { kinds = append(kinds, k) }
+	if strings.Contains(lq, "entities") || strings.Contains(lq, "entity_aliases") {
+		add(KindEntities)
+	}
+	if strings.Contains(lq, "memories") || strings.Contains(lq, "memory_entities") {
+		add(KindMemories)
+	}
+	if strings.Contains(lq, "chunks") {
+		add(KindChunks)
+	}
+	if strings.Contains(lq, "relationships") {
+		add(KindRels)
+	}
+	if strings.Contains(lq, "embeddings") {
+		add(KindVectors)
+	}
+	if len(kinds) == 0 {
+		return
+	}
+	g.mu.Lock()
+	ids := make([]string, 0, len(g.users))
+	for id := range g.users {
+		ids = append(ids, id)
+	}
+	g.mu.Unlock()
+	if len(ids) == 0 {
+		return
+	}
+	named := map[string]bool{}
+	for _, a := range args {
+		if s, ok := a.(string); ok {
+			named[s] = true
+		}
+	}
+	hit := false
+	for _, id := range ids {
+		if named[id] {
+			hit = true
+			Invalidate(id, kinds...)
+		}
+	}
+	if !hit {
+		for _, id := range ids {
+			Invalidate(id, kinds...)
+		}
+	}
+}
 
 // onWrite is the store.OnWrite hook: a content write invalidates the slice
 // it touched. Kinds that are not part of the set are ignored.

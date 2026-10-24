@@ -8,7 +8,9 @@ import (
 	"github.com/sausheong/cortex/internal/tenancy"
 )
 
-func TestAddAlias_ConflictAndResolve(t *testing.T) {
+func TestAddAlias_ConflictAndResolve(t *testing.T) { forEachMode(t, testAddAlias_ConflictAndResolve) }
+
+func testAddAlias_ConflictAndResolve(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	a := &Entity{Name: "Sau Sheong", Type: "person"}
@@ -111,6 +113,10 @@ func (s *stubDisambiguator) DisambiguateEntity(_ context.Context, m EntityMentio
 }
 
 func TestRemember_AsksDisambiguatorWhenUnsure(t *testing.T) {
+	forEachMode(t, testRemember_AsksDisambiguatorWhenUnsure)
+}
+
+func testRemember_AsksDisambiguatorWhenUnsure(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	stored := &Entity{Name: "Apollo Platform", Type: "project"}
@@ -139,6 +145,10 @@ func TestRemember_AsksDisambiguatorWhenUnsure(t *testing.T) {
 }
 
 func TestMerge_MovesAliasesAndUndoRestoresThem(t *testing.T) {
+	forEachMode(t, testMerge_MovesAliasesAndUndoRestoresThem)
+}
+
+func testMerge_MovesAliasesAndUndoRestoresThem(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	keep := &Entity{Name: "Sau Sheong", Type: "person"}

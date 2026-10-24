@@ -8,7 +8,9 @@ import (
 
 // --- Test 1: Empty graph ---
 
-func TestLint_EmptyGraph(t *testing.T) {
+func TestLint_EmptyGraph(t *testing.T) { forEachMode(t, testLint_EmptyGraph) }
+
+func testLint_EmptyGraph(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -28,7 +30,9 @@ func TestLint_EmptyGraph(t *testing.T) {
 
 // --- Test 2: Healthy graph has no findings ---
 
-func TestLint_HealthyGraph(t *testing.T) {
+func TestLint_HealthyGraph(t *testing.T) { forEachMode(t, testLint_HealthyGraph) }
+
+func testLint_HealthyGraph(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -73,7 +77,9 @@ func TestLint_HealthyGraph(t *testing.T) {
 
 // --- Test 3: Orphan detection ---
 
-func TestLint_OrphanDetected(t *testing.T) {
+func TestLint_OrphanDetected(t *testing.T) { forEachMode(t, testLint_OrphanDetected) }
+
+func testLint_OrphanDetected(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -116,7 +122,9 @@ func TestLint_OrphanDetected(t *testing.T) {
 
 // --- Test 4: EntitiesNoMemories ---
 
-func TestLint_EntityWithoutMemories(t *testing.T) {
+func TestLint_EntityWithoutMemories(t *testing.T) { forEachMode(t, testLint_EntityWithoutMemories) }
+
+func testLint_EntityWithoutMemories(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -157,6 +165,7 @@ func TestLint_EntityWithoutMemories(t *testing.T) {
 
 // --- Test 5: Near-duplicate names (case-insensitive, same type) ---
 
+// Legacy only: case-variant names are one entity under the encrypted blind index.
 func TestLint_NearDuplicateNames(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
@@ -191,6 +200,7 @@ func TestLint_NearDuplicateNames(t *testing.T) {
 
 // --- Test 6: Self-pair guard ---
 
+// Legacy only: case-variant names are one entity under the encrypted blind index.
 func TestLint_NearDuplicateNoSelfOrReversePair(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
@@ -215,7 +225,9 @@ func TestLint_NearDuplicateNoSelfOrReversePair(t *testing.T) {
 
 // --- Test 7: Dead source ---
 
-func TestLint_DeadSource(t *testing.T) {
+func TestLint_DeadSource(t *testing.T) { forEachMode(t, testLint_DeadSource) }
+
+func testLint_DeadSource(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -223,11 +235,8 @@ func TestLint_DeadSource(t *testing.T) {
 	if err := cx.PutEntity(ctx, e); err != nil {
 		t.Fatal(err)
 	}
-	// Direct INSERT to simulate orphan-source state. cx.h.DB is the private
-	// store.DB field on Cortex; tests in this package can access it.
-	if _, err := cx.h.DB.ExecContext(ctx,
-		`INSERT INTO memories (id, user_id, content, source) VALUES (?, ?, ?, ?)`,
-		"mem_dead", BootstrapUserID, "an orphan memory", "old-import.md"); err != nil {
+	// A memory whose source no entity carries.
+	if err := cx.PutMemory(ctx, &Memory{Content: "an orphan memory", Source: "old-import.md"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,7 +260,9 @@ func TestLint_DeadSource(t *testing.T) {
 
 // --- Test 8: Unlinked memory ---
 
-func TestLint_UnlinkedMemory(t *testing.T) {
+func TestLint_UnlinkedMemory(t *testing.T) { forEachMode(t, testLint_UnlinkedMemory) }
+
+func testLint_UnlinkedMemory(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -280,7 +291,9 @@ func TestLint_UnlinkedMemory(t *testing.T) {
 
 // --- Test 9: Low-conf default off ---
 
-func TestLint_LowConfidenceDefaultOff(t *testing.T) {
+func TestLint_LowConfidenceDefaultOff(t *testing.T) { forEachMode(t, testLint_LowConfidenceDefaultOff) }
+
+func testLint_LowConfidenceDefaultOff(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -300,7 +313,9 @@ func TestLint_LowConfidenceDefaultOff(t *testing.T) {
 
 // --- Test 10: Low-conf opt-in ---
 
-func TestLint_LowConfidenceOptIn(t *testing.T) {
+func TestLint_LowConfidenceOptIn(t *testing.T) { forEachMode(t, testLint_LowConfidenceOptIn) }
+
+func testLint_LowConfidenceOptIn(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -333,6 +348,10 @@ func TestLint_LowConfidenceOptIn(t *testing.T) {
 // --- Test 11: Custom threshold ---
 
 func TestLint_LowConfidenceCustomThreshold(t *testing.T) {
+	forEachMode(t, testLint_LowConfidenceCustomThreshold)
+}
+
+func testLint_LowConfidenceCustomThreshold(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 
@@ -368,7 +387,9 @@ func TestLint_LowConfidenceCustomThreshold(t *testing.T) {
 
 // --- Test 12: Counts populated ---
 
-func TestLint_CountsPopulated(t *testing.T) {
+func TestLint_CountsPopulated(t *testing.T) { forEachMode(t, testLint_CountsPopulated) }
+
+func testLint_CountsPopulated(t *testing.T) {
 	cx := openTestDB(t)
 	ctx := context.Background()
 

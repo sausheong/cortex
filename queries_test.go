@@ -7,6 +7,10 @@ import (
 )
 
 func TestWhoIs_ResolvesAliasAndDescribes(t *testing.T) {
+	forEachMode(t, testWhoIs_ResolvesAliasAndDescribes)
+}
+
+func testWhoIs_ResolvesAliasAndDescribes(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	carol := &Entity{Name: "Carol Seah", Type: "person"}
@@ -82,7 +86,9 @@ func TestPath_ShortestChainAvoidingOwner(t *testing.T) {
 	}
 }
 
-func TestTimelineAndWhatChanged(t *testing.T) {
+func TestTimelineAndWhatChanged(t *testing.T) { forEachMode(t, testTimelineAndWhatChanged) }
+
+func testTimelineAndWhatChanged(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	start := time.Now().UTC().Add(-time.Second)
@@ -137,7 +143,9 @@ func TestTimelineAndWhatChanged(t *testing.T) {
 	}
 }
 
-func TestLink_ResolvesOrCreatesEnds(t *testing.T) {
+func TestLink_ResolvesOrCreatesEnds(t *testing.T) { forEachMode(t, testLink_ResolvesOrCreatesEnds) }
+
+func testLink_ResolvesOrCreatesEnds(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	acme := &Entity{Name: "Acme Corp", Type: "organization"}

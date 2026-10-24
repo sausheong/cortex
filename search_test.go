@@ -16,7 +16,7 @@ func openTestDBWithEmbedder(t *testing.T) *Cortex {
 		t.Fatalf("Open() error: %v", err)
 	}
 	t.Cleanup(func() { c.Close() })
-	return c
+	return modeHandle(t, c)
 }
 
 // testEmbedder produces deterministic 8-dim normalized vectors from text bytes.
@@ -52,7 +52,9 @@ func testDeterministicVector(text string) []float32 {
 	return vec
 }
 
-func TestStoreAndSearchEmbedding(t *testing.T) {
+func TestStoreAndSearchEmbedding(t *testing.T) { forEachMode(t, testStoreAndSearchEmbedding) }
+
+func testStoreAndSearchEmbedding(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -120,7 +122,9 @@ func TestStoreAndSearchEmbedding(t *testing.T) {
 	}
 }
 
-func TestSearchMemoryVector(t *testing.T) {
+func TestSearchMemoryVector(t *testing.T) { forEachMode(t, testSearchMemoryVector) }
+
+func testSearchMemoryVector(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -148,6 +152,10 @@ func TestSearchMemoryVector(t *testing.T) {
 }
 
 func TestSearchMemoryVector_HidesInvalidated(t *testing.T) {
+	forEachMode(t, testSearchMemoryVector_HidesInvalidated)
+}
+
+func testSearchMemoryVector_HidesInvalidated(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 
@@ -182,7 +190,9 @@ func TestSearchMemoryVector_HidesInvalidated(t *testing.T) {
 	}
 }
 
-func TestEmbeddingByRef(t *testing.T) {
+func TestEmbeddingByRef(t *testing.T) { forEachMode(t, testEmbeddingByRef) }
+
+func testEmbeddingByRef(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 

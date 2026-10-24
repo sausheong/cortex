@@ -20,7 +20,7 @@ func openSD(t *testing.T) *Cortex {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { c.Close() })
-	return c
+	return modeHandle(t, c)
 }
 
 func sdCount(t *testing.T, c *Cortex, q string, args ...any) int {
@@ -40,7 +40,9 @@ func sdEmbed(t *testing.T, c *Cortex, id, typ, text string) {
 	}
 }
 
-func TestSoftDeleteHidesEverywhere(t *testing.T) {
+func TestSoftDeleteHidesEverywhere(t *testing.T) { forEachMode(t, testSoftDeleteHidesEverywhere) }
+
+func testSoftDeleteHidesEverywhere(t *testing.T) {
 	ctx := context.Background()
 	for _, kind := range []string{"memories", "entities", "relationships", "chunks"} {
 		t.Run(kind, func(t *testing.T) {
@@ -161,6 +163,10 @@ func TestSoftDeleteHidesEverywhere(t *testing.T) {
 }
 
 func TestSoftDeleteKeepsLinkedMemoryRecallable(t *testing.T) {
+	forEachMode(t, testSoftDeleteKeepsLinkedMemoryRecallable)
+}
+
+func testSoftDeleteKeepsLinkedMemoryRecallable(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	e := &Entity{Type: "person", Name: "Alice"}
@@ -190,7 +196,9 @@ func TestSoftDeleteKeepsLinkedMemoryRecallable(t *testing.T) {
 	}
 }
 
-func TestRestoreBatchExact(t *testing.T) {
+func TestRestoreBatchExact(t *testing.T) { forEachMode(t, testRestoreBatchExact) }
+
+func testRestoreBatchExact(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	a := &Entity{Type: "person", Name: "Alice"}
@@ -256,7 +264,9 @@ func TestRestoreBatchExact(t *testing.T) {
 	_ = b2
 }
 
-func TestRestoreCollisionMerges(t *testing.T) {
+func TestRestoreCollisionMerges(t *testing.T) { forEachMode(t, testRestoreCollisionMerges) }
+
+func testRestoreCollisionMerges(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	old := &Entity{Type: "person", Name: "Alice"}
@@ -285,8 +295,8 @@ func TestRestoreCollisionMerges(t *testing.T) {
 	if err := c.RestoreBatch(ctx, batch); err != nil {
 		t.Fatal(err)
 	}
-	if got := sdCount(t, c, `SELECT count(*) FROM entities WHERE name = 'Alice' AND deleted_at IS NULL`); got != 1 {
-		t.Fatalf("live Alices = %d, want 1", got)
+	if got, err := c.FindEntities(ctx, EntityFilter{NameLike: "Alice"}); err != nil || len(got) != 1 {
+		t.Fatalf("live Alices = %d (err %v), want 1", len(got), err)
 	}
 	mems, err := c.GetMemoriesByEntity(ctx, nu.ID)
 	if err != nil || len(mems) != 2 {
@@ -323,6 +333,7 @@ func snapMerge(t *testing.T, c *Cortex, ids ...string) mergeSnap {
 	return s
 }
 
+// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestMergeRestoreReversesExactly(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
@@ -391,7 +402,9 @@ func TestMergeRestoreReversesExactly(t *testing.T) {
 	}
 }
 
-func TestPurgeAfter30Days(t *testing.T) {
+func TestPurgeAfter30Days(t *testing.T) { forEachMode(t, testPurgeAfter30Days) }
+
+func testPurgeAfter30Days(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	m1 := &Memory{Content: "old"}
@@ -424,6 +437,10 @@ func TestPurgeAfter30Days(t *testing.T) {
 }
 
 func TestPurgeRemovesEmbeddingsAndLinks(t *testing.T) {
+	forEachMode(t, testPurgeRemovesEmbeddingsAndLinks)
+}
+
+func testPurgeRemovesEmbeddingsAndLinks(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	e := &Entity{Type: "person", Name: "Alice"}
@@ -475,7 +492,9 @@ func TestPurgeRemovesEmbeddingsAndLinks(t *testing.T) {
 	}
 }
 
-func TestPurgeRemovesBatches(t *testing.T) {
+func TestPurgeRemovesBatches(t *testing.T) { forEachMode(t, testPurgeRemovesBatches) }
+
+func testPurgeRemovesBatches(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	mk := func(name string) *Entity {
@@ -539,7 +558,9 @@ func TestPurgeRemovesBatches(t *testing.T) {
 	}
 }
 
-func TestSoftDeleteByConnection(t *testing.T) {
+func TestSoftDeleteByConnection(t *testing.T) { forEachMode(t, testSoftDeleteByConnection) }
+
+func testSoftDeleteByConnection(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	e := &Entity{Type: "person", Name: "Alice"}
@@ -575,6 +596,10 @@ func TestSoftDeleteByConnection(t *testing.T) {
 }
 
 func TestVectorSearchSkipsSoftDeletedBeforeLimit(t *testing.T) {
+	forEachMode(t, testVectorSearchSkipsSoftDeletedBeforeLimit)
+}
+
+func testVectorSearchSkipsSoftDeletedBeforeLimit(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	var dead []string
@@ -603,7 +628,9 @@ func TestVectorSearchSkipsSoftDeletedBeforeLimit(t *testing.T) {
 	}
 }
 
-func TestSoftDeleteChunksByID(t *testing.T) {
+func TestSoftDeleteChunksByID(t *testing.T) { forEachMode(t, testSoftDeleteChunksByID) }
+
+func testSoftDeleteChunksByID(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	ch := &Chunk{Content: "zebra crossing notes"}
@@ -629,7 +656,9 @@ func TestSoftDeleteChunksByID(t *testing.T) {
 	}
 }
 
-func TestRecallResultsCarryIDs(t *testing.T) {
+func TestRecallResultsCarryIDs(t *testing.T) { forEachMode(t, testRecallResultsCarryIDs) }
+
+func testRecallResultsCarryIDs(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)
 	m := &Memory{Content: "Bob collects vintage zebra stamps", Source: "s"}

@@ -28,6 +28,10 @@ func TestParseExtractionJSON_AboutAndAttributes(t *testing.T) {
 }
 
 func TestPutRelationship_UpsertsAndCountsEvidence(t *testing.T) {
+	forEachMode(t, testPutRelationship_UpsertsAndCountsEvidence)
+}
+
+func testPutRelationship_UpsertsAndCountsEvidence(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	a := &Entity{Name: "Alice", Type: "person"}
@@ -67,6 +71,10 @@ func TestPutRelationship_UpsertsAndCountsEvidence(t *testing.T) {
 }
 
 func TestRestoreBatch_FoldsRelationshipTwin(t *testing.T) {
+	forEachMode(t, testRestoreBatch_FoldsRelationshipTwin)
+}
+
+func testRestoreBatch_FoldsRelationshipTwin(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	a := &Entity{Name: "Alice", Type: "person"}
@@ -104,6 +112,10 @@ func TestRestoreBatch_FoldsRelationshipTwin(t *testing.T) {
 }
 
 func TestRemember_LinksMemoriesToTheirOwnEntities(t *testing.T) {
+	forEachMode(t, testRemember_LinksMemoriesToTheirOwnEntities)
+}
+
+func testRemember_LinksMemoriesToTheirOwnEntities(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{
@@ -149,6 +161,10 @@ func TestRemember_LinksMemoriesToTheirOwnEntities(t *testing.T) {
 }
 
 func TestRemember_ReusesEntityAcrossCaseAndKeepsAttributes(t *testing.T) {
+	forEachMode(t, testRemember_ReusesEntityAcrossCaseAndKeepsAttributes)
+}
+
+func testRemember_ReusesEntityAcrossCaseAndKeepsAttributes(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	stored := &Entity{Name: "Sau Sheong", Type: "Person", Attributes: map[string]any{"profile_cache": "x"}}
@@ -186,6 +202,7 @@ func TestRemember_ReusesEntityAcrossCaseAndKeepsAttributes(t *testing.T) {
 	}
 }
 
+// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestPutEntity_ReadModifyWriteKeepsLegacyRow(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-func TestMaintain_RunsAllThreePasses(t *testing.T) {
+func TestMaintain_RunsAllThreePasses(t *testing.T) { forEachMode(t, testMaintain_RunsAllThreePasses) }
+
+func testMaintain_RunsAllThreePasses(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -63,7 +65,9 @@ func TestMaintain_RunsAllThreePasses(t *testing.T) {
 	}
 }
 
-func TestMaintain_DryRunWritesNothing(t *testing.T) {
+func TestMaintain_DryRunWritesNothing(t *testing.T) { forEachMode(t, testMaintain_DryRunWritesNothing) }
+
+func testMaintain_DryRunWritesNothing(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -119,7 +123,9 @@ func TestMaintain_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-func TestMaintain_SkipToggles(t *testing.T) {
+func TestMaintain_SkipToggles(t *testing.T) { forEachMode(t, testMaintain_SkipToggles) }
+
+func testMaintain_SkipToggles(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -132,7 +138,9 @@ func TestMaintain_SkipToggles(t *testing.T) {
 	}
 }
 
-func TestMaintain_RunsProfilePass(t *testing.T) {
+func TestMaintain_RunsProfilePass(t *testing.T) { forEachMode(t, testMaintain_RunsProfilePass) }
+
+func testMaintain_RunsProfilePass(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -154,7 +162,9 @@ func TestMaintain_RunsProfilePass(t *testing.T) {
 	}
 }
 
-func TestMaintain_DryRunSkipsProfile(t *testing.T) {
+func TestMaintain_DryRunSkipsProfile(t *testing.T) { forEachMode(t, testMaintain_DryRunSkipsProfile) }
+
+func testMaintain_DryRunSkipsProfile(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	owner := &Entity{Type: "person", Name: "Me", Source: "owner"}
@@ -171,7 +181,9 @@ func TestMaintain_DryRunSkipsProfile(t *testing.T) {
 	}
 }
 
-func TestMaintain_RunsExpirePass(t *testing.T) {
+func TestMaintain_RunsExpirePass(t *testing.T) { forEachMode(t, testMaintain_RunsExpirePass) }
+
+func testMaintain_RunsExpirePass(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	e := &Entity{Type: "person", Name: "Alice"}
@@ -196,7 +208,9 @@ func TestMaintain_RunsExpirePass(t *testing.T) {
 	}
 }
 
-func TestMaintain_DryRunSkipsExpire(t *testing.T) {
+func TestMaintain_DryRunSkipsExpire(t *testing.T) { forEachMode(t, testMaintain_DryRunSkipsExpire) }
+
+func testMaintain_DryRunSkipsExpire(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	rep, err := c.Maintain(ctx, WithMaintainDryRun())
@@ -208,7 +222,9 @@ func TestMaintain_DryRunSkipsExpire(t *testing.T) {
 	}
 }
 
-func TestMaintain_WithoutExpire(t *testing.T) {
+func TestMaintain_WithoutExpire(t *testing.T) { forEachMode(t, testMaintain_WithoutExpire) }
+
+func testMaintain_WithoutExpire(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	rep, err := c.Maintain(ctx, WithoutReconcile(), WithoutRelate(), WithoutDecay(), WithoutProfile(), WithoutExpire())

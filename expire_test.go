@@ -7,6 +7,10 @@ import (
 )
 
 func TestExpireMemories_RetiresPastDue(t *testing.T) {
+	forEachMode(t, testExpireMemories_RetiresPastDue)
+}
+
+func testExpireMemories_RetiresPastDue(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -57,6 +61,10 @@ func TestExpireMemories_RetiresPastDue(t *testing.T) {
 }
 
 func TestExpireMemories_StaticStillExpires(t *testing.T) {
+	forEachMode(t, testExpireMemories_StaticStillExpires)
+}
+
+func testExpireMemories_StaticStillExpires(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	e := &Entity{Type: "person", Name: "Bob"}
@@ -79,6 +87,10 @@ func TestExpireMemories_StaticStillExpires(t *testing.T) {
 }
 
 func TestExpireMemories_DryRunWritesNothing(t *testing.T) {
+	forEachMode(t, testExpireMemories_DryRunWritesNothing)
+}
+
+func testExpireMemories_DryRunWritesNothing(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	e := &Entity{Type: "person", Name: "Carol"}

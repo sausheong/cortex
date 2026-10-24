@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-func TestTrackProfile_SetsMarker(t *testing.T) {
+func TestTrackProfile_SetsMarker(t *testing.T) { forEachMode(t, testTrackProfile_SetsMarker) }
+
+func testTrackProfile_SetsMarker(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -26,6 +28,10 @@ func TestTrackProfile_SetsMarker(t *testing.T) {
 }
 
 func TestUntrackProfile_RemovesMarkerAndCache(t *testing.T) {
+	forEachMode(t, testUntrackProfile_RemovesMarkerAndCache)
+}
+
+func testUntrackProfile_RemovesMarkerAndCache(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -52,6 +58,10 @@ func TestUntrackProfile_RemovesMarkerAndCache(t *testing.T) {
 }
 
 func TestProfileEligibleIDs_OwnerAndTracked(t *testing.T) {
+	forEachMode(t, testProfileEligibleIDs_OwnerAndTracked)
+}
+
+func testProfileEligibleIDs_OwnerAndTracked(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -89,6 +99,10 @@ func TestProfileEligibleIDs_OwnerAndTracked(t *testing.T) {
 }
 
 func TestDistillBucket_RawFallbackNoLLM(t *testing.T) {
+	forEachMode(t, testDistillBucket_RawFallbackNoLLM)
+}
+
+func testDistillBucket_RawFallbackNoLLM(t *testing.T) {
 	c := openTestDB(t) // openTestDB wires no LLM by default in root package
 	// Ensure no LLM.
 	c.SetLLM(nil)
@@ -104,7 +118,9 @@ func TestDistillBucket_RawFallbackNoLLM(t *testing.T) {
 	}
 }
 
-func TestDistillBucket_LLMBullets(t *testing.T) {
+func TestDistillBucket_LLMBullets(t *testing.T) { forEachMode(t, testDistillBucket_LLMBullets) }
+
+func testDistillBucket_LLMBullets(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(&mockLLM{
@@ -124,6 +140,10 @@ func TestDistillBucket_LLMBullets(t *testing.T) {
 }
 
 func TestDistillBucket_LLMErrorFallsBack(t *testing.T) {
+	forEachMode(t, testDistillBucket_LLMErrorFallsBack)
+}
+
+func testDistillBucket_LLMErrorFallsBack(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(&mockLLM{
@@ -142,7 +162,9 @@ func TestDistillBucket_LLMErrorFallsBack(t *testing.T) {
 	}
 }
 
-func TestDistillBucket_EmptyNoCall(t *testing.T) {
+func TestDistillBucket_EmptyNoCall(t *testing.T) { forEachMode(t, testDistillBucket_EmptyNoCall) }
+
+func testDistillBucket_EmptyNoCall(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	called := false
@@ -159,7 +181,9 @@ func TestDistillBucket_EmptyNoCall(t *testing.T) {
 	}
 }
 
-func TestProfile_BuildsAndCaches(t *testing.T) {
+func TestProfile_BuildsAndCaches(t *testing.T) { forEachMode(t, testProfile_BuildsAndCaches) }
+
+func testProfile_BuildsAndCaches(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(nil) // raw fallback, deterministic
@@ -199,6 +223,10 @@ func TestProfile_BuildsAndCaches(t *testing.T) {
 }
 
 func TestProfile_RebuildsWhenMemoryCountChanges(t *testing.T) {
+	forEachMode(t, testProfile_RebuildsWhenMemoryCountChanges)
+}
+
+func testProfile_RebuildsWhenMemoryCountChanges(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(nil)
@@ -226,6 +254,10 @@ func TestProfile_RebuildsWhenMemoryCountChanges(t *testing.T) {
 }
 
 func TestProfile_RebuildsWhenTTLExpired(t *testing.T) {
+	forEachMode(t, testProfile_RebuildsWhenTTLExpired)
+}
+
+func testProfile_RebuildsWhenTTLExpired(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(nil)
@@ -247,7 +279,9 @@ func TestProfile_RebuildsWhenTTLExpired(t *testing.T) {
 	}
 }
 
-func TestProfile_EntityNotFound(t *testing.T) {
+func TestProfile_EntityNotFound(t *testing.T) { forEachMode(t, testProfile_EntityNotFound) }
+
+func testProfile_EntityNotFound(t *testing.T) {
 	c := openTestDB(t)
 	if _, err := c.Profile(context.Background(), "nope"); err == nil {
 		t.Error("expected error for missing entity")
@@ -255,6 +289,10 @@ func TestProfile_EntityNotFound(t *testing.T) {
 }
 
 func TestRefreshProfiles_BuildsEligible(t *testing.T) {
+	forEachMode(t, testRefreshProfiles_BuildsEligible)
+}
+
+func testRefreshProfiles_BuildsEligible(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetLLM(nil)

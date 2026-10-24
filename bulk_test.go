@@ -8,7 +8,9 @@ import (
 
 // The bulk loaders must return what the per-entity calls return, so the
 // vault build can switch between them without changing its output.
-func TestBulkLoadersMatchPerEntity(t *testing.T) {
+func TestBulkLoadersMatchPerEntity(t *testing.T) { forEachMode(t, testBulkLoadersMatchPerEntity) }
+
+func testBulkLoadersMatchPerEntity(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

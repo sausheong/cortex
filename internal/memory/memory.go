@@ -88,6 +88,9 @@ func (c Ops) SearchMemoriesMode(ctx context.Context, query string, limit int, mo
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
+	if c.Encrypted() {
+		return c.searchMemoriesEnc(ctx, query, limit, mode)
+	}
 
 	clause, targs := mode.Clause("m")
 	// Arg order: temporal args, limit, then the tsquery tokens. The '?'
@@ -116,12 +119,12 @@ func (c Ops) SearchMemoriesMode(ctx context.Context, query string, limit int, mo
 	rows, err := c.DB.QueryContext(ctx,
 		`WITH d AS (
 		   SELECT tok.q AS q,
-		          (SELECT count(*) FROM memories x WHERE x.user_id = ? AND x.deleted_at IS NULL AND x.tsv @@ tok.q) AS n
+		          (SELECT count(*) FROM memories x WHERE x.user_id = ? AND x.deleted_at IS NULL AND x.enc IS NOT TRUE AND x.tsv @@ tok.q) AS n
 		   FROM (VALUES `+strings.Join(vals, ", ")+`) AS tok(q)
-		 ), tot AS (SELECT GREATEST(count(*), 1)::float8 AS c FROM memories WHERE user_id = ? AND deleted_at IS NULL)
+		 ), tot AS (SELECT GREATEST(count(*), 1)::float8 AS c FROM memories WHERE user_id = ? AND deleted_at IS NULL AND enc IS NOT TRUE)
 		 SELECT `+memCols+`
-		 FROM memories m JOIN d ON m.tsv @@ d.q CROSS JOIN tot
-		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND `+clause+`
+		 FROM memories m JOIN d ON m.tsv @@ d.q AND m.enc IS NOT TRUE CROSS JOIN tot
+		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.enc IS NOT TRUE AND `+clause+`
 		 GROUP BY m.id
 		 ORDER BY sum(ln(1 + tot.c / GREATEST(d.n, 1))) / sqrt(GREATEST(array_length(tsvector_to_array(m.tsv), 1), 1)) DESC, m.id
 		 LIMIT ?`,

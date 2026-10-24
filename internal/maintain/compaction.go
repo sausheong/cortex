@@ -134,8 +134,12 @@ func (c Ops) ProposeCompaction(ctx context.Context) ([]model.Change, error) {
 
 	// Rollups: old non-static memories grouped by entity.
 	cutoff := time.Now().Add(-compactRollupAge)
+	contentCol := "m.content"
+	if c.Encrypted() {
+		contentCol = "''::text" // ciphertext: filled from the working set below
+	}
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT me.entity_id, m.id, m.content
+		`SELECT me.entity_id, m.id, `+contentCol+`
 		 FROM memories m JOIN memory_entities me ON me.memory_id = m.id AND me.user_id = m.user_id
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.static = false AND m.created_at < ?
 		 ORDER BY me.entity_id, m.created_at, m.id`, c.UserID, cutoff)
@@ -151,6 +155,12 @@ func (c Ops) ProposeCompaction(ctx context.Context) ([]model.Change, error) {
 		if err := rows.Scan(&e, &m.id, &m.content); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan rollup candidate: %w", err)
+		}
+		if c.Encrypted() {
+			if m.content, err = c.memoryContent(ctx, m.id); err != nil {
+				rows.Close()
+				return nil, err
+			}
 		}
 		if _, ok := byEntity[e]; !ok {
 			entities = append(entities, e)
@@ -230,6 +240,9 @@ func (c Ops) compactChange(ctx context.Context, kind string, cands []compactCand
 // compactCandidates loads live memories with an active-generation embedding,
 // newest first, capped.
 func (c Ops) compactCandidates(ctx context.Context) ([]compactCand, error) {
+	if c.Encrypted() {
+		return c.compactCandidatesEnc(ctx)
+	}
 	rows, err := c.DB.QueryContext(ctx,
 		`SELECT m.id, m.content, m.static, m.created_at, e.embedding::text
 		 FROM memories m JOIN embeddings e
@@ -326,10 +339,9 @@ func (c Ops) ApplyCompaction(ctx context.Context, changes []model.Change) (strin
 	for i, ch := range changes {
 		rid := store.NewID()
 		resultIDs[i] = rid
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO memories (id, user_id, content, source, confidence, created_at, updated_at, static)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			rid, c.UserID, strings.TrimSpace(ch.Result), compactSourcePrefx+batchID, 1.0, now, now, ch.Static); err != nil {
+		if err := memory.New(c.Handle).InsertMemoryTx(ctx, tx, &model.Memory{
+			ID: rid, Content: strings.TrimSpace(ch.Result), Source: compactSourcePrefx + batchID,
+			Confidence: 1.0, CreatedAt: now, UpdatedAt: now, Static: ch.Static}); err != nil {
 			return "", fmt.Errorf("cortex: insert compaction result: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -340,11 +352,8 @@ func (c Ops) ApplyCompaction(ctx context.Context, changes []model.Change) (strin
 			return "", fmt.Errorf("cortex: link compaction entities: %w", err)
 		}
 		for _, sid := range ch.SourceIDs {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?)
-				 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
-				store.NewID(), c.UserID, rid, sid, model.EdgeDerives, "compaction", now); err != nil {
+			if err := memory.New(c.Handle).InsertMemoryEdgeTx(ctx, tx, &model.MemoryEdge{
+				ID: store.NewID(), SourceID: rid, TargetID: sid, Type: model.EdgeDerives, Source: "compaction", CreatedAt: now}); err != nil {
 				return "", fmt.Errorf("cortex: insert derives edge: %w", err)
 			}
 		}
@@ -373,10 +382,15 @@ func (c Ops) UndoCompaction(ctx context.Context, batchID string) error {
 	if err := graph.New(c.Handle).RestoreBatch(ctx, batchID); err != nil {
 		return err
 	}
-	_, err := c.DB.ExecContext(ctx,
-		`UPDATE memories SET deleted_at = now(), deleted_by = 'compaction-undo'
+	var err error
+	if c.Encrypted() {
+		err = c.retireCompactionResultsEnc(ctx, compactSourcePrefx+batchID)
+	} else {
+		_, err = c.DB.ExecContext(ctx,
+			`UPDATE memories SET deleted_at = now(), deleted_by = 'compaction-undo'
 		 WHERE user_id = ? AND deleted_at IS NULL AND source = ?`,
-		c.UserID, compactSourcePrefx+batchID)
+			c.UserID, compactSourcePrefx+batchID)
+	}
 	if err != nil {
 		return fmt.Errorf("cortex: retire compaction results: %w", err)
 	}

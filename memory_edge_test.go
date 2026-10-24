@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-func TestPutAndGetMemoryEdge(t *testing.T) {
+func TestPutAndGetMemoryEdge(t *testing.T) { forEachMode(t, testPutAndGetMemoryEdge) }
+
+func testPutAndGetMemoryEdge(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

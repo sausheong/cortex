@@ -105,6 +105,9 @@ func (c Ops) GetEntity(ctx context.Context, id string) (*model.Entity, error) {
 // are optional — an empty filter returns all entities. Encrypted rows are
 // filtered after decryption (type, name and source are ciphertext).
 func (c Ops) FindEntities(ctx context.Context, f model.EntityFilter) ([]model.Entity, error) {
+	if c.Encrypted() {
+		return c.findEntitiesEnc(ctx, f)
+	}
 	query := `SELECT ` + entCols + ` FROM entities`
 	conditions := []string{"user_id = ?", "deleted_at IS NULL"}
 	args := []any{c.UserID}

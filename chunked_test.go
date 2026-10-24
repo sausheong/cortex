@@ -67,10 +67,12 @@ func openBatchCortex(t *testing.T, emb *batchEmbedder) *Cortex {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { c.Close() })
-	return c
+	return modeHandle(t, c)
 }
 
-func TestRemember_EmbedsInBatches(t *testing.T) {
+func TestRemember_EmbedsInBatches(t *testing.T) { forEachMode(t, testRemember_EmbedsInBatches) }
+
+func testRemember_EmbedsInBatches(t *testing.T) {
 	emb := &batchEmbedder{}
 	c := openBatchCortex(t, emb)
 	c.SetExtractor(&mockExtractor{})
@@ -84,6 +86,10 @@ func TestRemember_EmbedsInBatches(t *testing.T) {
 }
 
 func TestRemember_FailedBatchCountsItsItemsAsPending(t *testing.T) {
+	forEachMode(t, testRemember_FailedBatchCountsItsItemsAsPending)
+}
+
+func testRemember_FailedBatchCountsItsItemsAsPending(t *testing.T) {
 	emb := &batchEmbedder{failNth: 2}
 	c := openBatchCortex(t, emb)
 	c.SetExtractor(&mockExtractor{})
@@ -97,7 +103,9 @@ func TestRemember_FailedBatchCountsItsItemsAsPending(t *testing.T) {
 	}
 }
 
-func TestBackfillEmbeddings_Batches(t *testing.T) {
+func TestBackfillEmbeddings_Batches(t *testing.T) { forEachMode(t, testBackfillEmbeddings_Batches) }
+
+func testBackfillEmbeddings_Batches(t *testing.T) {
 	emb := &batchEmbedder{down: true}
 	c := openBatchCortex(t, emb)
 	c.SetExtractor(&mockExtractor{})
@@ -159,6 +167,10 @@ const threeChunkDoc = "P1 " + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	"\n\nP3 " + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
 func TestRemember_ChunkedExtractionMergesAndDedupes(t *testing.T) {
+	forEachMode(t, testRemember_ChunkedExtractionMergesAndDedupes)
+}
+
+func testRemember_ChunkedExtractionMergesAndDedupes(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	var calls atomic.Int32
@@ -206,6 +218,10 @@ func TestRemember_ChunkedExtractionMergesAndDedupes(t *testing.T) {
 }
 
 func TestRemember_ChunkExtractionFailureKeepsTheRest(t *testing.T) {
+	forEachMode(t, testRemember_ChunkExtractionFailureKeepsTheRest)
+}
+
+func testRemember_ChunkExtractionFailureKeepsTheRest(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	var calls atomic.Int32
@@ -226,6 +242,10 @@ func TestRemember_ChunkExtractionFailureKeepsTheRest(t *testing.T) {
 }
 
 func TestRemember_AllChunkExtractionsFailIsFatal(t *testing.T) {
+	forEachMode(t, testRemember_AllChunkExtractionsFailIsFatal)
+}
+
+func testRemember_AllChunkExtractionsFailIsFatal(t *testing.T) {
 	c := openTestDB(t)
 	c.SetExtractor(&mockExtractor{extractFn: func(context.Context, string, string) (*Extraction, error) {
 		return nil, errors.New("llm down")
@@ -237,6 +257,10 @@ func TestRemember_AllChunkExtractionsFailIsFatal(t *testing.T) {
 }
 
 func TestRemember_ShortContentExtractsOnce(t *testing.T) {
+	forEachMode(t, testRemember_ShortContentExtractsOnce)
+}
+
+func testRemember_ShortContentExtractsOnce(t *testing.T) {
 	c := openTestDB(t)
 	var seen []string
 	c.SetExtractor(&mockExtractor{extractFn: func(_ context.Context, content, _ string) (*Extraction, error) {
@@ -252,6 +276,10 @@ func TestRemember_ShortContentExtractsOnce(t *testing.T) {
 }
 
 func TestRemember_ExtractionConcurrencyIsBounded(t *testing.T) {
+	forEachMode(t, testRemember_ExtractionConcurrencyIsBounded)
+}
+
+func testRemember_ExtractionConcurrencyIsBounded(t *testing.T) {
 	c := openTestDB(t)
 	var cur, peak atomic.Int32
 	c.SetExtractor(&mockExtractor{extractFn: func(context.Context, string, string) (*Extraction, error) {

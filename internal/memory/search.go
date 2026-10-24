@@ -8,6 +8,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/store"
+	"github.com/sausheong/cortex/internal/textsearch"
 )
 
 // VectorResult holds a reference ID and its cosine similarity score.
@@ -20,9 +21,16 @@ type VectorResult struct {
 // or nil if none exists. Lets the reranker reuse vectors written at ingest
 // instead of re-embedding ranked results.
 func (c Ops) EmbeddingByRef(ctx context.Context, refID, refType string) []float32 {
+	if c.Encrypted() {
+		v, err := c.GetEmbedding(ctx, refID, refType)
+		if err != nil {
+			return nil
+		}
+		return v
+	}
 	var lit string
 	err := c.DB.QueryRowContext(ctx,
-		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ?
+		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ? AND enc IS NOT TRUE
 		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?) LIMIT 1`,
 		c.UserID, refID, refType, c.UserID,
 	).Scan(&lit)
@@ -43,6 +51,9 @@ func (c Ops) SearchVectorRaw(ctx context.Context, queryVec []float32, refType st
 	dims := len(queryVec)
 	if dims < 1 || dims > 4000 {
 		return nil, fmt.Errorf("cortex: query vector has %d dims, want 1..4000", dims)
+	}
+	if c.Encrypted() {
+		return c.searchVectorRawEnc(ctx, queryVec, refType, limit)
 	}
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -65,7 +76,7 @@ func (c Ops) SearchVectorRaw(ctx context.Context, queryVec []float32, refType st
 	}
 	rows, err := tx.QueryContext(ctx,
 		fmt.Sprintf(`SELECT ref_id, 1 - (embedding::halfvec(%d) <=> ?::halfvec) AS sim
-		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d
+		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d AND enc IS NOT TRUE
 		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?)%s
 		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, live, dims),
 		lit, c.UserID, refType, c.UserID, lit, limit,
@@ -112,6 +123,13 @@ func (c Ops) SearchVector(ctx context.Context, query string, limit int) ([]model
 		return nil, err
 	}
 
+	if c.Encrypted() {
+		hits := make([]textsearch.Hit, len(results))
+		for i, r := range results {
+			hits[i] = textsearch.Hit{ID: r.RefID}
+		}
+		return c.chunksByHits(ctx, hits)
+	}
 	// Look up each chunk by ID.
 	chunks := make([]model.Chunk, 0, len(results))
 	for _, r := range results {
@@ -168,6 +186,10 @@ func (c Ops) searchMemoryVectorMode(ctx context.Context, query string, limit int
 	results, err := c.SearchVectorRaw(ctx, vecs[0], "memory", limit)
 	if err != nil {
 		return nil, err
+	}
+
+	if c.Encrypted() {
+		return c.memoriesByVectorHits(ctx, results, mode)
 	}
 
 	clause, targs := mode.Clause("")

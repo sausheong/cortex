@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,6 +30,12 @@ func (c Ops) NormalizeGraph(ctx context.Context, opts ...model.NormalizeOption) 
 		o(cfg)
 	}
 	report := model.NormalizeReport{DryRun: cfg.DryRun, UnmappedVerbs: map[string]int{}}
+	if c.Encrypted() {
+		// Retyping rewrites type, name and attribute ciphertext and their blind
+		// indexes; that rewrite is not built yet. Fail loudly, never write
+		// plaintext columns for an encrypted account.
+		return report, errors.New("cortex: graph normalisation is not available for encrypted accounts yet")
+	}
 
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {

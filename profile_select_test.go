@@ -9,6 +9,10 @@ import (
 )
 
 func TestMaintain_SurvivesLLMFailureAndRunsLaterPasses(t *testing.T) {
+	forEachMode(t, testMaintain_SurvivesLLMFailureAndRunsLaterPasses)
+}
+
+func testMaintain_SurvivesLLMFailureAndRunsLaterPasses(t *testing.T) {
 	fastBackoff(t)
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -46,6 +50,10 @@ func TestMaintain_SurvivesLLMFailureAndRunsLaterPasses(t *testing.T) {
 }
 
 func TestProfile_StaticSelectionIsDiverse(t *testing.T) {
+	forEachMode(t, testProfile_StaticSelectionIsDiverse)
+}
+
+func testProfile_StaticSelectionIsDiverse(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	owner := &Entity{Type: "person", Name: "Me", Source: "owner"}

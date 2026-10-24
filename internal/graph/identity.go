@@ -16,6 +16,7 @@ import (
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
+	"github.com/sausheong/cortex/internal/workset"
 )
 
 var (
@@ -74,6 +75,10 @@ func normalizeAlias(kind, value string) string {
 		return strings.ToLower(spaceRe.ReplaceAllString(v, " "))
 	}
 }
+
+// NormalizeAlias is the exported comparison key of an alias value, for the
+// in-memory matchers of encrypted users.
+func NormalizeAlias(kind, value string) string { return normalizeAlias(kind, value) }
 
 // AddAlias records value as an identifier of entityID. kind is one of the
 // Alias* constants; empty means detect it with DetectAliasKind. Adding an
@@ -247,22 +252,25 @@ func (c Ops) owner(ctx context.Context, rc *ResolveContext) (string, map[string]
 		return "", rc.ownerNames
 	}
 	var entName, userName, email sql.NullString
-	var entEnc bool
-	var nameCT []byte
-	if err := c.DB.QueryRowContext(ctx,
-		`SELECT e.name, u.name, u.email, e.enc, e.name_ct FROM users u JOIN entities e ON e.id = u.owner_entity_id
-		 WHERE u.id = ? AND e.deleted_at IS NULL`, c.UserID).Scan(&entName, &userName, &email, &entEnc, &nameCT); err != nil {
-		return "", rc.ownerNames
-	}
-	if entEnc || c.EncState == "encrypted" {
-		if err := c.CheckRowForm(entEnc); err != nil {
-			return "", rc.ownerNames
-		}
-		n, err := c.OpenStr(store.TblEntities, id, "name", nameCT)
+	if c.Encrypted() {
+		// Encrypted owner names come from the working set; the users row
+		// only supplies the (plain) account name and email.
+		ws, err := workset.For(ctx, c.Handle)
 		if err != nil {
 			return "", rc.ownerNames
 		}
-		entName = sql.NullString{String: n, Valid: true}
+		e, ok := ws.EntityByID(id)
+		if !ok {
+			return "", rc.ownerNames
+		}
+		entName = sql.NullString{String: e.Name, Valid: true}
+		if err := c.DB.QueryRowContext(ctx, `SELECT name, email FROM users WHERE id = ?`, c.UserID).Scan(&userName, &email); err != nil {
+			return "", rc.ownerNames
+		}
+	} else if err := c.DB.QueryRowContext(ctx,
+		`SELECT e.name, u.name, u.email FROM users u JOIN entities e ON e.id = u.owner_entity_id
+		 WHERE u.id = ? AND e.deleted_at IS NULL AND e.enc IS NOT TRUE`, c.UserID).Scan(&entName, &userName, &email); err != nil {
+		return "", rc.ownerNames
 	}
 	for _, n := range []string{entName.String, userName.String} {
 		if k := normalizeAlias(model.AliasName, n); k != "" {
@@ -477,12 +485,69 @@ func (c Ops) fuzzyCandidates(ctx context.Context, mention, typ string, rc *Resol
 	if len(likes) == 0 {
 		return nil, nil
 	}
-	// Encrypted rows cannot be matched in SQL: they are all loaded and
-	// filtered by shared word after decryption (Task 12 replaces this with
-	// the in-memory working set). Legacy rows keep the SQL filter.
+	var out []model.ScoredEntity
+	if c.Encrypted() {
+		// Postgres cannot match words inside ciphertext: candidates are
+		// picked over the decrypted working set with the same word filter
+		// as the SQL path's LIKE.
+		ws, err := workset.For(ctx, c.Handle)
+		if err != nil {
+			return nil, err
+		}
+		matched := 0
+		for _, e := range ws.Entities() {
+			if matched >= fuzzyCandidates {
+				break
+			}
+			low := strings.ToLower(e.Name)
+			hit := false
+			for _, w := range words {
+				if strings.Contains(low, w) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				continue
+			}
+			matched++
+			if !kindMatches(e.Type, typ) {
+				continue
+			}
+			if s := NameSimilarity(mention, e.Name); s > 0 {
+				out = append(out, model.ScoredEntity{Entity: e, Score: s})
+			}
+		}
+	} else {
+		var err error
+		if out, err = c.fuzzyLegacy(ctx, mention, typ, likes); err != nil {
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+
+	anchors := append([]string{}, rc.resolved...)
+	if ownerID, _ := c.owner(ctx, rc); ownerID != "" {
+		anchors = append(anchors, ownerID)
+	}
+	if near, err := c.neighbours(ctx, anchors); err == nil {
+		for i := range out {
+			if near[out[i].Entity.ID] {
+				out[i].Score = minF(1, out[i].Score+proximityBoost)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	return out, nil
+}
+
+// fuzzyLegacy is the SQL candidate filter for unencrypted users.
+func (c Ops) fuzzyLegacy(ctx context.Context, mention, typ string, likes []string) ([]model.ScoredEntity, error) {
 	rows, err := c.DB.QueryContext(ctx,
 		`SELECT id, enc, type, name, type_ct, name_ct, confidence FROM entities
-		 WHERE user_id = ? AND deleted_at IS NULL AND (enc OR lower(name) LIKE ANY(?))
+		 WHERE user_id = ? AND deleted_at IS NULL AND enc IS NOT TRUE AND lower(name) LIKE ANY(?)
 		 `, c.UserID, likes)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
@@ -505,19 +570,6 @@ func (c Ops) fuzzyCandidates(ctx context.Context, mention, typ string, rc *Resol
 			rows.Close()
 			return nil, err
 		}
-		if enc {
-			low := strings.ToLower(e.Name)
-			hit := false
-			for _, w := range words {
-				if strings.Contains(low, w) {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
-		}
 		matched++
 		if !kindMatches(e.Type, typ) {
 			continue
@@ -530,22 +582,6 @@ func (c Ops) fuzzyCandidates(ctx context.Context, mention, typ string, rc *Resol
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
 	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-
-	anchors := append([]string{}, rc.resolved...)
-	if ownerID, _ := c.owner(ctx, rc); ownerID != "" {
-		anchors = append(anchors, ownerID)
-	}
-	if near, err := c.neighbours(ctx, anchors); err == nil {
-		for i := range out {
-			if near[out[i].Entity.ID] {
-				out[i].Score = minF(1, out[i].Score+proximityBoost)
-			}
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	return out, nil
 }
 

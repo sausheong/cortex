@@ -18,10 +18,12 @@ func openTestDB(t *testing.T) *Cortex {
 		t.Fatalf("Open() error: %v", err)
 	}
 	t.Cleanup(func() { c.Close() })
-	return c
+	return modeHandle(t, c)
 }
 
-func TestPutAndGetEntity(t *testing.T) {
+func TestPutAndGetEntity(t *testing.T) { forEachMode(t, testPutAndGetEntity) }
+
+func testPutAndGetEntity(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -71,6 +73,10 @@ func TestPutAndGetEntity(t *testing.T) {
 }
 
 func TestPutEntityUpsertsByNameAndType(t *testing.T) {
+	forEachMode(t, testPutEntityUpsertsByNameAndType)
+}
+
+func testPutEntityUpsertsByNameAndType(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -115,7 +121,9 @@ func TestPutEntityUpsertsByNameAndType(t *testing.T) {
 	}
 }
 
-func TestGetEntityNotFound(t *testing.T) {
+func TestGetEntityNotFound(t *testing.T) { forEachMode(t, testGetEntityNotFound) }
+
+func testGetEntityNotFound(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -125,7 +133,9 @@ func TestGetEntityNotFound(t *testing.T) {
 	}
 }
 
-func TestFindEntitiesByType(t *testing.T) {
+func TestFindEntitiesByType(t *testing.T) { forEachMode(t, testFindEntitiesByType) }
+
+func testFindEntitiesByType(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -154,7 +164,9 @@ func TestFindEntitiesByType(t *testing.T) {
 	}
 }
 
-func TestFindEntitiesBySource(t *testing.T) {
+func TestFindEntitiesBySource(t *testing.T) { forEachMode(t, testFindEntitiesBySource) }
+
+func testFindEntitiesBySource(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -183,7 +195,9 @@ func TestFindEntitiesBySource(t *testing.T) {
 	}
 }
 
-func TestFindEntitiesNoFilter(t *testing.T) {
+func TestFindEntitiesNoFilter(t *testing.T) { forEachMode(t, testFindEntitiesNoFilter) }
+
+func testFindEntitiesNoFilter(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -203,7 +217,9 @@ func TestFindEntitiesNoFilter(t *testing.T) {
 	}
 }
 
-func TestFindEntitiesCombinedFilters(t *testing.T) {
+func TestFindEntitiesCombinedFilters(t *testing.T) { forEachMode(t, testFindEntitiesCombinedFilters) }
+
+func testFindEntitiesCombinedFilters(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -234,7 +250,9 @@ func TestFindEntitiesCombinedFilters(t *testing.T) {
 	}
 }
 
-func TestFindEntitiesByNameLike(t *testing.T) {
+func TestFindEntitiesByNameLike(t *testing.T) { forEachMode(t, testFindEntitiesByNameLike) }
+
+func testFindEntitiesByNameLike(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -264,6 +282,10 @@ func TestFindEntitiesByNameLike(t *testing.T) {
 }
 
 func TestPutEntity_ConfidenceDefaultsToOne(t *testing.T) {
+	forEachMode(t, testPutEntity_ConfidenceDefaultsToOne)
+}
+
+func testPutEntity_ConfidenceDefaultsToOne(t *testing.T) {
 	cx := openTestDB(t)
 	e := &Entity{Type: "person", Name: "NoConfidenceSet"}
 	if err := cx.PutEntity(context.Background(), e); err != nil {
@@ -279,6 +301,10 @@ func TestPutEntity_ConfidenceDefaultsToOne(t *testing.T) {
 }
 
 func TestPutEntity_ConfidenceRoundTrip(t *testing.T) {
+	forEachMode(t, testPutEntity_ConfidenceRoundTrip)
+}
+
+func testPutEntity_ConfidenceRoundTrip(t *testing.T) {
 	cx := openTestDB(t)
 	e := &Entity{Type: "person", Name: "PartialConfidence", Confidence: 0.42}
 	if err := cx.PutEntity(context.Background(), e); err != nil {
@@ -293,7 +319,9 @@ func TestPutEntity_ConfidenceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPutEntity_ConfidenceClamped(t *testing.T) {
+func TestPutEntity_ConfidenceClamped(t *testing.T) { forEachMode(t, testPutEntity_ConfidenceClamped) }
+
+func testPutEntity_ConfidenceClamped(t *testing.T) {
 	cx := openTestDB(t)
 	tests := []struct {
 		in, want float64
@@ -320,6 +348,10 @@ func TestPutEntity_ConfidenceClamped(t *testing.T) {
 // --- Basic merge ---
 
 func TestMergeEntities_BasicMerge_ReTargetsEverything(t *testing.T) {
+	forEachMode(t, testMergeEntities_BasicMerge_ReTargetsEverything)
+}
+
+func testMergeEntities_BasicMerge_ReTargetsEverything(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -379,7 +411,9 @@ func TestMergeEntities_BasicMerge_ReTargetsEverything(t *testing.T) {
 
 // --- Validation errors ---
 
-func TestMergeEntities_SelfMergeError(t *testing.T) {
+func TestMergeEntities_SelfMergeError(t *testing.T) { forEachMode(t, testMergeEntities_SelfMergeError) }
+
+func testMergeEntities_SelfMergeError(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -396,7 +430,9 @@ func TestMergeEntities_SelfMergeError(t *testing.T) {
 	}
 }
 
-func TestMergeEntities_KeepNotFound(t *testing.T) {
+func TestMergeEntities_KeepNotFound(t *testing.T) { forEachMode(t, testMergeEntities_KeepNotFound) }
+
+func testMergeEntities_KeepNotFound(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -413,7 +449,9 @@ func TestMergeEntities_KeepNotFound(t *testing.T) {
 	}
 }
 
-func TestMergeEntities_DropNotFound(t *testing.T) {
+func TestMergeEntities_DropNotFound(t *testing.T) { forEachMode(t, testMergeEntities_DropNotFound) }
+
+func testMergeEntities_DropNotFound(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -430,7 +468,9 @@ func TestMergeEntities_DropNotFound(t *testing.T) {
 	}
 }
 
-func TestMergeEntities_TypeMismatch(t *testing.T) {
+func TestMergeEntities_TypeMismatch(t *testing.T) { forEachMode(t, testMergeEntities_TypeMismatch) }
+
+func testMergeEntities_TypeMismatch(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -454,6 +494,10 @@ func TestMergeEntities_TypeMismatch(t *testing.T) {
 // --- Dedup ---
 
 func TestMergeEntities_RelationshipDedup(t *testing.T) {
+	forEachMode(t, testMergeEntities_RelationshipDedup)
+}
+
+func testMergeEntities_RelationshipDedup(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -490,6 +534,10 @@ func TestMergeEntities_RelationshipDedup(t *testing.T) {
 }
 
 func TestMergeEntities_MemoryEntitiesDedup(t *testing.T) {
+	forEachMode(t, testMergeEntities_MemoryEntitiesDedup)
+}
+
+func testMergeEntities_MemoryEntitiesDedup(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -529,6 +577,10 @@ func TestMergeEntities_MemoryEntitiesDedup(t *testing.T) {
 // --- Self-loop cleanup ---
 
 func TestMergeEntities_SelfLoopRemoved(t *testing.T) {
+	forEachMode(t, testMergeEntities_SelfLoopRemoved)
+}
+
+func testMergeEntities_SelfLoopRemoved(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -556,6 +608,10 @@ func TestMergeEntities_SelfLoopRemoved(t *testing.T) {
 // --- Attributes ---
 
 func TestMergeEntities_AttributeUnion_KeepWins(t *testing.T) {
+	forEachMode(t, testMergeEntities_AttributeUnion_KeepWins)
+}
+
+func testMergeEntities_AttributeUnion_KeepWins(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -601,6 +657,10 @@ func TestMergeEntities_AttributeUnion_KeepWins(t *testing.T) {
 }
 
 func TestMergeEntities_MergedFromAppends(t *testing.T) {
+	forEachMode(t, testMergeEntities_MergedFromAppends)
+}
+
+func testMergeEntities_MergedFromAppends(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -634,6 +694,10 @@ func TestMergeEntities_MergedFromAppends(t *testing.T) {
 // --- Embeddings ---
 
 func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
+	forEachMode(t, testMergeEntities_StaleEmbeddingDropped)
+}
+
+func testMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -669,6 +733,10 @@ func TestMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 // --- Idempotency ---
 
 func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
+	forEachMode(t, testMergeEntities_SecondCallReturnsDropNotFound)
+}
+
+func testMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -694,6 +762,10 @@ func TestMergeEntities_SecondCallReturnsDropNotFound(t *testing.T) {
 // --- Dry-run ---
 
 func TestMergeEntitiesDryRun_NoChanges(t *testing.T) {
+	forEachMode(t, testMergeEntitiesDryRun_NoChanges)
+}
+
+func testMergeEntitiesDryRun_NoChanges(t *testing.T) {
 	cx := openTestDB(t)
 	defer cx.Close()
 	ctx := context.Background()
@@ -721,6 +793,10 @@ func TestMergeEntitiesDryRun_NoChanges(t *testing.T) {
 }
 
 func TestFindEntitiesNameLikeCaseInsensitive(t *testing.T) {
+	forEachMode(t, testFindEntitiesNameLikeCaseInsensitive)
+}
+
+func testFindEntitiesNameLikeCaseInsensitive(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	if err := c.PutEntity(ctx, &Entity{Type: "person", Name: "Alice"}); err != nil {
@@ -736,6 +812,10 @@ func TestFindEntitiesNameLikeCaseInsensitive(t *testing.T) {
 }
 
 func TestPutEntityConcurrentNoDuplicates(t *testing.T) {
+	forEachMode(t, testPutEntityConcurrentNoDuplicates)
+}
+
+func testPutEntityConcurrentNoDuplicates(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	const n = 20
@@ -769,6 +849,7 @@ func TestPutEntityConcurrentNoDuplicates(t *testing.T) {
 	}
 }
 
+// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestMergeEntities_LocksRows(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()

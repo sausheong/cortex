@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
@@ -127,6 +128,12 @@ func (c Ops) firstChunkBySource(ctx context.Context, src string) string {
 // SearchKeyword performs a full-text search on chunk content using Postgres tsvector.
 // Results are ordered by relevance (rank). Returns up to limit results.
 func (c Ops) SearchKeyword(ctx context.Context, query string, limit int) ([]model.Chunk, error) {
+	if c.Encrypted() {
+		if strings.TrimSpace(query) == "" {
+			return nil, c.RequireKey()
+		}
+		return c.searchKeywordEnc(ctx, query, limit)
+	}
 	tsExpr, tsArgs := orTSQuery(query, 3)
 	if tsExpr == "" {
 		return nil, nil
@@ -134,7 +141,7 @@ func (c Ops) SearchKeyword(ctx context.Context, query string, limit int) ([]mode
 	rows, err := c.DB.QueryContext(ctx,
 		`SELECT c.id, c.entity_id, c.content, c.metadata, c.created_at
 		 FROM chunks c
-		 WHERE c.user_id = ? AND c.deleted_at IS NULL AND c.tsv @@ `+tsExpr+`
+		 WHERE c.user_id = ? AND c.deleted_at IS NULL AND c.enc IS NOT TRUE AND c.tsv @@ `+tsExpr+`
 		 ORDER BY ts_rank_cd(c.tsv, `+tsExpr+`) DESC
 		 LIMIT ?`,
 		append([]any{c.UserID, limit}, tsArgs...)...,

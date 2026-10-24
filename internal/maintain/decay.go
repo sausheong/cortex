@@ -8,6 +8,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/vecmath"
 )
 
@@ -37,7 +38,7 @@ func (c Ops) DecayConfidence(ctx context.Context, opts ...model.DecayOption) (mo
 	report := model.DecayReport{DryRun: cfg.DryRun}
 
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, content, confidence, created_at, last_decay_at, last_accessed_at
+		`SELECT id, enc, content, content_ct, confidence, created_at, last_decay_at, last_accessed_at
 		 FROM memories
 		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND NOT static`,
 		c.UserID,
@@ -54,13 +55,21 @@ func (c Ops) DecayConfidence(ctx context.Context, opts ...model.DecayOption) (mo
 	}
 	var cands []candidate
 	for rows.Next() {
-		var id, content string
+		var id string
+		var enc bool
+		var plain sql.NullString
+		var ct []byte
 		var conf float64
 		var createdAt time.Time
 		var lastDecay, lastAccess sql.NullTime
-		if err := rows.Scan(&id, &content, &conf, &createdAt, &lastDecay, &lastAccess); err != nil {
+		if err := rows.Scan(&id, &enc, &plain, &ct, &conf, &createdAt, &lastDecay, &lastAccess); err != nil {
 			rows.Close()
 			return model.DecayReport{}, fmt.Errorf("cortex: decay scan row: %w", err)
+		}
+		content, err := c.OpenCol(store.TblMemories, id, "content", enc, plain, ct)
+		if err != nil {
+			rows.Close()
+			return model.DecayReport{}, err
 		}
 		anchor := createdAt
 		if lastDecay.Valid {

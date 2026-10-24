@@ -248,7 +248,7 @@ func (c Ops) EnsureVectorIndex(ctx context.Context, dims int, refType string) er
 		return fmt.Errorf("cortex: index lock: %w", err)
 	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(4243)`)
-	q := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS emb_hnsw_%s_%d ON embeddings USING hnsw ((embedding::halfvec(%d)) halfvec_cosine_ops) WHERE dims = %d AND ref_type = '%s'`,
+	q := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS emb_hnsw_%s_%d ON embeddings USING hnsw ((embedding::halfvec(%d)) halfvec_cosine_ops) WHERE dims = %d AND ref_type = '%s' AND enc IS NOT TRUE`,
 		refType, dims, dims, dims, refType)
 	if _, err := conn.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("cortex: create vector index: %w", err)

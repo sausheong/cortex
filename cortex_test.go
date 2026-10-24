@@ -9,7 +9,9 @@ import (
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-func TestRemember(t *testing.T) {
+func TestRemember(t *testing.T) { forEachMode(t, testRemember) }
+
+func testRemember(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -68,7 +70,9 @@ func TestRemember(t *testing.T) {
 	}
 }
 
-func TestRemember_StampsSpeaker(t *testing.T) {
+func TestRemember_StampsSpeaker(t *testing.T) { forEachMode(t, testRemember_StampsSpeaker) }
+
+func testRemember_StampsSpeaker(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -93,7 +97,9 @@ func TestRemember_StampsSpeaker(t *testing.T) {
 	}
 }
 
-func TestRememberNoExtractor(t *testing.T) {
+func TestRememberNoExtractor(t *testing.T) { forEachMode(t, testRememberNoExtractor) }
+
+func testRememberNoExtractor(t *testing.T) {
 	c := openTestDB(t)
 	c.SetExtractor(nil)
 	ctx := context.Background()
@@ -104,7 +110,9 @@ func TestRememberNoExtractor(t *testing.T) {
 	}
 }
 
-func TestRememberIdempotentEntities(t *testing.T) {
+func TestRememberIdempotentEntities(t *testing.T) { forEachMode(t, testRememberIdempotentEntities) }
+
+func testRememberIdempotentEntities(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -133,7 +141,9 @@ func TestRememberIdempotentEntities(t *testing.T) {
 	}
 }
 
-func TestForgetByEntityID(t *testing.T) {
+func TestForgetByEntityID(t *testing.T) { forEachMode(t, testForgetByEntityID) }
+
+func testForgetByEntityID(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -197,7 +207,9 @@ func TestForgetByEntityID(t *testing.T) {
 	}
 }
 
-func TestForgetKeepsMemoryUntilPurged(t *testing.T) {
+func TestForgetKeepsMemoryUntilPurged(t *testing.T) { forEachMode(t, testForgetKeepsMemoryUntilPurged) }
+
+func testForgetKeepsMemoryUntilPurged(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -229,7 +241,9 @@ func TestForgetKeepsMemoryUntilPurged(t *testing.T) {
 	}
 }
 
-func TestForgetBySource(t *testing.T) {
+func TestForgetBySource(t *testing.T) { forEachMode(t, testForgetBySource) }
+
+func testForgetBySource(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -296,7 +310,9 @@ func TestForgetBySource(t *testing.T) {
 	}
 }
 
-func TestForgetRequiresFilter(t *testing.T) {
+func TestForgetRequiresFilter(t *testing.T) { forEachMode(t, testForgetRequiresFilter) }
+
+func testForgetRequiresFilter(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -306,7 +322,9 @@ func TestForgetRequiresFilter(t *testing.T) {
 	}
 }
 
-func TestRememberWithEmbedder(t *testing.T) {
+func TestRememberWithEmbedder(t *testing.T) { forEachMode(t, testRememberWithEmbedder) }
+
+func testRememberWithEmbedder(t *testing.T) {
 	c := openTestDBWithEmbedder(t)
 	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{
@@ -331,7 +349,9 @@ func TestRememberWithEmbedder(t *testing.T) {
 	}
 }
 
-func TestRememberWithMaxChunkSize(t *testing.T) {
+func TestRememberWithMaxChunkSize(t *testing.T) { forEachMode(t, testRememberWithMaxChunkSize) }
+
+func testRememberWithMaxChunkSize(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{})
@@ -355,6 +375,10 @@ func TestRememberWithMaxChunkSize(t *testing.T) {
 }
 
 func TestRememberUnresolvableRelationshipSkipped(t *testing.T) {
+	forEachMode(t, testRememberUnresolvableRelationshipSkipped)
+}
+
+func testRememberUnresolvableRelationshipSkipped(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -409,6 +433,10 @@ func (m *mockExtractor) Extract(ctx context.Context, content, contentType string
 }
 
 func TestRemember_EventTimeFlowsToAsOfRecall(t *testing.T) {
+	forEachMode(t, testRemember_EventTimeFlowsToAsOfRecall)
+}
+
+func testRemember_EventTimeFlowsToAsOfRecall(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -529,7 +557,9 @@ func TestRemember_EmbedsFactAugmentedMemory(t *testing.T) {
 	}
 }
 
-func TestForget_DeletesMemoryEdges(t *testing.T) {
+func TestForget_DeletesMemoryEdges(t *testing.T) { forEachMode(t, testForget_DeletesMemoryEdges) }
+
+func testForget_DeletesMemoryEdges(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

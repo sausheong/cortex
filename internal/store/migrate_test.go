@@ -214,3 +214,30 @@ func TestEncryptionRequiredSinceMarkerSet(t *testing.T) {
 		t.Errorf("marker %q not a timestamp: %v", v, err)
 	}
 }
+
+func TestMigration011MakesSearchIndexesPartial(t *testing.T) {
+	ctx := context.Background()
+	h := rawHandle(t, pgtest.DSN(t))
+	if err := h.MigrateUpTo(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	// An existing deployment: a non-partial per-dimension HNSW index.
+	execAll(t, h, `CREATE INDEX emb_hnsw_memory_8 ON embeddings USING hnsw ((embedding::halfvec(8)) halfvec_cosine_ops) WHERE ref_type = 'memory' AND dims = 8`)
+	if err := h.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, idx := range []string{"idx_memories_tsv", "idx_chunks_tsv", "emb_hnsw_memory_8"} {
+		var def string
+		if err := h.DB.QueryRowContext(ctx,
+			`SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, idx).Scan(&def); err != nil {
+			t.Fatalf("%s: %v", idx, err)
+		}
+		if !strings.Contains(def, "enc IS NOT TRUE") {
+			t.Errorf("%s is not partial: %s", idx, def)
+		}
+	}
+	// Idempotent: a second run leaves the partial index alone.
+	if err := h.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

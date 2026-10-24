@@ -114,6 +114,11 @@ func (c Ops) Recall(ctx context.Context, query string, opts ...model.RecallOptio
 	for _, o := range opts {
 		o(cfg)
 	}
+	// A locked encrypted user must fail loudly: every read path below
+	// swallows its errors, and an empty recall would look like "no memories".
+	if err := c.RequireKey(); err != nil {
+		return nil, err
+	}
 
 	// Resolve the temporal mode once; it governs the memory read paths.
 	mode := model.TemporalMode{IncludeInvalid: cfg.IncludeInvalid, AsOf: cfg.AsOf}

@@ -20,6 +20,10 @@ func fastBackoff(t *testing.T) {
 }
 
 func TestReconcile_TimeoutSkipsEntityAndContinues(t *testing.T) {
+	forEachMode(t, testReconcile_TimeoutSkipsEntityAndContinues)
+}
+
+func testReconcile_TimeoutSkipsEntityAndContinues(t *testing.T) {
 	fastBackoff(t)
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -62,6 +66,10 @@ func TestReconcile_TimeoutSkipsEntityAndContinues(t *testing.T) {
 }
 
 func TestReconcile_429ThenSuccessRetried(t *testing.T) {
+	forEachMode(t, testReconcile_429ThenSuccessRetried)
+}
+
+func testReconcile_429ThenSuccessRetried(t *testing.T) {
 	fastBackoff(t)
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -88,6 +96,10 @@ func TestReconcile_429ThenSuccessRetried(t *testing.T) {
 }
 
 func TestRelate_FailureSkipsEntityAndContinues(t *testing.T) {
+	forEachMode(t, testRelate_FailureSkipsEntityAndContinues)
+}
+
+func testRelate_FailureSkipsEntityAndContinues(t *testing.T) {
 	fastBackoff(t)
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -117,6 +129,10 @@ func TestRelate_FailureSkipsEntityAndContinues(t *testing.T) {
 }
 
 func TestMaintain_ContextCancelledStillAborts(t *testing.T) {
+	forEachMode(t, testMaintain_ContextCancelledStillAborts)
+}
+
+func testMaintain_ContextCancelledStillAborts(t *testing.T) {
 	c := openTestDB(t)
 	e := &Entity{Type: "person", Name: "A"}
 	_ = c.PutEntity(context.Background(), e)

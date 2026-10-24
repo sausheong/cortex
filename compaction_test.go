@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sort"
 	"strings"
@@ -49,18 +50,25 @@ func nearAxis(i int) []float32 {
 func liveSnapshot(t *testing.T, c *Cortex) map[string]string {
 	t.Helper()
 	rows, err := c.h.DB.QueryContext(context.Background(),
-		`SELECT id, content FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
+		`SELECT id, enc, content, content_ct FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
 	out := map[string]string{}
 	for rows.Next() {
-		var id, ct string
-		if err := rows.Scan(&id, &ct); err != nil {
+		var id string
+		var enc bool
+		var plain sql.NullString
+		var ct []byte
+		if err := rows.Scan(&id, &enc, &plain, &ct); err != nil {
 			t.Fatal(err)
 		}
-		out[id] = ct
+		text, err := c.h.OpenCol("memories", id, "content", enc, plain, ct)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[id] = text
 	}
 	return out
 }
@@ -71,7 +79,9 @@ func echoLLM() *mockLLM {
 	}}
 }
 
-func TestProposeMergesDuplicates(t *testing.T) {
+func TestProposeMergesDuplicates(t *testing.T) { forEachMode(t, testProposeMergesDuplicates) }
+
+func testProposeMergesDuplicates(t *testing.T) {
 	c := openTestDB(t)
 	c.SetLLM(echoLLM())
 	a := compactSeed(t, c, "likes tea", false, axis(0), 0)
@@ -93,7 +103,9 @@ func TestProposeMergesDuplicates(t *testing.T) {
 	}
 }
 
-func TestRollupExcludesStatic(t *testing.T) {
+func TestRollupExcludesStatic(t *testing.T) { forEachMode(t, testRollupExcludesStatic) }
+
+func testRollupExcludesStatic(t *testing.T) {
 	c := openTestDB(t)
 	c.SetLLM(echoLLM())
 	ctx := context.Background()
@@ -143,6 +155,10 @@ func applyMerge(t *testing.T, c *Cortex) (a, b string, batch string, changes []C
 }
 
 func TestApplyReducesCountAndLinksDerives(t *testing.T) {
+	forEachMode(t, testApplyReducesCountAndLinksDerives)
+}
+
+func testApplyReducesCountAndLinksDerives(t *testing.T) {
 	c := openTestDB(t)
 	a, b, batch, _ := applyMerge(t, c)
 	if batch == "" {
@@ -179,7 +195,9 @@ func TestApplyReducesCountAndLinksDerives(t *testing.T) {
 	}
 }
 
-func TestUndoRestoresExactly(t *testing.T) {
+func TestUndoRestoresExactly(t *testing.T) { forEachMode(t, testUndoRestoresExactly) }
+
+func testUndoRestoresExactly(t *testing.T) {
 	c := openTestDB(t)
 	c.SetLLM(echoLLM())
 	c.SetEmbedder(&testEmbedder{})
@@ -209,7 +227,9 @@ func TestUndoRestoresExactly(t *testing.T) {
 	}
 }
 
-func TestApplyOnlySelected(t *testing.T) {
+func TestApplyOnlySelected(t *testing.T) { forEachMode(t, testApplyOnlySelected) }
+
+func testApplyOnlySelected(t *testing.T) {
 	c := openTestDB(t)
 	c.SetLLM(echoLLM())
 	c.SetEmbedder(&testEmbedder{})

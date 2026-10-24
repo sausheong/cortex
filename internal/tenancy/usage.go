@@ -108,6 +108,9 @@ func (c Ops) NewMemoriesSince(ctx context.Context, since time.Time, perGroup int
 	if perGroup < 1 {
 		perGroup = 3
 	}
+	if c.Encrypted() {
+		return c.newMemoriesSinceEnc(ctx, since, perGroup)
+	}
 	rows, err := c.DB.QueryContext(ctx,
 		`SELECT conn, n, id, content, created_at FROM (
 		   SELECT COALESCE(written_by_connection_id,'') AS conn, id, content, created_at,
@@ -167,6 +170,9 @@ func (c Ops) WrittenSince(ctx context.Context, since time.Time) (map[string]int,
 // f.Oldest, and returns the
 // total number matching the filter.
 func (c Ops) ListMemories(ctx context.Context, f model.MemoryListFilter, limit, offset int) ([]model.Memory, int, error) {
+	if c.Encrypted() {
+		return c.listMemoriesEnc(ctx, f, limit, offset)
+	}
 	conds := []string{"user_id = ?", "deleted_at IS NULL"}
 	args := []any{c.UserID}
 	if f.Query != "" {

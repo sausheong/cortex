@@ -7,6 +7,10 @@ import (
 )
 
 func TestPutRelationship_SingleValuedVerbClosesPrevious(t *testing.T) {
+	forEachMode(t, testPutRelationship_SingleValuedVerbClosesPrevious)
+}
+
+func testPutRelationship_SingleValuedVerbClosesPrevious(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	ids := map[string]string{}
@@ -55,6 +59,10 @@ func TestPutRelationship_SingleValuedVerbClosesPrevious(t *testing.T) {
 }
 
 func TestInvalidateRelationship_HidesFromTraverse(t *testing.T) {
+	forEachMode(t, testInvalidateRelationship_HidesFromTraverse)
+}
+
+func testInvalidateRelationship_HidesFromTraverse(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	a := &Entity{Name: "Ann", Type: "person"}
@@ -85,6 +93,10 @@ func TestInvalidateRelationship_HidesFromTraverse(t *testing.T) {
 }
 
 func TestRecall_TrackAccessAndDecayClock(t *testing.T) {
+	forEachMode(t, testRecall_TrackAccessAndDecayClock)
+}
+
+func testRecall_TrackAccessAndDecayClock(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	m := &Memory{Content: "Ann drinks oolong"}

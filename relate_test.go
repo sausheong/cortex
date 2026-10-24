@@ -6,6 +6,10 @@ import (
 )
 
 func TestBuildMemoryEdges_RecordsExtends(t *testing.T) {
+	forEachMode(t, testBuildMemoryEdges_RecordsExtends)
+}
+
+func testBuildMemoryEdges_RecordsExtends(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -51,6 +55,10 @@ func TestBuildMemoryEdges_RecordsExtends(t *testing.T) {
 }
 
 func TestBuildMemoryEdges_GateRejectsSelfLoopAndBadType(t *testing.T) {
+	forEachMode(t, testBuildMemoryEdges_GateRejectsSelfLoopAndBadType)
+}
+
+func testBuildMemoryEdges_GateRejectsSelfLoopAndBadType(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -90,6 +98,10 @@ func TestBuildMemoryEdges_GateRejectsSelfLoopAndBadType(t *testing.T) {
 }
 
 func TestBuildMemoryEdges_SkipsWithoutDetector(t *testing.T) {
+	forEachMode(t, testBuildMemoryEdges_SkipsWithoutDetector)
+}
+
+func testBuildMemoryEdges_SkipsWithoutDetector(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 	// No LLM set → no RelationDetector → Skipped.

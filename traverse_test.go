@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-func TestTraverseOneLevel(t *testing.T) {
+func TestTraverseOneLevel(t *testing.T) { forEachMode(t, testTraverseOneLevel) }
+
+func testTraverseOneLevel(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -45,7 +47,9 @@ func TestTraverseOneLevel(t *testing.T) {
 	}
 }
 
-func TestTraverseWithEdgeTypeFilter(t *testing.T) {
+func TestTraverseWithEdgeTypeFilter(t *testing.T) { forEachMode(t, testTraverseWithEdgeTypeFilter) }
+
+func testTraverseWithEdgeTypeFilter(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -97,7 +101,9 @@ func TestTraverseWithEdgeTypeFilter(t *testing.T) {
 	}
 }
 
-func TestTraverseMultiLevel(t *testing.T) {
+func TestTraverseMultiLevel(t *testing.T) { forEachMode(t, testTraverseMultiLevel) }
+
+func testTraverseMultiLevel(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -150,7 +156,9 @@ func TestTraverseMultiLevel(t *testing.T) {
 	}
 }
 
-func TestTraverseCycleDetection(t *testing.T) {
+func TestTraverseCycleDetection(t *testing.T) { forEachMode(t, testTraverseCycleDetection) }
+
+func testTraverseCycleDetection(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -188,7 +196,9 @@ func TestTraverseCycleDetection(t *testing.T) {
 	}
 }
 
-func TestTraverseNonexistentEntity(t *testing.T) {
+func TestTraverseNonexistentEntity(t *testing.T) { forEachMode(t, testTraverseNonexistentEntity) }
+
+func testTraverseNonexistentEntity(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
@@ -198,7 +208,9 @@ func TestTraverseNonexistentEntity(t *testing.T) {
 	}
 }
 
-func TestTraverseDepthZero(t *testing.T) {
+func TestTraverseDepthZero(t *testing.T) { forEachMode(t, testTraverseDepthZero) }
+
+func testTraverseDepthZero(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 

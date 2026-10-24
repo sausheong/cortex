@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-func TestValidAtNonUTCRoundTrip(t *testing.T) {
+func TestValidAtNonUTCRoundTrip(t *testing.T) { forEachMode(t, testValidAtNonUTCRoundTrip) }
+
+func testValidAtNonUTCRoundTrip(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
 
