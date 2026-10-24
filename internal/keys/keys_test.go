@@ -175,3 +175,8 @@ func TestFromBytesAndClone(t *testing.T) {
 		t.Fatal("want ErrFormat")
 	}
 }
+
+func TestZeroNilIsNoop(t *testing.T) {
+	var u *UK
+	u.Zero()
+}

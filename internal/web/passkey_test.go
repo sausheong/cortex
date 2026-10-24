@@ -256,11 +256,15 @@ func TestLockedSessionShowsUnlockPage(t *testing.T) {
 		t.Fatalf("legacy user: %d", r.StatusCode)
 	}
 	p.enrollAndConfirm(t)
+	p.e.dropCookie(unlockCookie) // enrollment unlocked this session; model a fresh device
 	for _, path := range []string{"/memories", "/graph", "/vault", "/settings"} {
-		r, body := p.e.get(path)
-		if r.StatusCode != 200 || !strings.Contains(body, "Unlock with your passkey") || !strings.Contains(body, "Use your recovery key instead") {
-			t.Fatalf("%s: %d %.200s", path, r.StatusCode, body)
+		r, _ := p.e.get(path)
+		if r.StatusCode != http.StatusSeeOther || r.Header.Get("Location") != "/unlock?next="+url.QueryEscape(path) {
+			t.Fatalf("%s: %d %q", path, r.StatusCode, r.Header.Get("Location"))
 		}
+	}
+	if r, body := p.e.get("/unlock"); r.StatusCode != 200 || !strings.Contains(body, "Unlock with your passkey") || !strings.Contains(body, "Use your recovery key instead") {
+		t.Fatalf("/unlock: %d %.200s", r.StatusCode, body)
 	}
 	// A state-changing request on a content route is refused outright.
 	resp, _ := p.e.post("/memories/delete", url.Values{"csrf": {p.csrf}})

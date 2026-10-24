@@ -104,6 +104,9 @@ func (u *UK) Clone() *UK {
 
 // Zero wipes the key and every cached derived key. Later calls fail.
 func (u *UK) Zero() {
+	if u == nil {
+		return
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	clear(u.key[:])

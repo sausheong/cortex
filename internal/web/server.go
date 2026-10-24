@@ -190,19 +190,41 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// sessionFor resolves the session without touching the key wrap: never
+// Unlocked, no Key.
 func (s *server) sessionFor(r *http.Request) (SessionUser, bool) {
+	return s.lookup(r, false)
+}
+
+func (s *server) lookup(r *http.Request, withKey bool) (SessionUser, bool) {
 	ck, err := r.Cookie(sessionCookie)
 	if err != nil {
 		return SessionUser{}, false
 	}
-	u, err := s.sessions.Lookup(r.Context(), ck.Value)
+	secret := ""
+	if withKey {
+		if uc, err := r.Cookie(unlockCookie); err == nil {
+			secret = uc.Value
+		}
+	}
+	u, err := s.sessions.Lookup(r.Context(), ck.Value, secret)
 	return u, err == nil
+}
+
+// unlockCookieFor builds the cortex_unlock cookie: HttpOnly, Secure, Lax, and
+// never longer-lived than the session.
+func unlockCookieFor(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: unlockCookie, Value: value, Path: "/", MaxAge: maxAge,
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}
 }
 
 // auth requires a live session; POSTs also need the session's CSRF token.
 func (s *server) auth(next func(w http.ResponseWriter, r *http.Request, u SessionUser)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u, ok := s.sessionFor(r)
+		u, ok := s.lookup(r, true)
+		if ok {
+			defer u.Key.Zero()
+		}
 		if !ok {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
 				http.Redirect(w, r, "/auth/google/start?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
@@ -260,6 +282,7 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, u SessionUser) {
 		_ = s.sessions.Delete(r.Context(), ck.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, unlockCookieFor("", -1))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

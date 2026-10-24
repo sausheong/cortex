@@ -326,3 +326,22 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 		t.Fatalf("re-enqueued while one is queued: %v", enq)
 	}
 }
+
+func TestNightlyPurgesExpiredSessionWraps(t *testing.T) {
+	e := newEnv(t)
+	uid := e.user(t, "w")
+	e.mustExec(t, `INSERT INTO sessions (id_hash, user_id, csrf, expires_at) VALUES ('live',$1,'c', now()+interval '1 day')`, uid)
+	e.mustExec(t, `INSERT INTO user_key_wraps (user_id, kind, ref_id, wrapped_uk, expires_at) VALUES ($1,'session','live','x', now()-interval '1 minute')`, uid)
+	e.mustExec(t, `INSERT INTO user_key_wraps (user_id, kind, ref_id, wrapped_uk, expires_at) VALUES ($1,'session','kept','x', now()+interval '1 hour')`, uid)
+	e.mustExec(t, `INSERT INTO sessions (id_hash, user_id, csrf, expires_at) VALUES ('kept',$1,'c', now()+interval '1 day')`, uid)
+	e.mustExec(t, `INSERT INTO user_key_wraps (user_id, kind, ref_id, wrapped_uk, expires_at) VALUES ($1,'session','orphan','x', now()+interval '1 hour')`, uid)
+	if _, err := Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: e.resolver(new(sync.Map), nil)}); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM user_key_wraps WHERE kind='session'`); n != 1 {
+		t.Fatalf("%d session wraps left, want only the live one", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM user_key_wraps WHERE ref_id='kept'`); n != 1 {
+		t.Fatal("live wrap deleted")
+	}
+}

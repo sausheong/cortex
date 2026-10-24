@@ -94,7 +94,7 @@ func (s *server) authUnlocked(next func(w http.ResponseWriter, r *http.Request, 
 		}
 		if st != "none" && !u.Unlocked {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
-				s.render(w, r, http.StatusOK, "unlock", unlockData{Next: safeNext(r.URL.RequestURI())})
+				http.Redirect(w, r, "/unlock?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 				return
 			}
 			http.Error(w, "locked: unlock with your passkey", http.StatusLocked)
@@ -102,6 +102,26 @@ func (s *server) authUnlocked(next func(w http.ResponseWriter, r *http.Request, 
 		}
 		next(w, r, u)
 	})
+}
+
+// attachUnlock turns a verified UK into a session wrap and sets the
+// cortex_unlock cookie, then zeroes uk. It answers 500 and reports false when
+// the wrap cannot be stored.
+func (s *server) attachUnlock(w http.ResponseWriter, r *http.Request, uk *keys.UK) bool {
+	defer uk.Zero()
+	ck, err := r.Cookie(sessionCookie)
+	if err != nil {
+		http.Error(w, "sign in required", http.StatusUnauthorized)
+		return false
+	}
+	secret, remaining, err := s.sessions.Unlock(r.Context(), ck.Value, uk)
+	if err != nil {
+		s.cfg.Logger.Error("passkey", "step", "session_wrap")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	http.SetCookie(w, unlockCookieFor(secret, int(remaining.Seconds())))
+	return true
 }
 
 // --- helpers ---
@@ -248,7 +268,9 @@ func (s *server) confirmFinish(w http.ResponseWriter, r *http.Request, u Session
 		s.pkFail(w, "confirm", err)
 		return
 	}
-	uk.Zero() // Task 5 turns this unlock into a session wrap
+	if !s.attachUnlock(w, r, uk) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"state": state, "next": "/unlock"})
 }
 
@@ -266,6 +288,10 @@ func (s *server) unlockPage(w http.ResponseWriter, r *http.Request, u SessionUse
 			return
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if u.Unlocked && r.URL.Query().Get("method") != "recovery" {
+		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
 	s.render(w, r, http.StatusOK, "unlock", unlockData{
@@ -302,7 +328,9 @@ func (s *server) unlockFinish(w http.ResponseWriter, r *http.Request, u SessionU
 		s.pkFail(w, "unlock_finish", err)
 		return
 	}
-	uk.Zero() // Task 5 turns this unlock into a session wrap
+	if !s.attachUnlock(w, r, uk) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "next": safeNext(in.Next)})
 }
 
@@ -320,6 +348,8 @@ func (s *server) unlockRecovery(w http.ResponseWriter, r *http.Request, u Sessio
 		s.render(w, r, status, "unlock", unlockData{Next: next, Recovery: true, Error: msg})
 		return
 	}
-	uk.Zero() // Task 5 turns this unlock into a session wrap
+	if !s.attachUnlock(w, r, uk) {
+		return
+	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }

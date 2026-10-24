@@ -117,5 +117,51 @@ func (st *Store) PurgeExpiredWraps(ctx context.Context, now time.Time) (int, err
 		return 0, err
 	}
 	n, err := r.RowsAffected()
+	// Session wraps whose session row is gone (logout races, cascade-less
+	// purges) hold key material for nobody.
+	r2, err2 := st.DB.ExecContext(ctx,
+		`DELETE FROM user_key_wraps w WHERE w.kind = 'session'
+		 AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id_hash = w.ref_id)`)
+	if err == nil {
+		err = err2
+	}
+	if err2 == nil {
+		m, _ := r2.RowsAffected()
+		n += m
+	}
 	return int(n), err
+}
+
+// GetWrapAt is GetWrap judged against an explicit clock (web sessions carry
+// their own).
+func (st *Store) GetWrapAt(ctx context.Context, now time.Time, userID, kind, refID string) (*Wrap, error) {
+	return getWrap(ctx, st.DB, now, userID, kind, refID)
+}
+
+// DeleteWrapIfExpired hard-deletes one wrap whose expiry has passed.
+func (st *Store) DeleteWrapIfExpired(ctx context.Context, now time.Time, userID, kind, refID string) error {
+	_, err := st.DB.ExecContext(ctx,
+		`DELETE FROM user_key_wraps WHERE user_id = $1 AND kind = $2 AND ref_id = $3
+		 AND expires_at IS NOT NULL AND expires_at <= $4`, userID, kind, refID, now)
+	return err
+}
+
+// ExtendWrap slides a wrap's expiry to newExpiry and stamps last_used_at in one
+// UPDATE, at most once per minGap (rows touched more recently are left alone).
+func (st *Store) ExtendWrap(ctx context.Context, now time.Time, userID, kind, refID string, newExpiry time.Time, minGap time.Duration) error {
+	_, err := st.DB.ExecContext(ctx,
+		`UPDATE user_key_wraps SET last_used_at = $5, expires_at = $6
+		 WHERE user_id = $1 AND kind = $2 AND ref_id = $3 AND pending = false
+		   AND (last_used_at IS NULL OR last_used_at <= $4)`,
+		userID, kind, refID, now.Add(-minGap), now, newExpiry)
+	return err
+}
+
+// DeleteSessionWrapsExcept hard-deletes the user's session wraps except the one
+// bound to the session with id_hash keepSessionHash (empty deletes them all).
+// "Forget all devices" calls it with the current session's hash.
+func (st *Store) DeleteSessionWrapsExcept(ctx context.Context, userID, keepSessionHash string) error {
+	_, err := st.DB.ExecContext(ctx,
+		`DELETE FROM user_key_wraps WHERE user_id = $1 AND kind = 'session' AND ref_id <> $2`, userID, keepSessionHash)
+	return err
 }

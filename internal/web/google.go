@@ -182,6 +182,8 @@ func (s *server) googleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: sid, Path: "/", MaxAge: int(sessionTTL.Seconds()),
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	// A stale unlock secret belongs to the session just replaced.
+	http.SetCookie(w, unlockCookieFor("", -1))
 	dest := safeReturnTo(returnTo)
 	if isNew {
 		dest = "/settings"

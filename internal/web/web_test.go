@@ -364,7 +364,7 @@ func TestSigninRotatesSessionID(t *testing.T) {
 	if now := sess(); now == "" || now == old {
 		t.Fatalf("session not rotated: %q -> %q", old, now)
 	}
-	if _, err := e.srv.sessions.Lookup(t.Context(), old); err == nil {
+	if _, err := e.srv.sessions.Lookup(t.Context(), old, ""); err == nil {
 		t.Fatal("old session still valid")
 	}
 	// A session cookie planted before sign-in is dead afterwards.
