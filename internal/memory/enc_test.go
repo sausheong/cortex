@@ -56,7 +56,7 @@ func TestMemoryChunkRoundTripEncrypted(t *testing.T) {
 	if err := m.PutChunk(bg, ch); err != nil {
 		t.Fatal(err)
 	}
-	if n := env.Count(`SELECT count(*) FROM chunks WHERE id=$1 AND enc AND content IS NULL AND metadata IS NULL AND content_ct IS NOT NULL AND metadata_ct IS NOT NULL AND source_blind IS NOT NULL`, ch.ID); n != 1 {
+	if n := env.Count(`SELECT count(*) FROM chunks WHERE id=$1 AND content_ct IS NOT NULL AND metadata_ct IS NOT NULL AND source_blind IS NOT NULL`, ch.ID); n != 1 {
 		t.Fatal("chunk not stored in encrypted form")
 	}
 	gc, err := m.GetChunk(bg, ch.ID)
@@ -71,7 +71,7 @@ func TestMemoryChunkRoundTripEncrypted(t *testing.T) {
 	if err := m.PutMemoryEdge(bg, edge); err != nil {
 		t.Fatal(err)
 	}
-	if n := env.Count(`SELECT count(*) FROM memory_edges WHERE id=$1 AND enc AND source IS NULL AND source_ct IS NOT NULL AND type = 'extends'`, edge.ID); n != 1 {
+	if n := env.Count(`SELECT count(*) FROM memory_edges WHERE id=$1 AND source_ct IS NOT NULL AND type = 'extends'`, edge.ID); n != 1 {
 		t.Fatal("edge source not sealed")
 	}
 	es, err := m.GetMemoryEdges(bg, mem.ID)
@@ -94,7 +94,7 @@ func seedEntity(t *testing.T, env *enctest.Env, name string) string {
 	// An entity row in encrypted form, written through the graph-free path:
 	// plain ids are all that memory tables reference.
 	id := "ent-" + strings.ReplaceAll(strings.ToLower(name), " ", "-")
-	env.Exec(`INSERT INTO entities (id, user_id, enc, name_ct, type_ct, name_blind, type_blind) VALUES ($1,$2,true,'\x00','\x00','\x01','\x02')`, id, env.UserID)
+	env.Exec(`INSERT INTO entities (id, user_id, name_ct, type_ct, name_blind, type_blind) VALUES ($1,$2,'\x00','\x00','\x01','\x02')`, id, env.UserID)
 	return id
 }
 
@@ -114,28 +114,6 @@ func TestFirstChunkBySourceUsesBlind(t *testing.T) {
 	}
 }
 
-func TestMigratingFirstChunkBySourceFindsLegacyChunk(t *testing.T) {
-	env := enctest.Open(t, "migrating")
-	m := New(env.H)
-	env.Exec(`INSERT INTO chunks (id, user_id, content, metadata) VALUES ('legacy-chunk',$1,'legacy body','{"source":"Old Doc"}'::jsonb)`, env.UserID)
-	if got := m.firstChunkBySource(bg, "Old Doc"); got != "legacy body" {
-		t.Fatalf("got %q", got)
-	}
-	// The hit was rewritten as encrypted.
-	if n := env.Count(`SELECT count(*) FROM chunks WHERE id='legacy-chunk' AND enc AND content IS NULL AND metadata IS NULL AND content_ct IS NOT NULL AND source_blind IS NOT NULL`); n != 1 {
-		t.Fatal("legacy chunk not rewritten as encrypted")
-	}
-	if got := m.firstChunkBySource(bg, "old doc"); got != "legacy body" {
-		t.Fatalf("second lookup (blind) got %q", got)
-	}
-	// Encrypted state does not look at legacy chunks.
-	env2 := enctest.Open(t, "encrypted")
-	env2.Exec(`INSERT INTO chunks (id, user_id, content, metadata) VALUES ('p',$1,'plain body','{"source":"Doc"}'::jsonb)`, env2.UserID)
-	if got := New(env2.H).firstChunkBySource(bg, "Doc"); got != "" {
-		t.Fatalf("encrypted state read a plaintext chunk: %q", got)
-	}
-}
-
 func TestEmbeddingRoundTripEncrypted(t *testing.T) {
 	env := enctest.Open(t, "encrypted")
 	m := New(env.H)
@@ -152,7 +130,7 @@ func TestEmbeddingRoundTripEncrypted(t *testing.T) {
 			t.Fatalf("elem %d: %v != %v", i, got[i], v[i])
 		}
 	}
-	if n := env.Count(`SELECT count(*) FROM embeddings WHERE user_id=$1 AND enc AND embedding IS NULL AND embedding_ct IS NOT NULL AND dims = 4`, env.UserID); n != 1 {
+	if n := env.Count(`SELECT count(*) FROM embeddings WHERE user_id=$1 AND embedding_ct IS NOT NULL AND dims = 4`, env.UserID); n != 1 {
 		t.Fatal("embedding not sealed")
 	}
 	// Overwrite keeps one row and still decrypts (AAD uses the row id).
@@ -173,17 +151,12 @@ func TestEmbeddingRoundTripEncrypted(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if n := env.Count(`SELECT count(*) FROM embeddings WHERE user_id=$1 AND enc AND generation=2 AND embedding IS NULL`, env.UserID); n != 1 {
+	if n := env.Count(`SELECT count(*) FROM embeddings WHERE user_id=$1 AND generation=2 AND embedding_ct IS NOT NULL`, env.UserID); n != 1 {
 		t.Fatal("flip put not sealed")
 	}
 	// Keyless cannot read.
 	if _, err := New(env.Keyless).GetEmbedding(bg, "ref-2", "memory"); !errors.Is(err, model.ErrLocked) {
 		t.Fatalf("want ErrLocked, got %v", err)
-	}
-	// Legacy form is read in none/migrating and rejected when encrypted.
-	env.Exec(`INSERT INTO embeddings (id, user_id, ref_id, ref_type, embedding, dims, generation) VALUES ('plain-emb',$1,'ref-3','memory','[1,2,3,4]'::halfvec,4,2)`, env.UserID)
-	if _, err := m.GetEmbedding(bg, "ref-3", "memory"); !errors.Is(err, model.ErrPlaintextRow) {
-		t.Fatalf("want ErrPlaintextRow, got %v", err)
 	}
 }
 
@@ -258,37 +231,22 @@ func TestMemoryCiphertextMovedToOtherUserFails(t *testing.T) {
 	a := &model.Memory{Content: "victim secret", Source: "s"}
 	m.PutMemory(bg, a)
 	other := env.NewUser("other", "encrypted")
-	env.Exec(`INSERT INTO memories (id, user_id, enc, content_ct, source_ct) SELECT 'stolen', $2, true, content_ct, source_ct FROM memories WHERE id=$1`, a.ID, other)
+	env.Exec(`INSERT INTO memories (id, user_id, content_ct, source_ct) SELECT 'stolen', $2, content_ct, source_ct FROM memories WHERE id=$1`, a.ID, other)
 	oh := New(env.HandleFor(other, "encrypted", env.UK))
 	if got, err := oh.GetMemoryByID(bg, "stolen"); err == nil {
 		t.Fatalf("ciphertext copied to another user decrypted: %+v", got)
 	}
 }
 
-func TestEncryptedUserRejectsPlaintextRow(t *testing.T) {
-	env := enctest.Open(t, "encrypted")
-	m := New(env.H)
-	env.Exec(`INSERT INTO memories (id, user_id, content, source) VALUES ('plain-mem',$1,'plain text','s')`, env.UserID)
-	if _, err := m.GetMemoryByID(bg, "plain-mem"); !errors.Is(err, model.ErrPlaintextRow) {
-		t.Fatalf("want ErrPlaintextRow, got %v", err)
-	}
-	// Migrating accepts it.
-	envM := enctest.Open(t, "migrating")
-	envM.Exec(`INSERT INTO memories (id, user_id, content, source) VALUES ('plain-mem',$1,'plain text','s')`, envM.UserID)
-	got, err := New(envM.H).GetMemoryByID(bg, "plain-mem")
-	if err != nil || got.Content != "plain text" {
-		t.Fatalf("migrating read: %+v, %v", got, err)
-	}
-}
-
-func TestEncTrueWithNullCiphertextFailsDecrypt(t *testing.T) {
+// A stored row with empty ciphertext fails to open instead of reading as "".
+func TestEmptyCiphertextFailsDecrypt(t *testing.T) {
 	env := enctest.Open(t, "encrypted")
 	m := New(env.H)
 	a := &model.Memory{Content: "x", Source: "s"}
 	m.PutMemory(bg, a)
-	env.Exec(`UPDATE memories SET content_ct = NULL WHERE id = $1`, a.ID)
+	env.Exec(`UPDATE memories SET content_ct = '\x' WHERE id = $1`, a.ID)
 	if _, err := m.GetMemoryByID(bg, a.ID); err == nil {
-		t.Fatal("NULL ciphertext must fail")
+		t.Fatal("empty ciphertext must fail")
 	}
 }
 

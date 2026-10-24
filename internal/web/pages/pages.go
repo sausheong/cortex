@@ -26,9 +26,6 @@ type Page struct {
 	Setup *Setup
 	// SetUp is true once the whole checklist is done.
 	SetUp bool
-	// EnrollBanner is true for a legacy account that has not enrolled yet:
-	// the "not encrypted yet" notice shows on every page but /enroll.
-	EnrollBanner bool
 }
 
 // Setup is the first-run checklist, ticked from real state.

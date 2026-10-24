@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/sausheong/cortex/internal/model"
@@ -57,7 +56,7 @@ func (c Ops) MemoriesByEntityAll(ctx context.Context) (map[string][]model.Memory
 // query, ordered by id. It is the bulk form of GetRelationships.
 func (c Ops) AllRelationships(ctx context.Context) ([]model.Relationship, error) {
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, source_id, target_id, enc, type, attributes, source, type_ct, attributes_ct, source_ct, confidence, created_at
+		`SELECT id, source_id, target_id, type_ct, attributes_ct, source_ct, confidence, created_at
 		 FROM relationships
 		 WHERE user_id = ? AND deleted_at IS NULL
 		 ORDER BY id`,
@@ -71,13 +70,11 @@ func (c Ops) AllRelationships(ctx context.Context) ([]model.Relationship, error)
 	var rels []model.Relationship
 	for rows.Next() {
 		var r model.Relationship
-		var enc bool
-		var typ, source, attrsJSON sql.NullString
 		var typeCT, attrsCT, sourceCT []byte
-		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &enc, &typ, &attrsJSON, &source, &typeCT, &attrsCT, &sourceCT, &r.Confidence, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &typeCT, &attrsCT, &sourceCT, &r.Confidence, &r.CreatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan relationship: %w", err)
 		}
-		if err := c.OpenRelFields(&r, enc, typ, source, attrsJSON, typeCT, sourceCT, attrsCT); err != nil {
+		if err := c.OpenRelFields(&r, typeCT, sourceCT, attrsCT); err != nil {
 			return nil, err
 		}
 		rels = append(rels, r)

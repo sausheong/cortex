@@ -44,17 +44,16 @@ func TestVecRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRowFormGuard(t *testing.T) {
-	enc := &Handle{EncState: "encrypted"}
-	if !errors.Is(enc.CheckRowForm(false), model.ErrPlaintextRow) {
-		t.Fatal("encrypted must reject plaintext rows")
-	}
-	if enc.CheckRowForm(true) != nil {
-		t.Fatal("encrypted accepts enc rows")
-	}
-	for _, s := range []string{"", "none", "migrating"} {
-		if (&Handle{EncState: s}).CheckRowForm(false) != nil {
-			t.Fatalf("state %q must accept legacy rows", s)
+// A handle without a key says why: enroll for an unenrolled user, locked for
+// an enrolled one. (The row-form guard retired with the plaintext path.)
+func TestKeylessHelpersSayWhy(t *testing.T) {
+	for _, s := range []string{"", "none"} {
+		h := &Handle{UserID: "u", EncState: s}
+		if !errors.Is(h.RequireKey(), model.ErrEnrollRequired) {
+			t.Fatalf("state %q: RequireKey = %v, want ErrEnrollRequired", s, h.RequireKey())
+		}
+		if _, err := h.SealStr("t", "r", "c", "x"); !errors.Is(err, model.ErrEnrollRequired) {
+			t.Fatalf("state %q: SealStr = %v", s, err)
 		}
 	}
 }

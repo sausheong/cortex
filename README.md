@@ -79,7 +79,7 @@ cortex sync ~/notes              # incremental; .md .csv .tsv .yaml .json .txt .
 cortex recall "who works at Stripe"
 ```
 
-Without an API key cortex still runs, limited to deterministic extraction (YAML frontmatter and `[[wikilinks]]`) and keyword search. To migrate a v0.4 SQLite brain: `cortex import-sqlite <brain.db>`.
+Without an API key cortex still runs, limited to deterministic extraction (YAML frontmatter and `[[wikilinks]]`) and keyword search.
 
 Hook it up to an AI client with `cortex mcp` ([MCP server](#mcp-server)), and drop the agent contract into a project with `cortex init-schema`.
 
@@ -250,8 +250,8 @@ To schedule maintenance yourself (single-user installs), run `cortex maintain --
 Usage: cortex [--db <postgres-url>] [--user <id|verified-email>] <command> [arguments]
 
   --db      Postgres URL (or CORTEX_DATABASE_URL)
-  --user    act as that user with their provider settings (needs CORTEX_SECRET_KEY);
-            accepted by maintain, recall, profile, import-sqlite, sync and normalize
+  --user    act as that user (encrypted users are refused for commands that read content);
+            accepted by maintain, recall, profile, sync and normalize
 
 Service
   serve [--addr host:port]           multi-user web, OAuth and MCP service
@@ -274,7 +274,6 @@ Graph
   forget --source <src> | --entity <id>
   profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
   export [--vault <dir>] [--full] [--dry-run]
-  import-sqlite <path> [--force] [--embed-only]
   init-schema [<dir>] [--force]
 
 Maintenance
@@ -444,7 +443,6 @@ anthropicllm.NewLLM("sk-ant-...", anthropicllm.WithModel("claude-haiku-4-5"))
 | `EMBEDDING_DIMS` | `512` | vector size, fixed once the database is initialised |
 | `CORTEX_TRANSPORT`, `CORTEX_ADDR` | `stdio`, `127.0.0.1:8080` | `cortex mcp` transport and address |
 | `CORTEX_AUTH_TOKEN` | | bearer token for HTTP MCP; applies only to unenrolled users (once the owner enrolls a passkey the static token stops working and agents use tokens minted in Connections) |
-| `CORTEX_SECRET_KEY` | | encrypts per-user provider keys (`serve`, `--user`) |
 | `CORTEX_ENCRYPTION_ENROLL` | `1` | passkey enrollment and the owner encryption migration (`serve`); `0` turns it off. Backups and dumps made before a user migrates still hold plaintext; see [docs/ops/deploy.md](docs/ops/deploy.md) |
 
 `CORTEX_AUTH_TOKEN` and `CORTEX_PROVIDER_API_KEY` apply only to unenrolled users. For an encrypted user, `cortex users list` shows metadata only, and commands that read content (`recall`, `export`, `lint`, `maintain`, `reconcile`, `relate`, `decay`, `expire`, `normalize`, `profile`, `import-sqlite`) refuse with "this user is encrypted; cortex cannot read their content without their key".

@@ -13,13 +13,13 @@ var fixedExportTime = time.Date(2026, 5, 26, 14, 32, 10, 0, time.UTC)
 
 func TestRenderEntity_Full(t *testing.T) {
 	ent := cortex.Entity{
-		ID:        "ent_01H9X7K2M3N4P5Q6R7S8T9V0W1",
-		Type:      "person",
-		Name:      "Alice Chen",
-		Source:    "notes/2026-04-02-coffee.md",
+		ID:         "ent_01H9X7K2M3N4P5Q6R7S8T9V0W1",
+		Type:       "person",
+		Name:       "Alice Chen",
+		Source:     "notes/2026-04-02-coffee.md",
 		Attributes: map[string]any{"role": "engineer", "team": "payments"},
-		CreatedAt: time.Date(2026, 4, 1, 10, 23, 11, 0, time.UTC),
-		UpdatedAt: time.Date(2026, 5, 20, 14, 55, 2, 0, time.UTC),
+		CreatedAt:  time.Date(2026, 4, 1, 10, 23, 11, 0, time.UTC),
+		UpdatedAt:  time.Date(2026, 5, 20, 14, 55, 2, 0, time.UTC),
 	}
 	memories := []cortex.Memory{
 		{Content: "Alice is joining Stripe next month", Source: "notes/2026-04-02-coffee.md"},

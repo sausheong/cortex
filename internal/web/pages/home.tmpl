@@ -7,7 +7,6 @@
 {{if $.SetUp}}<p class="note setup-done">You are set up. An assistant is active and your memories are saving.</p>{{end}}
 
 {{$first := and $.Setup (not $.Setup.Memory)}}
-{{if .Migration}}<p class="note" role="status">{{.Migration}}</p>{{end}}
 {{if and (not $.Setup) .Strip}}<p class="home-strip">{{range $i, $p := .Strip}}{{if $i}} <span aria-hidden="true">&middot;</span> {{end}}<span>{{$p}}</span>{{end}}</p>{{end}}
 
 {{if or (not $first) .Assistants.Rows}}<section class="home-section" aria-labelledby="assist-h">

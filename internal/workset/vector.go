@@ -2,7 +2,6 @@ package workset
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,7 +18,7 @@ type vecRow struct {
 
 func (u *userSet) loadVectors(ctx context.Context, h *store.Handle) error {
 	rows, err := h.DB.QueryContext(ctx,
-		`SELECT id, ref_id, ref_type, enc, embedding::text, embedding_ct, dims, generation
+		`SELECT id, ref_id, ref_type, embedding_ct, dims, generation
 		 FROM embeddings WHERE user_id = ?`, h.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: load embeddings: %w", err)
@@ -30,27 +29,18 @@ func (u *userSet) loadVectors(ctx context.Context, h *store.Handle) error {
 	for rows.Next() {
 		var id string
 		var r vecRow
-		var enc bool
-		var lit sql.NullString
 		var ct []byte
-		if err := rows.Scan(&id, &r.refID, &r.refType, &enc, &lit, &ct, &r.dims, &r.gen); err != nil {
+		if err := rows.Scan(&id, &r.refID, &r.refType, &ct, &r.dims, &r.gen); err != nil {
 			return fmt.Errorf("cortex: scan embedding: %w", err)
 		}
-		if err := h.CheckRowForm(enc); err != nil {
+		if len(ct) == 0 {
+			return store.ErrCiphertextMissing
+		}
+		b, err := h.Open(store.TblEmbeddings, id, "embedding", ct)
+		if err != nil {
 			return err
 		}
-		if enc {
-			if len(ct) == 0 {
-				return store.ErrCiphertextMissing
-			}
-			b, err := h.Open(store.TblEmbeddings, id, "embedding", ct)
-			if err != nil {
-				return err
-			}
-			if r.vec, err = store.DecodeVec(b); err != nil {
-				return err
-			}
-		} else if r.vec, err = parseLiteral(lit.String); err != nil {
+		if r.vec, err = store.DecodeVec(b); err != nil {
 			return err
 		}
 		size += int64(4*len(r.vec)) + 96 + lenStr(r.refID, r.refType)

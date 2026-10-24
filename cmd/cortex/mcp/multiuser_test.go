@@ -18,11 +18,11 @@ import (
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-const testSecretHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 const testPublicURL = "https://cortex.test"
 
 // stubProvider is an OpenAI-compatible endpoint counting its calls.
@@ -63,6 +63,7 @@ type muEnv struct {
 	handler http.Handler
 	srv     *httptest.Server
 	limiter *accounts.Limiter
+	keys    map[string]*keys.UK
 }
 
 func newMUEnv(t *testing.T) *muEnv { return newMUEnvOpts(t) }
@@ -80,18 +81,15 @@ func newMUEnvOpts(t *testing.T, opts ...ToolOption) *muEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	sl, err := accounts.NewSealer(testSecretHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := &accounts.Store{DB: db, Sealer: sl, AllowPrivate: true}
-	e := &muEnv{root: root, st: st, limiter: accounts.NewLimiter(30, 30, nil)}
+	st := &accounts.Store{DB: db, AllowPrivate: true}
+	e := &muEnv{root: root, st: st, limiter: accounts.NewLimiter(30, 30, nil), keys: map[string]*keys.UK{}}
 	resolve := func(ctx context.Context, bearer string) (*cortex.Cortex, error) {
-		uid, cid, _, err := st.ResolveBearer(ctx, bearer)
+		uid, cid, uk, err := st.ResolveBearer(ctx, bearer)
 		if err != nil {
 			return nil, err
 		}
-		return st.ResolveUser(ctx, root, uid, cid, nil)
+		defer uk.Zero() // the handle keeps its own clone
+		return st.ResolveUser(ctx, root, uid, cid, uk)
 	}
 	s := server.NewMCPServer("cortex-test", "0.0.0", server.WithToolCapabilities(false))
 	RegisterToolsFor(s, nil, testPublicURL, opts...)
@@ -108,16 +106,35 @@ func (e *muEnv) user(t *testing.T, name, providerURL string) (id, token string) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An enrolled account: encrypted state and a user key. Agent tokens carry
+	// a wrap of it.
+	if _, err := e.st.DB.ExecContext(t.Context(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uk.Zero)
+	e.keys[u.ID] = uk
 	if providerURL != "" {
-		if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: providerURL, APIKey: "sk-" + name, ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, nil); err != nil {
+		if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: providerURL, APIKey: "sk-" + name, ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, uk); err != nil {
 			t.Fatal(err)
 		}
 	}
-	tok, _, err := e.st.CreateAgentToken(t.Context(), u.ID, "test", nil)
+	tok, _, err := e.st.CreateAgentToken(t.Context(), u.ID, "test", uk)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return u.ID, tok
+}
+
+// cx is a handle for the user's own data, holding its key.
+func (e *muEnv) cx(t *testing.T, id string) *cortex.Cortex {
+	t.Helper()
+	cx := e.root.ForUser(id).WithKey(e.keys[id], "encrypted")
+	t.Cleanup(cx.Release)
+	return cx
 }
 
 func (e *muEnv) client(t *testing.T, token string) *client.Client {
@@ -212,10 +229,10 @@ func TestMCPAgentTokenScopesToUser(t *testing.T) {
 	ida, toka := e.user(t, "a", purl)
 	idb, tokb := e.user(t, "b", purl)
 	ctx := t.Context()
-	if err := e.root.ForUser(ida).Remember(ctx, "Alice works at Stripe."); err != nil {
+	if err := e.cx(t, ida).Remember(ctx, "Alice works at Stripe."); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.root.ForUser(idb).Remember(ctx, "Bob works at Initech."); err != nil {
+	if err := e.cx(t, idb).Remember(ctx, "Bob works at Initech."); err != nil {
 		t.Fatal(err)
 	}
 	ca, cb := e.client(t, toka), e.client(t, tokb)
@@ -273,7 +290,7 @@ func TestContextToolShape(t *testing.T) {
 	e := newMUEnv(t)
 	purl, _ := stubProvider(t)
 	id, tok := e.user(t, "ctx", purl)
-	if err := e.root.ForUser(id).Remember(t.Context(), "Ctx works at Acme."); err != nil {
+	if err := e.cx(t, id).Remember(t.Context(), "Ctx works at Acme."); err != nil {
 		t.Fatal(err)
 	}
 	c := e.client(t, tok)
@@ -329,7 +346,7 @@ func TestMCPIsolationForeignIDs(t *testing.T) {
 	_, toka := e.user(t, "iso-a", purl)
 	idb, _ := e.user(t, "iso-b", purl)
 	ctx := t.Context()
-	b := e.root.ForUser(idb)
+	b := e.cx(t, idb)
 	e1 := &cortex.Entity{Type: "person", Name: "Zelda Secret"}
 	e2 := &cortex.Entity{Type: "person", Name: "Zoltan Secret"}
 	if err := b.PutEntity(ctx, e1); err != nil {
@@ -341,9 +358,11 @@ func TestMCPIsolationForeignIDs(t *testing.T) {
 	if err := b.Remember(ctx, "Zelda Secret owns a lighthouse.", cortex.WithSource("bsrc")); err != nil {
 		t.Fatal(err)
 	}
+	// An unenrolled-then-keyed test user has no owner entity; the leak checks
+	// below look for this ID, so keep a value that cannot match.
 	owner, err := b.OwnerEntityID(ctx)
 	if err != nil {
-		t.Fatal(err)
+		owner = "no-owner-entity"
 	}
 	snapshot := func() string {
 		var n1, n2, n3 int

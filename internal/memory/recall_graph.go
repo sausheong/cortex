@@ -48,53 +48,28 @@ func (c Ops) querySeeds(ctx context.Context, query string) ([]string, error) {
 			best[id] = w
 		}
 	}
-	if c.Encrypted() {
-		// Names and aliases are ciphertext: match the n-grams over the
-		// decrypted working set.
-		ws, err := workset.For(ctx, c.Handle)
-		if err != nil {
-			return nil, err
-		}
-		want := make(map[string]struct{}, len(grams))
-		for _, g := range grams {
-			want[g] = struct{}{}
-		}
-		for _, e := range ws.Entities() {
-			if n := strings.ToLower(e.Name); n != "" {
-				if _, ok := want[n]; ok {
-					note(e.ID, n)
-				}
+	// Names and aliases are ciphertext: match the n-grams over the
+	// decrypted working set.
+	ws, err := workset.For(ctx, c.Handle)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[string]struct{}, len(grams))
+	for _, g := range grams {
+		want[g] = struct{}{}
+	}
+	for _, e := range ws.Entities() {
+		if n := strings.ToLower(e.Name); n != "" {
+			if _, ok := want[n]; ok {
+				note(e.ID, n)
 			}
 		}
-		for _, a := range ws.Aliases() {
-			if n := graph.NormalizeAlias(a.Kind, a.Value); n != "" {
-				if _, ok := want[n]; ok {
-					note(a.EntityID, n)
-				}
+	}
+	for _, a := range ws.Aliases() {
+		if n := graph.NormalizeAlias(a.Kind, a.Value); n != "" {
+			if _, ok := want[n]; ok {
+				note(a.EntityID, n)
 			}
-		}
-	} else {
-		rows, err := c.DB.QueryContext(ctx,
-			`SELECT e.id, lower(e.name) FROM entities e
-		 WHERE e.user_id = ? AND e.deleted_at IS NULL AND e.enc IS NOT TRUE AND lower(e.name) = ANY(?)
-		 UNION
-		 SELECT e.id, a.value_norm FROM entity_aliases a
-		 JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
-		 WHERE a.user_id = ? AND a.enc IS NOT TRUE AND a.value_norm = ANY(?)`,
-			c.UserID, grams, c.UserID, grams)
-		if err != nil {
-			return nil, fmt.Errorf("cortex: query seeds: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, matched string
-			if err := rows.Scan(&id, &matched); err != nil {
-				return nil, fmt.Errorf("cortex: scan seed: %w", err)
-			}
-			note(id, matched)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("cortex: query seeds: %w", err)
 		}
 	}
 	hits := make([]hit, 0, len(best))
@@ -234,51 +209,7 @@ func (c Ops) recallSeedMemories(ctx context.Context, g graphContext, limit int, 
 	if len(g.seeds) == 0 {
 		return nil, nil
 	}
-	if c.Encrypted() {
-		return c.recallSeedMemoriesEnc(ctx, g, limit, mode)
-	}
-	clause, targs := mode.Clause("m")
-	args := []any{c.UserID, g.seeds}
-	args = append(args, targs...)
-	args = append(args, limit)
-	rows, err := c.DB.QueryContext(ctx,
-		`SELECT m.id, m.content, COALESCE(m.source, ''), COALESCE(m.speaker, ''), m.confidence
-		 FROM memories m
-		 JOIN memory_entities me ON me.memory_id = m.id AND me.user_id = m.user_id
-		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.enc IS NOT TRUE AND me.entity_id = ANY(?) AND `+clause+`
-		 GROUP BY m.id
-		 ORDER BY count(*) DESC, m.confidence DESC, m.created_at DESC, m.id
-		 LIMIT ?`, args...)
-	if err != nil {
-		c.Logf("cortex: recall seed memories: %v", err)
-		return nil, nil
-	}
-	defer rows.Close()
-	var items []vecmath.Ranked
-	results := map[string]model.Result{}
-	for rows.Next() {
-		var r model.Result
-		if err := rows.Scan(&r.ID, &r.Content, &r.Source, &r.Speaker, &r.Confidence); err != nil {
-			c.Logf("cortex: scan seed memory: %v", err)
-			return nil, nil
-		}
-		r.Type = "memory"
-		key := "mem:" + r.ID
-		items = append(items, vecmath.Ranked{ID: key, Rank: len(items)})
-		results[key] = r
-	}
-	if err := rows.Err(); err != nil {
-		c.Logf("cortex: recall seed memories: %v", err)
-		return nil, nil
-	}
-	// Load each memory's full entity links so boosting sees all of them.
-	for key, r := range results {
-		if ids, err := c.loadMemoryEntityIDs(ctx, r.ID); err == nil {
-			r.EntityIDs = ids
-			results[key] = r
-		}
-	}
-	return items, results
+	return c.recallSeedMemoriesEnc(ctx, g, limit, mode)
 }
 
 // popularityCap bounds how much access history can lift a memory's score,
@@ -337,9 +268,7 @@ func (c Ops) markAccessed(ctx context.Context, results []model.Result) {
 	if len(ids) == 0 {
 		return
 	}
-	if c.Encrypted() {
-		c.recordAccessEnc(ids)
-	}
+	c.recordAccessEnc(ids)
 	if _, err := c.DB.ExecContext(ctx,
 		`UPDATE memories SET access_count = access_count + 1, last_accessed_at = now()
 		 WHERE user_id = ? AND id = ANY(?)`, c.UserID, ids); err != nil {

@@ -13,18 +13,11 @@ import (
 	"github.com/sausheong/cortex/internal/model"
 )
 
+// encUser returns a user and its key (all users made by e.user are encrypted).
 func (e *env) encUser(t *testing.T, sub string) (string, *keys.UK) {
 	t.Helper()
 	uid := e.user(t, sub)
-	if _, err := e.db.ExecContext(t.Context(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, uid); err != nil {
-		t.Fatal(err)
-	}
-	uk, err := keys.NewUK()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(uk.Zero)
-	return uid, uk
+	return uid, e.keys[uid]
 }
 
 type seen struct {
@@ -68,7 +61,7 @@ func TestJobPayloadEncryptedAndParkedWithoutKey(t *testing.T) {
 	if strings.Contains(raw, "PAYLOADSECRET") {
 		t.Fatalf("job row leaks: %s", raw)
 	}
-	if e.count(t, `SELECT count(*) FROM jobs WHERE id = $1 AND enc AND payload_ct IS NOT NULL AND payload = ''`, id) != 1 {
+	if e.count(t, `SELECT count(*) FROM jobs WHERE id = $1 AND payload_ct IS NOT NULL`, id) != 1 {
 		t.Fatal("payload not sealed")
 	}
 	// No key source: the job is parked, still queued, never run.
@@ -99,38 +92,6 @@ func TestJobPayloadEncryptedAndParkedWithoutKey(t *testing.T) {
 	waitFor(t, func() bool {
 		return e.count(t, `SELECT count(*) FROM jobs WHERE id = $1 AND status = 'done' AND payload_ct IS NULL`, id) == 1
 	})
-}
-
-func TestSweeperReadsLegacyAndEncryptedPayloads(t *testing.T) {
-	e := newEnv(t)
-	uid, uk := e.encUser(t, "s")
-	lid := e.user(t, "legacy")
-	sn := &seen{m: map[string]string{}}
-	pool := NewPool(2, func(ctx context.Context, j Job) error { sn.put(j.ID, j.Payload); return nil }).WithDB(e.db)
-	pool.WithKeyFunc(func(user string) *keys.UK {
-		if user == uid {
-			return uk.Clone()
-		}
-		return nil
-	})
-	if _, err := e.db.Exec(`INSERT INTO jobs (id, user_id, kind, status, payload) VALUES ('j_legacy', $1, 'x', 'queued', 'LEGACYTEXT')`, lid); err != nil {
-		t.Fatal(err)
-	}
-	eid, err := pool.EnqueueWithKey(t.Context(), uid, "x", "ENCTEXT", uk)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool.Start(t.Context())
-	defer pool.Stop()
-	if !waitFor(t, func() bool { _, a := sn.get("j_legacy"); _, b := sn.get(eid); return a && b }) {
-		t.Fatal("jobs did not run")
-	}
-	if v, _ := sn.get("j_legacy"); v != "LEGACYTEXT" {
-		t.Fatalf("legacy payload = %q", v)
-	}
-	if v, _ := sn.get(eid); v != "ENCTEXT" {
-		t.Fatalf("encrypted payload = %q", v)
-	}
 }
 
 func TestJobsErrorAndMaintenanceErrorFreeOfContent(t *testing.T) {

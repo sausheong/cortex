@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -108,40 +107,7 @@ func (c Ops) NewMemoriesSince(ctx context.Context, since time.Time, perGroup int
 	if perGroup < 1 {
 		perGroup = 3
 	}
-	if c.Encrypted() {
-		return c.newMemoriesSinceEnc(ctx, since, perGroup)
-	}
-	rows, err := c.DB.QueryContext(ctx,
-		`SELECT conn, n, id, content, created_at FROM (
-		   SELECT COALESCE(written_by_connection_id,'') AS conn, id, content, created_at,
-		     count(*) OVER (PARTITION BY COALESCE(written_by_connection_id,'')) AS n,
-		     row_number() OVER (PARTITION BY COALESCE(written_by_connection_id,'') ORDER BY created_at DESC, id) AS rn
-		   FROM memories WHERE user_id = ? AND deleted_at IS NULL AND created_at > ?) t
-		 WHERE rn <= ? ORDER BY conn, created_at DESC, id`, c.UserID, since, perGroup)
-	if err != nil {
-		return nil, fmt.Errorf("cortex: new memories: %w", err)
-	}
-	defer rows.Close()
-	var out []model.ConnectionNew
-	for rows.Next() {
-		var conn string
-		var n int
-		var m model.Memory
-		if err := rows.Scan(&conn, &n, &m.ID, &m.Content, &m.CreatedAt); err != nil {
-			return nil, fmt.Errorf("cortex: scan new memory: %w", err)
-		}
-		m.WrittenBy = conn
-		if len(out) == 0 || out[len(out)-1].ConnectionID != conn {
-			out = append(out, model.ConnectionNew{ConnectionID: conn, Count: n})
-		}
-		g := &out[len(out)-1]
-		g.Latest = append(g.Latest, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Latest[0].CreatedAt.After(out[j].Latest[0].CreatedAt) })
-	return out, nil
+	return c.newMemoriesSinceEnc(ctx, since, perGroup)
 }
 
 // WrittenSince counts this user's live memories created after since, per
@@ -170,65 +136,5 @@ func (c Ops) WrittenSince(ctx context.Context, since time.Time) (map[string]int,
 // f.Oldest, and returns the
 // total number matching the filter.
 func (c Ops) ListMemories(ctx context.Context, f model.MemoryListFilter, limit, offset int) ([]model.Memory, int, error) {
-	if c.Encrypted() {
-		return c.listMemoriesEnc(ctx, f, limit, offset)
-	}
-	conds := []string{"user_id = ?", "deleted_at IS NULL"}
-	args := []any{c.UserID}
-	if f.Query != "" {
-		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Query)
-		conds = append(conds, `content ILIKE ? ESCAPE '\'`)
-		args = append(args, "%"+esc+"%")
-	}
-	if f.WrittenBy == model.NoConnection {
-		conds = append(conds, "COALESCE(written_by_connection_id,'') = ''")
-	} else if f.WrittenBy != "" {
-		conds = append(conds, "written_by_connection_id = ?")
-		args = append(args, f.WrittenBy)
-	}
-	if f.EntityID != "" {
-		conds = append(conds, "id IN (SELECT memory_id FROM memory_entities WHERE user_id = ? AND entity_id = ?)")
-		args = append(args, c.UserID, f.EntityID)
-	}
-	if f.From != nil {
-		conds = append(conds, "created_at >= ?")
-		args = append(args, *f.From)
-	}
-	if f.To != nil {
-		conds = append(conds, "created_at < ?")
-		args = append(args, *f.To)
-	}
-	if f.Since != nil {
-		conds = append(conds, "created_at > ?")
-		args = append(args, *f.Since)
-	}
-	where := strings.Join(conds, " AND ")
-	var total int
-	if err := c.DB.QueryRowContext(ctx, `SELECT count(*) FROM memories WHERE `+where, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("cortex: count memories: %w", err)
-	}
-	if limit <= 0 {
-		limit = 50
-	}
-	dir := "DESC"
-	if f.Oldest {
-		dir = "ASC"
-	}
-	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, content, COALESCE(source,''), COALESCE(speaker,''), COALESCE(written_by_connection_id,''), confidence, created_at, updated_at
-		 FROM memories WHERE `+where+` ORDER BY created_at `+dir+`, id LIMIT ? OFFSET ?`,
-		append(args, limit, offset)...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("cortex: list memories: %w", err)
-	}
-	defer rows.Close()
-	var out []model.Memory
-	for rows.Next() {
-		var m model.Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Speaker, &m.WrittenBy, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
-			return nil, 0, fmt.Errorf("cortex: scan memory: %w", err)
-		}
-		out = append(out, m)
-	}
-	return out, total, rows.Err()
+	return c.listMemoriesEnc(ctx, f, limit, offset)
 }

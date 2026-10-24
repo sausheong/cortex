@@ -52,7 +52,7 @@ func TestVaultRequiresSignIn(t *testing.T) {
 func TestVaultListScopedAndFiltered(t *testing.T) {
 	e, _, _ := vaultEnv(t)
 	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	if err := e.root.ForUser(b.ID).PutEntity(t.Context(), &cortex.Entity{Type: "person", Name: "Secret Bob"}); err != nil {
+	if err := e.cx(b.ID).PutEntity(t.Context(), &cortex.Entity{Type: "person", Name: "Secret Bob"}); err != nil {
 		t.Fatal(err)
 	}
 	resp, body := e.get("/vault")
@@ -269,7 +269,7 @@ func TestVaultZipMatchesExport(t *testing.T) {
 func TestVaultZipScopedAndRateLimited(t *testing.T) {
 	e, _, _ := vaultEnv(t)
 	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	_ = e.root.ForUser(b.ID).PutEntity(t.Context(), &cortex.Entity{Type: "person", Name: "Secret Bob"})
+	_ = e.cx(b.ID).PutEntity(t.Context(), &cortex.Entity{Type: "person", Name: "Secret Bob"})
 	_, body := e.get("/vault/download")
 	for p, c := range readZip(t, []byte(body)) {
 		if strings.Contains(p+c, "Secret Bob") {

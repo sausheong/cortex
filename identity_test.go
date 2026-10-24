@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/sausheong/cortex/internal/pgtest"
 	"github.com/sausheong/cortex/internal/tenancy"
 )
 
@@ -46,12 +47,17 @@ func testAddAlias_ConflictAndResolve(t *testing.T) {
 // named name.
 func ownerCortex(t *testing.T, name, email string) (*Cortex, string) {
 	t.Helper()
-	base := openTestDB(t)
-	u, err := base.CreateUser(context.Background(), "", email, name, true)
+	root, err := Open(pgtest.DSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := base.ForUser(u.ID)
+	t.Cleanup(func() { root.Close() })
+	u, err := root.CreateUser(context.Background(), "", email, name, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, uk := keyedHandleUK(t, root, u.ID)
+	sealOwner(t, root, uk, u.ID, name)
 	ownerID, err := tenancy.New(c.h).OwnerEntityID(context.Background())
 	if err != nil {
 		t.Fatal(err)

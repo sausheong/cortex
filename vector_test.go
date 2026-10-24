@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +30,7 @@ func TestSearchVectorUsesRowDims(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	ch := &Chunk{Content: "hello vectors"}
 	if err := c.PutChunk(ctx, ch); err != nil {
 		t.Fatal(err)
@@ -80,6 +80,7 @@ func TestPutEmbeddingBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	if err := c.putEmbedding(context.Background(), "x", "chunk", nil); err == nil {
 		t.Fatal("want error for empty embedding")
 	}
@@ -91,23 +92,13 @@ func newUserHandle(t *testing.T, root *Cortex, email string, dims int) *Cortex {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root.ForUser(u.ID, WithEmbedder(&dimsEmbedder{dims}))
+	return keyedHandle(t, root, u.ID, WithEmbedder(&dimsEmbedder{dims}))
 }
 
 func unitVec(n int) []float32 {
 	v := make([]float32, n)
 	v[0] = 1
 	return v
-}
-
-func indexExists(t *testing.T, c *Cortex, name string) bool {
-	t.Helper()
-	var n int
-	if err := c.h.DB.QueryRowContext(context.Background(),
-		`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?`, name).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n > 0
 }
 
 func TestVectorTwoUsersDifferentDims(t *testing.T) {
@@ -140,47 +131,6 @@ func TestVectorTwoUsersDifferentDims(t *testing.T) {
 	if err != nil || len(gb) != 1 || gb[0].ID != cb.ID {
 		t.Fatalf("b: %+v err=%v", gb, err)
 	}
-	for _, d := range []int{8, 16} {
-		if err := root.EnsureVectorIndex(ctx, d, "memory"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if !indexExists(t, root, "emb_hnsw_memory_8") || !indexExists(t, root, "emb_hnsw_memory_16") {
-		t.Fatal("indexes missing")
-	}
-}
-
-func TestEnsureVectorIndexRejectsBadDims(t *testing.T) {
-	ctx := context.Background()
-	c, err := Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	for _, d := range []int{0, -1, 4001} {
-		if err := c.EnsureVectorIndex(ctx, d, "memory"); err == nil {
-			t.Fatalf("dims %d: want error", d)
-		}
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 6; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := c.EnsureVectorIndex(ctx, 24, "chunk"); err != nil {
-				t.Error(err)
-			}
-		}()
-	}
-	wg.Wait()
-	var n int
-	if err := c.h.DB.QueryRowContext(ctx,
-		`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'emb_hnsw_chunk_24'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("n=%d err=%v", n, err)
-	}
-	if indexExists(t, c, "emb_hnsw_memory_0") || indexExists(t, c, "emb_hnsw_memory_4001") {
-		t.Fatal("bad index created")
-	}
 }
 
 func TestVectorGenerationIsolation(t *testing.T) {
@@ -190,6 +140,7 @@ func TestVectorGenerationIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	g1, g2 := &Chunk{Content: "gen one"}, &Chunk{Content: "gen two"}
 	for _, ch := range []*Chunk{g1, g2} {
 		if err := c.PutChunk(ctx, ch); err != nil {
@@ -232,6 +183,7 @@ func TestStaleGenerationWriteRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	pinned := c.WithGeneration(1)
 	if err := pinned.putEmbedding(ctx, "ok", "chunk", unitVec(8)); err != nil {
 		t.Fatal(err)
@@ -258,6 +210,7 @@ func TestFlipGenerationAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	if err := c.putEmbedding(ctx, "m1", "memory", unitVec(8)); err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +244,7 @@ func TestFlipDoesNotSelfDeadlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = c.FlipGeneration(ctx, 2, func(ctx context.Context, tx *sql.Tx, put func(string, string, []float32) error) error {
@@ -312,6 +266,7 @@ func TestVectorWriteTakesSharedLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	bg := context.Background()
 	tx, err := c.h.DB.BeginTx(bg, nil)
 	if err != nil {

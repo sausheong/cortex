@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
@@ -23,6 +24,7 @@ func ExampleCortex_Remember() {
 		return
 	}
 	defer cx.Close()
+	cx = exampleKeyed(cx)
 
 	// Use a mock extractor so no LLM is required.
 	cx.SetExtractor(&mockExtractor{
@@ -74,6 +76,7 @@ func ExampleCortex_Recall() {
 		return
 	}
 	defer cx.Close()
+	cx = exampleKeyed(cx)
 
 	ctx := context.Background()
 
@@ -121,6 +124,7 @@ func ExampleCortex_Forget() {
 		return
 	}
 	defer cx.Close()
+	cx = exampleKeyed(cx)
 
 	ctx := context.Background()
 
@@ -169,6 +173,7 @@ func ExampleCortex_Traverse() {
 		return
 	}
 	defer cx.Close()
+	cx = exampleKeyed(cx)
 
 	ctx := context.Background()
 
@@ -201,4 +206,21 @@ func ExampleCortex_Traverse() {
 	// Output:
 	// entities in graph: 3
 	// relationships: 2
+}
+
+// exampleKeyed returns a handle for a fresh encrypted user holding a user key,
+// as a signed-in, unlocked account has. Examples have no *testing.T.
+func exampleKeyed(root *Cortex) *Cortex {
+	u, err := root.CreateUser(context.Background(), "example-sub", "example@x.test", "Example", true)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := root.h.DB.ExecContext(context.Background(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = ?`, u.ID); err != nil {
+		panic(err)
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		panic(err)
+	}
+	return root.ForUser(u.ID).WithKey(uk, "encrypted")
 }

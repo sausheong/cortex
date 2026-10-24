@@ -75,5 +75,4 @@ var (
 	ErrTokenExpired        = errors.New("cortex: token expired; reconnect this assistant in Connections")
 	ErrEnrollRequired      = errors.New("cortex: encryption is required; protect your memory with a passkey first")
 	ErrStaticTokenDisabled = errors.New("the static owner token is disabled for encrypted users; mint an agent token in Connections")
-	ErrPlaintextRow        = errors.New("cortex: plaintext row in an encrypted account")
 )

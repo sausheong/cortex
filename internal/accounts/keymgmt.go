@@ -9,23 +9,16 @@ import (
 
 // Enrollment cohorts and key management for the Account page.
 
-// EnrollInfo is a user's encryption state and which side of the
-// encryption_required_since marker (migration 010) the account was created.
+// EnrollInfo is a user's encryption state.
 type EnrollInfo struct {
 	State string
-	// Cohort is true for an account created at or after the marker: it must
-	// enroll before anything is stored. An account created before it (the
-	// owner) is legacy and migrates when it chooses.
-	Cohort bool
 }
 
-// EnrollInfo reads the state and cohort. An unknown user is a legacy "none".
+// EnrollInfo reads the state. An unknown user is "none".
 func (st *Store) EnrollInfo(ctx context.Context, userID string) (EnrollInfo, error) {
 	var i EnrollInfo
 	err := st.DB.QueryRowContext(ctx,
-		`SELECT u.encryption_state,
-		        u.created_at >= COALESCE((SELECT value::timestamptz FROM cortex_meta WHERE key = 'encryption_required_since'), 'infinity'::timestamptz)
-		 FROM users u WHERE u.id = $1`, userID).Scan(&i.State, &i.Cohort)
+		`SELECT encryption_state FROM users WHERE id = $1`, userID).Scan(&i.State)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnrollInfo{State: "none"}, nil
 	}
@@ -33,9 +26,9 @@ func (st *Store) EnrollInfo(ctx context.Context, userID string) (EnrollInfo, err
 }
 
 // EnrollRequired reports whether userID must enroll before storing or
-// connecting anything: enrollment is switched on, the account is not yet
-// protected and it was created at or after the marker. While enrollment is
-// off nobody is required to (they would have no way to comply).
+// connecting anything: enrollment is switched on and the account is not yet
+// protected. While enrollment is off nobody can comply, so the page does not
+// ask (content calls still fail with model.ErrEnrollRequired).
 func (st *Store) EnrollRequired(ctx context.Context, userID string) (bool, error) {
 	if !st.EnrollEnabled() {
 		return false, nil
@@ -44,7 +37,7 @@ func (st *Store) EnrollRequired(ctx context.Context, userID string) (bool, error
 	if err != nil {
 		return false, err
 	}
-	return i.State == "none" && i.Cohort, nil
+	return i.State == "none", nil
 }
 
 // MarkNeedsReconnect flags every live connection of the user. Their tokens

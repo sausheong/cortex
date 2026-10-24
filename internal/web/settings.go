@@ -184,18 +184,6 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false)
 		return
 	}
-	if s.opts.Enqueue != nil {
-		idx, err := s.indexExists(ctx, in.EmbedDims)
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if first || !idx {
-			if _, err := s.opts.Enqueue(ctx, u.UserID, "index"); err != nil {
-				s.cfg.Logger.Error("enqueue index", "err", err)
-			}
-		}
-	}
 	if needsReembed {
 		if s.opts.Enqueue == nil {
 			s.settingsPage(w, r, u, http.StatusServiceUnavailable, nil,

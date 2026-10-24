@@ -17,7 +17,7 @@ import (
 var userRef string
 
 // userCommands are the commands that accept --user.
-var userCommands = map[string]bool{"maintain": true, "recall": true, "profile": true, "import-sqlite": true, "sync": true, "users": true, "normalize": true}
+var userCommands = map[string]bool{"maintain": true, "recall": true, "profile": true, "sync": true, "users": true, "normalize": true}
 
 // stripUserFlag removes every `--user <ref>` pair from args (after the
 // program name) and returns the last value.
@@ -54,15 +54,7 @@ func resolveUser(ctx context.Context, root *cortex.Cortex, ref string) (*cortex.
 
 // accountStore builds the accounts store from the environment.
 func accountStore(db *sql.DB, env map[string]string) (*accounts.Store, error) {
-	secret := env["CORTEX_SECRET_KEY"]
-	if secret == "" {
-		return nil, errors.New("CORTEX_SECRET_KEY is required (32 bytes, hex)")
-	}
-	sealer, err := accounts.NewSealer(secret)
-	if err != nil {
-		return nil, fmt.Errorf("CORTEX_SECRET_KEY: %w", err)
-	}
-	return &accounts.Store{DB: db, Sealer: sealer, AllowPrivate: env["CORTEX_ALLOW_PRIVATE_PROVIDERS"] == "1"}, nil
+	return &accounts.Store{DB: db, AllowPrivate: env["CORTEX_ALLOW_PRIVATE_PROVIDERS"] == "1"}, nil
 }
 
 // errEncryptedUser is what admin commands that read content say for an
@@ -146,13 +138,10 @@ func openUserCortexOrExit(ref string) *cortex.Cortex {
 
 // openDefaultUserCortex returns the handle for commands run without --user on
 // the server: the bootstrap user (the owner) built from that user's own
-// provider settings. ok is false when the accounts layer is not configured
-// (no CORTEX_SECRET_KEY) or the bootstrap user has no usable provider, in
-// which case the caller falls back to the environment-built handle.
+// provider settings. ok is false when the bootstrap user has no usable
+// provider, in which case the caller falls back to the environment-built
+// handle.
 func openDefaultUserCortex(ctx context.Context, dsn string, env map[string]string) (cx *cortex.Cortex, ok bool, err error) {
-	if env["CORTEX_SECRET_KEY"] == "" {
-		return nil, false, nil
-	}
 	cx, err = openUserCortex(ctx, dsn, cortex.BootstrapUserID, env)
 	if errors.Is(err, accounts.ErrNoProvider) {
 		return nil, false, nil

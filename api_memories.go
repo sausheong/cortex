@@ -114,13 +114,6 @@ func (c *Cortex) FlipGeneration(ctx context.Context, newGen int, embedTail func(
 	return memory.New(c.h).FlipGeneration(ctx, newGen, embedTail, inTx)
 }
 
-// EnsureVectorIndex creates the partial HNSW index for (dims, refType) if it
-// is missing, outside any transaction, serialised by an advisory lock. It
-// must not be called on a request path.
-func (c *Cortex) EnsureVectorIndex(ctx context.Context, dims int, refType string) error {
-	return memory.New(c.h).EnsureVectorIndex(ctx, dims, refType)
-}
-
 // PendingEmbeddings returns up to limit rows (soft-deleted ones included)
 // of this handle's user that have no embedding at generation gen, with the
 // text to embed for each.

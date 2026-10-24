@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sausheong/cortex/internal/workset"
+
 	"github.com/sausheong/cortex"
 )
 
@@ -18,7 +20,7 @@ func memEnv(t *testing.T) (*env, *cortex.Cortex, string) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	id := e.userBySub("g-alice").ID
-	return e, e.root.ForUser(id), id
+	return e, e.cx(id), id
 }
 
 func putMem(t *testing.T, c *cortex.Cortex, content string) string {
@@ -61,6 +63,7 @@ func TestBulkDeleteOlderThan(t *testing.T) {
 	e, c, id := memEnv(t)
 	old := putMem(t, c, "ancient")
 	putMem(t, c, "fresh")
+	workset.Reset()
 	if _, err := e.st.DB.Exec(`UPDATE memories SET created_at = now() - interval '40 days' WHERE id = $1 AND user_id = $2`, old, id); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +218,7 @@ func TestRestoreForeignBatchIs404(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bc := e.root.ForUser(b.ID)
+	bc := e.cx(b.ID)
 	bm := putMem(t, bc, "b secret")
 	batch, n, err := bc.SoftDeleteMemories(t.Context(), cortex.DeleteFilter{IDs: []string{bm}}, "t")
 	if err != nil || n != 1 {
@@ -239,7 +242,7 @@ func TestMemoryDeleteForeignIDsIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bc := e.root.ForUser(b.ID)
+	bc := e.cx(b.ID)
 	bm := putMem(t, bc, "b secret")
 	for _, f := range []url.Values{{}, {"confirm_count": {"1"}}, {"confirm_count": {"0"}}} {
 		f.Set("csrf", e.csrf())
@@ -259,7 +262,7 @@ func TestUsageCountsOwnRowsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bc := e.root.ForUser(b.ID)
+	bc := e.cx(b.ID)
 	putMem(t, bc, "b one")
 	putMem(t, bc, "b two")
 	m1 := putMem(t, c, "a one")
@@ -282,6 +285,7 @@ func TestUsageCountsOwnRowsOnly(t *testing.T) {
 	if _, err := e.st.DB.Exec(`UPDATE embeddings SET ref_id = $1 WHERE user_id = $2`, m1, id); err != nil {
 		t.Fatal(err)
 	}
+	workset.Reset()
 	if _, err := e.st.DB.Exec(`UPDATE memories SET deleted_at = now() - interval '40 days' WHERE id = $1`, m1); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +332,7 @@ func deleteAccount(t *testing.T, e *env, memories int) {
 
 func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 	e, _, id := memEnv(t)
-	tok, _, err := e.st.CreateAgentToken(t.Context(), id, "tunnel", nil)
+	tok, _, err := e.st.CreateAgentToken(t.Context(), id, "tunnel", e.keys[id])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,13 +356,14 @@ func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 func TestAccountDeleteThenSigninRestores(t *testing.T) {
 	e, c, id := memEnv(t)
 	putMem(t, c, "still here")
-	tok, _, _ := e.st.CreateAgentToken(t.Context(), id, "tunnel", nil)
+	tok, _, _ := e.st.CreateAgentToken(t.Context(), id, "tunnel", e.keys[id])
 	deleteAccount(t, e, 1)
 	e.newClient()
 	e.idp.ids["c"] = alice()
 	if resp, _ := e.callback(e.start(""), "c"); resp.StatusCode != 200 {
 		t.Fatalf("signin %d", resp.StatusCode)
 	}
+	e.enroll(alice()) // the new session starts locked
 	_, body := e.get("/memories")
 	if !strings.Contains(body, "still here") {
 		t.Fatalf("data missing: %s", body)
@@ -408,7 +413,15 @@ func TestMemoriesPageShowsBackgroundDocuments(t *testing.T) {
 	if strings.Contains(body, "in the background") || strings.Contains(body, "could not be processed") {
 		t.Fatalf("notes shown with no jobs: %s", body)
 	}
+	// A queued job of an encrypted account waits for a key, so the page says so.
 	e.insertJob("j_q", id, "remember", "queued", "")
+	_, body = e.get("/memories")
+	if !strings.Contains(body, "Waiting for your next visit") || strings.Contains(body, "in the background") {
+		t.Fatalf("no waiting line: %s", body)
+	}
+	if _, err := e.st.DB.Exec(`UPDATE jobs SET status='running' WHERE id='j_q'`); err != nil {
+		t.Fatal(err)
+	}
 	_, body = e.get("/memories")
 	if !strings.Contains(body, "Processing 1 document in the background") {
 		t.Fatalf("no processing line: %s", body)

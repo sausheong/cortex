@@ -27,10 +27,10 @@ func (s *server) setupRead(ctx context.Context, userID string, uk *keys.UK) (*pa
 	if err != nil {
 		return nil, false
 	}
-	// An account that had to enroll gets the passkey as step 1, and keeps it
-	// ticked afterwards so the numbering does not shift under the user.
+	// The passkey is step 1 and stays ticked afterwards so the numbering does
+	// not shift under the user.
 	st.Total = 3
-	if s.st.EnrollEnabled() && info.Cohort {
+	if s.st.EnrollEnabled() {
 		st.ShowPasskey, st.Total = true, 4
 		if info.State != "none" {
 			st.Passkey = true
@@ -60,10 +60,14 @@ func (s *server) setupRead(ctx context.Context, userID string, uk *keys.UK) (*pa
 		cx = cx.WithKey(uk, info.State)
 		defer cx.Release()
 	}
-	if _, total, err := cx.ListMemories(ctx, cortex.MemoryListFilter{}, 1, 0); err == nil {
-		st.Memory = total > 0
-	} else {
-		return nil, false
+	// An account that has not enrolled holds no memories, and has no key to
+	// read any with.
+	if info.State != "none" {
+		if _, total, err := cx.ListMemories(ctx, cortex.MemoryListFilter{}, 1, 0); err == nil {
+			st.Memory = total > 0
+		} else {
+			return nil, false
+		}
 	}
 	for _, b := range []bool{st.Provider, st.Connect, st.Memory} {
 		if b {

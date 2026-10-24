@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +46,7 @@ func TestStripUserFlag(t *testing.T) {
 	if _, _, err := stripUserFlag([]string{"--user"}); err == nil {
 		t.Fatal("dangling --user accepted")
 	}
-	for _, c := range []string{"maintain", "recall", "profile", "import-sqlite", "sync"} {
+	for _, c := range []string{"maintain", "recall", "profile", "sync"} {
 		if !userCommands[c] {
 			t.Fatalf("%s must accept --user", c)
 		}
@@ -123,8 +122,8 @@ func TestUserFlagDeletedAndMissingSecret(t *testing.T) {
 	root, dsn := adminRoot(t)
 	ctx := t.Context()
 	u, _ := root.CreateUser(ctx, "s1", "del@x.test", "A", true)
-	if _, err := openUserCortex(ctx, dsn, u.ID, map[string]string{}); err == nil || !strings.Contains(err.Error(), "CORTEX_SECRET_KEY") {
-		t.Fatalf("want secret key error: %v", err)
+	if _, err := openUserCortex(ctx, dsn, u.ID, map[string]string{}); err == nil {
+		t.Fatalf("an unenrolled user's content must not open without a key: %v", err)
 	}
 	db, _ := sql.Open("pgx", dsn)
 	defer db.Close()
@@ -136,52 +135,6 @@ func TestUserFlagDeletedAndMissingSecret(t *testing.T) {
 	}
 }
 
-func TestImportSqliteUserFlag(t *testing.T) {
-	root, _ := adminRoot(t)
-	ctx := t.Context()
-	u, err := root.CreateUser(ctx, "imp", "imp@x.test", "Imp", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	schema, err := os.ReadFile("../../internal/sqliteimport/testdata/v040_schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "old.db")
-	sdb, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, q := range []string{string(schema),
-		`INSERT INTO entities (id,type,name,attributes,source,created_at,updated_at,confidence) VALUES ('e1','person','Alice','{}','s','2026-03-01 08:00:00','2026-03-01 08:00:00',0.9)`,
-		`INSERT INTO memories (id,content,source,created_at,updated_at,valid_at,static,speaker) VALUES ('m1','Alice likes tea','s','2026-03-01 08:00:00','2026-03-01 08:00:00','2026-03-01 08:00:00',0,NULL)`,
-	} {
-		if _, err := sdb.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sdb.Close()
-
-	cx := root.ForUser(u.ID, cortex.WithEmbedder(fixedEmb{}))
-	var out, errw bytes.Buffer
-	if err := runImportSQLite(ctx, cx, importSQLiteOptions{Path: path}, &out, &errw); err != nil {
-		t.Fatalf("import: %v\n%s", err, out.String())
-	}
-	count := func(user string) int {
-		var n int
-		if err := root.DB().QueryRow(`SELECT (SELECT count(*) FROM entities WHERE user_id=$1 AND id='e1') + (SELECT count(*) FROM memories WHERE user_id=$1 AND id='m1')`, user).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		return n
-	}
-	if count(u.ID) != 2 {
-		t.Fatalf("rows missing under the resolved user: %d", count(u.ID))
-	}
-	if count(cortex.BootstrapUserID) != 0 {
-		t.Fatal("rows leaked into the bootstrap user")
-	}
-}
-
 func TestMigrateCommandReportsVersions(t *testing.T) {
 	dsn := pgtest.DSN(t)
 	var buf bytes.Buffer
@@ -189,7 +142,7 @@ func TestMigrateCommandReportsVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "[1 2 3 4 5 6 7 8 9 10 11]") || !strings.Contains(out, "elapsed:") {
+	if !strings.Contains(out, "[1 2 3 4 5 6 7 8 9 10 11 12]") || !strings.Contains(out, "elapsed:") {
 		t.Fatalf("output: %q", out)
 	}
 }
@@ -220,7 +173,7 @@ func TestAdminCommandsRefuseEncryptedUser(t *testing.T) {
 	want := "this user is encrypted; cortex cannot read their content without their key"
 	cmds := [][]string{{"recall", "q"}, {"export", "--dry-run"}, {"lint"}, {"maintain", "--user", u.ID}, {"reconcile"},
 		{"relate"}, {"decay", "--dry-run"}, {"expire", "--dry-run"}, {"normalize", "--dry-run"}, {"profile"},
-		{"import-sqlite", "x.db"}, {"entity", "list"}, {"recall", "--user", u.ID, "q"}, {"profile", "--user", u.ID}}
+		{"entity", "list"}, {"recall", "--user", u.ID, "q"}, {"profile", "--user", u.ID}}
 	for _, c := range cmds {
 		t.Run(strings.Join(c, "_"), func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestAdminCommandsRefuseEncryptedUser$")

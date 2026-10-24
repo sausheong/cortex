@@ -61,7 +61,7 @@ func main() {
 	}
 	if ref != "" {
 		if !userCommands[cmd] {
-			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync, normalize, users set-provider)\n", cmd)
+			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, sync, normalize, users set-provider)\n", cmd)
 			os.Exit(1)
 		}
 		userRef = ref
@@ -105,8 +105,6 @@ func main() {
 		cmdMaintain()
 	case "profile":
 		cmdProfile()
-	case "import-sqlite":
-		cmdImportSQLite()
 	case "mcp":
 		cmdMCP()
 	case "serve":
@@ -127,11 +125,11 @@ func printUsage() {
 
 Global options:
   --db <postgres-url>            Postgres connection URL (or CORTEX_DATABASE_URL env var; no default)
-  --user <id|verified-email>     Act as that user with their own provider settings (needs CORTEX_SECRET_KEY);
-                                 accepted by maintain, recall, profile, import-sqlite, sync and normalize
+  --user <id|verified-email>     Act as that user with their own provider settings (refused for encrypted users);
+                                 accepted by maintain, recall, profile, sync and normalize
 
 Commands:
-  serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
+  serve [--addr host:port]       Multi-user web, OAuth and MCP service
   migrate [--timeout 30m]        Apply database migrations and report the versions
   users list                     List users (ID, email, created, status, usage); metadata only, never content.
                                  Commands that read content refuse encrypted users
@@ -157,8 +155,6 @@ Commands:
   config --email <email>         Add an email address
   export [--vault <dir>] [--full] [--dry-run]
                                  Export the knowledge graph as an Obsidian-compatible markdown vault
-  import-sqlite <path> [--force] [--embed-only]
-                                 Import a v0.4 SQLite brain into Postgres, then embed rows lacking embeddings
   init-schema [<dir>] [--force]
                                  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
   lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]

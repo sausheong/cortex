@@ -2,8 +2,6 @@ package graph
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -35,69 +33,7 @@ func (c Ops) PutRelationship(ctx context.Context, r *model.Relationship) error {
 	if attrs == nil {
 		attrs = map[string]any{}
 	}
-	if c.Encrypted() {
-		return c.putRelationshipEnc(ctx, r, attrs, now)
-	}
-	attrsJSON, err := json.Marshal(attrs)
-	if err != nil {
-		return fmt.Errorf("cortex: marshal relationship attributes: %w", err)
-	}
-
-	tx, err := c.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("cortex: begin relationship: %w", err)
-	}
-	defer tx.Rollback()
-
-	requestedStart := r.ValidAt // the caller's start; r.ValidAt becomes the stored one
-	var validAt, invalidAt sql.NullTime
-	err = tx.QueryRowContext(ctx,
-		`INSERT INTO relationships (id, user_id, source_id, target_id, type, attributes, source, confidence, created_at, last_seen_at, valid_at, invalid_at, written_by_connection_id)
-		 VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (user_id, source_id, target_id, type) WHERE deleted_at IS NULL AND enc IS NOT TRUE DO UPDATE SET
-		   evidence_count = relationships.evidence_count + 1,
-		   last_seen_at = EXCLUDED.last_seen_at,
-		   confidence = GREATEST(relationships.confidence, EXCLUDED.confidence),
-		   attributes = CASE WHEN jsonb_typeof(relationships.attributes) = 'object'
-		                     THEN relationships.attributes || EXCLUDED.attributes
-		                     ELSE EXCLUDED.attributes END,
-		   valid_at = CASE WHEN relationships.invalid_at IS NOT NULL AND EXCLUDED.invalid_at IS NULL
-		                   THEN COALESCE(EXCLUDED.valid_at, now())
-		                   ELSE COALESCE(relationships.valid_at, EXCLUDED.valid_at) END,
-		   invalid_at = EXCLUDED.invalid_at
-		 RETURNING id, created_at, evidence_count, confidence, valid_at, invalid_at`,
-		store.NewID(), c.UserID, r.SourceID, r.TargetID, r.Type, string(attrsJSON), r.Source, r.Confidence, now, now,
-		r.ValidAt, r.InvalidAt, c.NullConn(),
-	).Scan(&r.ID, &r.CreatedAt, &r.EvidenceCount, &r.Confidence, &validAt, &invalidAt)
-	if err != nil {
-		return fmt.Errorf("cortex: upsert relationship: %w", err)
-	}
-	r.ValidAt, r.InvalidAt = store.NullTimePtr(validAt), store.NullTimePtr(invalidAt)
-
-	// A single-valued verb (lives_in, reports_to) holds one current target per
-	// source: asserting a new one closes the others.
-	if r.InvalidAt == nil && contains(ontology.SingleValuedVerbs(), r.Type) {
-		// Close at the new edge's start, else at the database's now(): the
-		// "holds now" check compares with the database clock, which may lag
-		// this process's.
-		var closeAt any
-		if requestedStart != nil {
-			closeAt = *requestedStart
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE relationships SET invalid_at = COALESCE(?::timestamptz, now())
-			 WHERE user_id = ? AND deleted_at IS NULL AND invalid_at IS NULL
-			   AND source_id = ? AND ((enc AND type_blind = ?) OR (enc IS NOT TRUE AND type = ?)) AND target_id <> ?`,
-			closeAt, c.UserID, r.SourceID, c.BlindNorm(r.Type), r.Type, r.TargetID); err != nil {
-			return fmt.Errorf("cortex: close superseded relationships: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("cortex: commit relationship: %w", err)
-	}
-	r.LastSeenAt = now
-	c.NotifyWrite("relationship")
-	return nil
+	return c.putRelationshipEnc(ctx, r, attrs, now)
 }
 
 // InvalidateRelationship records that a relationship ended at t. The edge
@@ -154,8 +90,8 @@ func (c Ops) GetRelationships(ctx context.Context, entityID string, filters ...m
 
 	if cfg.RelType != "" {
 		rt := ontology.NormalizeType(cfg.RelType)
-		query += " AND ((enc AND type_blind = ?) OR (enc IS NOT TRUE AND type = ?))"
-		args = append(args, c.BlindNorm(rt), rt)
+		query += " AND type_blind = ?"
+		args = append(args, c.BlindNorm(rt))
 	}
 
 	rows, err := c.DB.QueryContext(ctx, query, args...)

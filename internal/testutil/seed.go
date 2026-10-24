@@ -22,19 +22,19 @@ type Team struct {
 	WidgetCo cortex.Entity
 
 	// Relationships
-	AliceAtAcme        cortex.Relationship // Alice works_at Acme
-	BobAtAcme          cortex.Relationship // Bob works_at Acme
-	CarolAtAcme        cortex.Relationship // Carol works_at Acme
-	DaveAtAcme         cortex.Relationship // Dave works_at Acme
-	AliceKnowsEve      cortex.Relationship // Alice knows Eve
+	AliceAtAcme         cortex.Relationship // Alice works_at Acme
+	BobAtAcme           cortex.Relationship // Bob works_at Acme
+	CarolAtAcme         cortex.Relationship // Carol works_at Acme
+	DaveAtAcme          cortex.Relationship // Dave works_at Acme
+	AliceKnowsEve       cortex.Relationship // Alice knows Eve
 	AliceWorkedAtWidget cortex.Relationship // Alice worked_at WidgetCo
-	BobReportsToAlice  cortex.Relationship // Bob reports_to Alice
+	BobReportsToAlice   cortex.Relationship // Bob reports_to Alice
 
 	// Memories
-	MemAliceJoined  cortex.Memory // Alice joined Acme after WidgetCo
-	MemPayments     cortex.Memory // Bob and Carol on payments feature
-	MemRoadmap      cortex.Memory // Dave coordinating Q3 roadmap
-	MemOnboarding   cortex.Memory // Eve designed onboarding flow
+	MemAliceJoined cortex.Memory // Alice joined Acme after WidgetCo
+	MemPayments    cortex.Memory // Bob and Carol on payments feature
+	MemRoadmap     cortex.Memory // Dave coordinating Q3 roadmap
+	MemOnboarding  cortex.Memory // Eve designed onboarding flow
 
 	// Text chunks (keyword / vector searchable)
 	ChunkAliceBio      cortex.Chunk // Alice's biography

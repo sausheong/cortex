@@ -98,29 +98,7 @@ func (c Ops) AddAlias(ctx context.Context, entityID, kind, value string) error {
 	if norm == "" {
 		return fmt.Errorf("cortex: empty alias")
 	}
-	if c.Encrypted() {
-		if err := c.RequireKey(); err != nil {
-			return err
-		}
-		return c.addAliasEnc(ctx, entityID, kind, value, norm)
-	}
-	var owner string
-	err := c.DB.QueryRowContext(ctx,
-		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
-		 VALUES (?, ?, ?, ?, ?, 'user')
-		 ON CONFLICT (user_id, kind, value_norm) WHERE enc IS NOT TRUE DO UPDATE SET
-		   entity_id = CASE WHEN EXISTS (SELECT 1 FROM entities e WHERE e.id = entity_aliases.entity_id AND e.deleted_at IS NULL)
-		                    THEN entity_aliases.entity_id ELSE EXCLUDED.entity_id END
-		 RETURNING entity_id`,
-		c.UserID, entityID, kind, strings.TrimSpace(value), norm,
-	).Scan(&owner)
-	if err != nil {
-		return fmt.Errorf("cortex: add alias: %w", err)
-	}
-	if owner != entityID {
-		return model.ErrAliasTaken
-	}
-	return nil
+	return c.addAliasEnc(ctx, entityID, kind, value, norm)
 }
 
 // AddAliasQuiet records an alias learned during ingest. It never moves an
@@ -130,17 +108,8 @@ func (c Ops) AddAliasQuiet(ctx context.Context, entityID, kind, value, source st
 	if norm == "" {
 		return
 	}
-	if c.Encrypted() {
-		if err := c.addAliasQuietEnc(ctx, entityID, kind, value, source, norm); err != nil {
-			c.Logf("cortex: record alias: %v", err)
-		}
-		return
-	}
-	if _, err := c.DB.ExecContext(ctx,
-		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
-		 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		c.UserID, entityID, kind, strings.TrimSpace(value), norm, source); err != nil {
-		c.Logf("cortex: record alias for entity %s: %v", entityID, err)
+	if err := c.addAliasQuietEnc(ctx, entityID, kind, value, source, norm); err != nil {
+		c.Logf("cortex: record alias: %v", err)
 	}
 }
 
@@ -181,9 +150,8 @@ func (c Ops) RemoveAlias(ctx context.Context, kind, value string) error {
 	}
 	norm := normalizeAlias(kind, value)
 	if _, err := c.DB.ExecContext(ctx,
-		`DELETE FROM entity_aliases WHERE user_id = ? AND kind = ?
-		   AND ((enc AND value_blind = ?) OR (enc IS NOT TRUE AND value_norm = ?))`,
-		c.UserID, kind, c.Blind(norm), norm); err != nil {
+		`DELETE FROM entity_aliases WHERE user_id = ? AND kind = ? AND value_blind = ?`,
+		c.UserID, kind, c.Blind(norm)); err != nil {
 		return fmt.Errorf("cortex: remove alias: %w", err)
 	}
 	return nil
@@ -252,24 +220,18 @@ func (c Ops) owner(ctx context.Context, rc *ResolveContext) (string, map[string]
 		return "", rc.ownerNames
 	}
 	var entName, userName, email sql.NullString
-	if c.Encrypted() {
-		// Encrypted owner names come from the working set; the users row
-		// only supplies the (plain) account name and email.
-		ws, err := workset.For(ctx, c.Handle)
-		if err != nil {
-			return "", rc.ownerNames
-		}
-		e, ok := ws.EntityByID(id)
-		if !ok {
-			return "", rc.ownerNames
-		}
-		entName = sql.NullString{String: e.Name, Valid: true}
-		if err := c.DB.QueryRowContext(ctx, `SELECT name, email FROM users WHERE id = ?`, c.UserID).Scan(&userName, &email); err != nil {
-			return "", rc.ownerNames
-		}
-	} else if err := c.DB.QueryRowContext(ctx,
-		`SELECT e.name, u.name, u.email FROM users u JOIN entities e ON e.id = u.owner_entity_id
-		 WHERE u.id = ? AND e.deleted_at IS NULL AND e.enc IS NOT TRUE`, c.UserID).Scan(&entName, &userName, &email); err != nil {
+	// Owner names come from the working set; the users row only supplies the
+	// (plain) account name and email.
+	ws, err := workset.For(ctx, c.Handle)
+	if err != nil {
+		return "", rc.ownerNames
+	}
+	e, ok := ws.EntityByID(id)
+	if !ok {
+		return "", rc.ownerNames
+	}
+	entName = sql.NullString{String: e.Name, Valid: true}
+	if err := c.DB.QueryRowContext(ctx, `SELECT name, email FROM users WHERE id = ?`, c.UserID).Scan(&userName, &email); err != nil {
 		return "", rc.ownerNames
 	}
 	for _, n := range []string{entName.String, userName.String} {
@@ -398,18 +360,16 @@ func identifiers(mention string, attrs map[string]any) [][2]string {
 func (c Ops) matchAlias(ctx context.Context, mention, typ string, attrs map[string]any) (*model.Entity, error) {
 	var conds []string
 	var args []any
-	legacy := c.legacyOK()
 	add := func(kind, norm string) {
-		conds = append(conds, `(a.kind = ? AND ((a.enc AND a.value_blind = ?) OR (?::boolean AND a.enc IS NOT TRUE AND a.value_norm = ?)))`)
-		args = append(args, kind, c.Blind(norm), legacy, norm)
+		conds = append(conds, `(a.kind = ? AND a.value_blind = ?)`)
+		args = append(args, kind, c.Blind(norm))
 	}
 	add(model.AliasName, normalizeAlias(model.AliasName, mention))
 	for _, id := range identifiers(mention, attrs) {
 		add(id[0], normalizeAlias(id[0], id[1]))
 	}
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT a.id, a.entity_id, a.kind, a.enc, a.value, a.source, a.value_ct, a.source_ct, a.created_at,
-		        e.id, e.enc, e.type, e.type_ct
+		`SELECT a.entity_id, a.kind, e.id, e.type_ct
 		 FROM entity_aliases a
 		 JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
 		 WHERE a.user_id = ? AND (`+strings.Join(conds, " OR ")+`)`, append([]any{c.UserID}, args...)...)
@@ -417,49 +377,25 @@ func (c Ops) matchAlias(ctx context.Context, mention, typ string, attrs map[stri
 		return nil, fmt.Errorf("cortex: match alias: %w", err)
 	}
 	ids := map[string]bool{}
-	var legacyHits []aliasRow
 	for rows.Next() {
-		var entID string
-		var entEnc bool
-		var entType sql.NullString
+		var entID, aliasEntity, kind string
 		var typeCT []byte
-		var a aliasRow
-		var value, source sql.NullString
-		var valueCT, sourceCT []byte
-		if err := rows.Scan(&a.id, &a.entityID, &a.kind, &a.enc, &value, &source, &valueCT, &sourceCT, &a.created,
-			&entID, &entEnc, &entType, &typeCT); err != nil {
+		if err := rows.Scan(&aliasEntity, &kind, &entID, &typeCT); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan alias match: %w", err)
 		}
-		if err := c.CheckRowForm(a.enc); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		t, err := c.entityType(entID, entEnc, entType, typeCT)
+		t, err := c.entityType(entID, typeCT)
 		if err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if a.kind != model.AliasName || kindMatches(t, typ) {
-			ids[a.entityID] = true
-			if !a.enc {
-				a.value, a.source = value.String, source.String
-				legacyHits = append(legacyHits, a)
-			}
+		if kind != model.AliasName || kindMatches(t, typ) {
+			ids[aliasEntity] = true
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("cortex: match alias: %w", err)
-	}
-	if c.Migrating() && c.Key != nil {
-		for _, a := range legacyHits {
-			if err := c.writeAliasEnc(ctx, c.DB, a.id, a.entityID, a.kind, a.value, a.source); err != nil {
-				c.Logf("cortex: rewrite legacy alias: %v", err)
-			} else {
-				c.NotifyWrite("alias")
-			}
-		}
 	}
 	if len(ids) != 1 {
 		return nil, nil
@@ -486,42 +422,35 @@ func (c Ops) fuzzyCandidates(ctx context.Context, mention, typ string, rc *Resol
 		return nil, nil
 	}
 	var out []model.ScoredEntity
-	if c.Encrypted() {
-		// Postgres cannot match words inside ciphertext: candidates are
-		// picked over the decrypted working set with the same word filter
-		// as the SQL path's LIKE.
-		ws, err := workset.For(ctx, c.Handle)
-		if err != nil {
-			return nil, err
+	// Postgres cannot match words inside ciphertext: candidates are
+	// picked over the decrypted working set with the same word filter
+	// as the SQL path's LIKE.
+	ws, err := workset.For(ctx, c.Handle)
+	if err != nil {
+		return nil, err
+	}
+	matched := 0
+	for _, e := range ws.Entities() {
+		if matched >= fuzzyCandidates {
+			break
 		}
-		matched := 0
-		for _, e := range ws.Entities() {
-			if matched >= fuzzyCandidates {
+		low := strings.ToLower(e.Name)
+		hit := false
+		for _, w := range words {
+			if strings.Contains(low, w) {
+				hit = true
 				break
 			}
-			low := strings.ToLower(e.Name)
-			hit := false
-			for _, w := range words {
-				if strings.Contains(low, w) {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
-			matched++
-			if !kindMatches(e.Type, typ) {
-				continue
-			}
-			if s := NameSimilarity(mention, e.Name); s > 0 {
-				out = append(out, model.ScoredEntity{Entity: e, Score: s})
-			}
 		}
-	} else {
-		var err error
-		if out, err = c.fuzzyLegacy(ctx, mention, typ, likes); err != nil {
-			return nil, err
+		if !hit {
+			continue
+		}
+		matched++
+		if !kindMatches(e.Type, typ) {
+			continue
+		}
+		if s := NameSimilarity(mention, e.Name); s > 0 {
+			out = append(out, model.ScoredEntity{Entity: e, Score: s})
 		}
 	}
 	if len(out) == 0 {
@@ -540,48 +469,6 @@ func (c Ops) fuzzyCandidates(ctx context.Context, mention, typ string, rc *Resol
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
-	return out, nil
-}
-
-// fuzzyLegacy is the SQL candidate filter for unencrypted users.
-func (c Ops) fuzzyLegacy(ctx context.Context, mention, typ string, likes []string) ([]model.ScoredEntity, error) {
-	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, enc, type, name, type_ct, name_ct, confidence FROM entities
-		 WHERE user_id = ? AND deleted_at IS NULL AND enc IS NOT TRUE AND lower(name) LIKE ANY(?)
-		 `, c.UserID, likes)
-	if err != nil {
-		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
-	}
-	var out []model.ScoredEntity
-	matched := 0
-	for rows.Next() {
-		var e model.Entity
-		var enc bool
-		var etyp, name sql.NullString
-		var typeCT, nameCT []byte
-		if err := rows.Scan(&e.ID, &enc, &etyp, &name, &typeCT, &nameCT, &e.Confidence); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("cortex: scan candidate: %w", err)
-		}
-		if matched >= fuzzyCandidates {
-			break
-		}
-		if err := c.openNameType(&e, enc, name, etyp, nameCT, typeCT); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		matched++
-		if !kindMatches(e.Type, typ) {
-			continue
-		}
-		if s := NameSimilarity(mention, e.Name); s > 0 {
-			out = append(out, model.ScoredEntity{Entity: e, Score: s})
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
-	}
 	return out, nil
 }
 

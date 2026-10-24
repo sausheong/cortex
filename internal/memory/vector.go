@@ -27,8 +27,9 @@ func checkPgvectorVersion(v string) error {
 	return fmt.Errorf("cortex: pgvector %s is too old, need >= 0.8.0 (ALTER EXTENSION vector UPDATE)", v)
 }
 
-// EnsureVectorSchema checks the pgvector version. The embedding column and
-// its indexes are managed per user by migration 002 and the vector layer.
+// EnsureVectorSchema checks the pgvector version. Embeddings are stored as
+// ciphertext and searched over the decrypted working set, so no vector index
+// exists; the extension is only needed for the dims bookkeeping column type.
 func (c Ops) EnsureVectorSchema(ctx context.Context) error {
 	var ver string
 	if err := c.DB.QueryRowContext(ctx,
@@ -36,40 +37,6 @@ func (c Ops) EnsureVectorSchema(ctx context.Context) error {
 		return fmt.Errorf("cortex: pgvector extension not found: %w", err)
 	}
 	return checkPgvectorVersion(ver)
-}
-
-// VectorLiteral renders v in pgvector text form, e.g. [0.1,0.2].
-func VectorLiteral(v []float32) string {
-	var b strings.Builder
-	b.WriteByte('[')
-	for i, x := range v {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteString(strconv.FormatFloat(float64(x), 'g', -1, 32))
-	}
-	b.WriteByte(']')
-	return b.String()
-}
-
-// ParseVectorLiteral parses pgvector text form into float32s.
-func ParseVectorLiteral(s string) ([]float32, error) {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "[")
-	s = strings.TrimSuffix(s, "]")
-	if s == "" {
-		return nil, nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]float32, len(parts))
-	for i, p := range parts {
-		f, err := strconv.ParseFloat(strings.TrimSpace(p), 32)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = float32(f)
-	}
-	return out, nil
 }
 
 const ReembedLockSQL = `hashtextextended('reembed:' || ?::text, 0)`
@@ -106,14 +73,6 @@ func checkDims(n int) error {
 		return fmt.Errorf("cortex: embedding has %d dims, want 1..4000", n)
 	}
 	return nil
-}
-
-// upsertEmbedding writes one embedding row through q.
-func upsertEmbeddingSQL() string {
-	return `INSERT INTO embeddings (id, user_id, ref_id, ref_type, embedding, dims, generation, created_at)
-		 VALUES (?, ?, ?, ?, ?::halfvec, ?, ?, now())
-		 ON CONFLICT (user_id, ref_type, ref_id, generation) DO UPDATE SET
-		   embedding = EXCLUDED.embedding, dims = EXCLUDED.dims`
 }
 
 // PutEmbedding stores an embedding for the handle's generation (pinned, or
@@ -224,34 +183,5 @@ func (c Ops) FlipGeneration(ctx context.Context, newGen int,
 		return err
 	}
 	c.NotifyWrite("embedding")
-	return nil
-}
-
-// EnsureVectorIndex creates the partial HNSW index for (dims, refType) if it
-// is missing, outside any transaction, serialised by an advisory lock. It
-// must not be called on a request path.
-func (c Ops) EnsureVectorIndex(ctx context.Context, dims int, refType string) error {
-	if err := checkDims(dims); err != nil {
-		return err
-	}
-	switch refType {
-	case "entity", "memory", "chunk":
-	default:
-		return fmt.Errorf("cortex: unknown ref type %q", refType)
-	}
-	conn, err := c.DB.DB.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("cortex: index conn: %w", err)
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(4243)`); err != nil {
-		return fmt.Errorf("cortex: index lock: %w", err)
-	}
-	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(4243)`)
-	q := fmt.Sprintf(`CREATE INDEX IF NOT EXISTS emb_hnsw_%s_%d ON embeddings USING hnsw ((embedding::halfvec(%d)) halfvec_cosine_ops) WHERE dims = %d AND ref_type = '%s' AND enc IS NOT TRUE`,
-		refType, dims, dims, dims, refType)
-	if _, err := conn.ExecContext(ctx, q); err != nil {
-		return fmt.Errorf("cortex: create vector index: %w", err)
-	}
 	return nil
 }

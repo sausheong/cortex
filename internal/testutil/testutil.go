@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 // MockLLM is a configurable mock for the cortex.LLM interface.
@@ -105,15 +104,10 @@ func OpenTestDB(t *testing.T) *cortex.Cortex {
 	embedder := &MockEmbedder{}
 	extractor := &MockExtractor{}
 
-	c, err := cortex.Open(pgtest.DSN(t),
+	c, _ := OpenEncryptedWith(t,
 		cortex.WithLLM(llm),
 		cortex.WithEmbedder(embedder),
 		cortex.WithExtractor(extractor),
 	)
-	if err != nil {
-		t.Fatalf("testutil.OpenTestDB: %v", err)
-	}
-
-	t.Cleanup(func() { c.Close() })
 	return c
 }

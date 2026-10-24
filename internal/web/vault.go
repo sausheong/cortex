@@ -236,7 +236,7 @@ func (s *server) vaultVersion(ctx context.Context, userID string) (string, error
 SELECT
  (SELECT count(*) FROM entities WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT coalesce(max(updated_at)::text,'') FROM entities WHERE user_id=$1 AND deleted_at IS NULL),
- (SELECT coalesce(md5(string_agg(id||'|'||source_id||'|'||target_id||'|'||coalesce(type,'')||'|'||coalesce(encode(type_blind,'hex'),'')||'|'||coalesce(invalid_at::text,''), ',' ORDER BY id)),'') FROM relationships WHERE user_id=$1 AND deleted_at IS NULL),
+ (SELECT coalesce(md5(string_agg(id||'|'||source_id||'|'||target_id||'|'||coalesce(encode(type_blind,'hex'),'')||'|'||coalesce(invalid_at::text,''), ',' ORDER BY id)),'') FROM relationships WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT count(*) FROM memories WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT coalesce(max(updated_at)::text,'') FROM memories WHERE user_id=$1 AND deleted_at IS NULL),
  (SELECT coalesce(md5(string_agg(memory_id||'|'||entity_id, ',' ORDER BY memory_id, entity_id)),'') FROM memory_entities WHERE user_id=$1)`, userID).Scan(&e, &et, &rh, &m, &mt, &mh)

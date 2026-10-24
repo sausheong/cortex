@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
 )
 
@@ -47,30 +48,28 @@ func rememberEnv(t *testing.T, url string) (*env, string, *accounts.Connection) 
 	t.Helper()
 	e := newEnv(t)
 	e.st.AllowPrivate = true
-	u, err := e.root.CreateUser(t.Context(), "r", "r@x.test", "r", true)
+	uid, uk := e.bareEnc(t, "r")
+	if _, err := e.st.PutSettings(t.Context(), uid, accounts.Settings{BaseURL: url, APIKey: "sk-test", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, uk); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := e.st.CreateConnection(t.Context(), uid, "agent", "laptop", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: url, APIKey: "sk-test", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, nil); err != nil {
-		t.Fatal(err)
-	}
-	conn, err := e.st.CreateConnection(t.Context(), u.ID, "agent", "laptop", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return e, u.ID, conn
+	return e, uid, conn
 }
 
 func TestRememberJobStoresWithConnectionProvenance(t *testing.T) {
 	e, uid, conn := rememberEnv(t, rememberProvider(t, nil))
 	pool := NewPool(2, func(ctx context.Context, j Job) error {
-		return RememberJob(ctx, e.root, e.st, j.UserID, j.Payload)
+		return RememberJobKey(ctx, e.root, e.st, j.UserID, j.Payload, j.Key)
 	}).WithDB(e.db)
 	text := strings.Repeat("Maria Lopez leads the billing team at Acme Corp. ", 300)
-	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, Source: "doc.md", Speaker: "maria", ConnID: conn.ID}, nil)
+	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, Source: "doc.md", Speaker: "maria", ConnID: conn.ID}, e.keys[uid])
 	if err != nil {
 		t.Fatal(err)
 	}
+	pool.AttachKey(uid, e.keys[uid], time.Minute)
 	pool.Start(t.Context())
 	defer pool.Stop()
 	waitStatus(t, e, id, "done")
@@ -84,10 +83,20 @@ func TestRememberJobStoresWithConnectionProvenance(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM memories WHERE user_id=$1 AND written_by_connection_id IS DISTINCT FROM $2`, uid, conn.ID); n != 0 {
 		t.Fatalf("%d memories lack the connection", n)
 	}
-	if n := e.count(t, `SELECT count(*) FROM memories WHERE user_id=$1 AND written_by_connection_id=$2 AND speaker='maria' AND source='doc.md'`, uid, conn.ID); n == 0 {
+	mems, _, err := e.handle(uid, nil, 0).ListMemories(t.Context(), cortex.MemoryListFilter{}, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range mems {
+		if m.WrittenBy == conn.ID && m.Speaker == "maria" && m.Source == "doc.md" {
+			found = true
+		}
+	}
+	if !found {
 		t.Fatal("no memory carries the connection, source and speaker")
 	}
-	if n := e.count(t, `SELECT count(*) FROM jobs WHERE id=$1 AND payload=''`, id); n != 1 {
+	if n := e.count(t, `SELECT count(*) FROM jobs WHERE id=$1 AND payload_ct IS NULL`, id); n != 1 {
 		t.Fatal("payload kept after the job finished")
 	}
 }
@@ -97,14 +106,15 @@ func TestRememberJobRetriesAndResumesAfterRestart(t *testing.T) {
 	down.Store(true)
 	e, uid, conn := rememberEnv(t, rememberProvider(t, &down))
 	run := func(ctx context.Context, j Job) error {
-		return RememberJob(ctx, e.root, e.st, j.UserID, j.Payload)
+		return RememberJobKey(ctx, e.root, e.st, j.UserID, j.Payload, j.Key)
 	}
 	pool := NewPool(1, run).WithDB(e.db)
 	text := strings.Repeat("Maria Lopez leads the billing team at Acme Corp. ", 300)
-	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, ConnID: conn.ID}, nil)
+	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, ConnID: conn.ID}, e.keys[uid])
 	if err != nil {
 		t.Fatal(err)
 	}
+	pool.AttachKey(uid, e.keys[uid], time.Minute)
 	pool.Start(t.Context())
 	// A transient failure puts the job back in the queue for later.
 	deadline := func() (status, msg string, attempts int, later bool) {
@@ -127,6 +137,7 @@ func TestRememberJobRetriesAndResumesAfterRestart(t *testing.T) {
 	down.Store(false)
 	e.db.Exec(`UPDATE jobs SET run_after = now() WHERE id=$1`, id) // the backoff has passed
 	pool2 := NewPool(1, run).WithDB(e.db)
+	pool2.AttachKey(uid, e.keys[uid], time.Minute)
 	pool2.Start(t.Context())
 	defer pool2.Stop()
 	waitStatus(t, e, id, "done")
@@ -139,11 +150,12 @@ func TestRememberJobGivesUpAfterMaxAttempts(t *testing.T) {
 	e := newEnv(t)
 	u := e.user(t, "g")
 	pool := NewPool(1, func(context.Context, Job) error { return errors.New("boom") }).WithDB(e.db)
-	id, err := pool.EnqueueWith(t.Context(), u, RememberKind, `{"content":"x"}`)
+	id, err := pool.EnqueueWithKey(t.Context(), u, RememberKind, `{"content":"x"}`, e.keys[u])
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.db.Exec(`UPDATE jobs SET attempts=$2 WHERE id=$1`, id, maxAttempts-1)
+	pool.AttachKey(u, e.keys[u], time.Minute)
 	pool.Start(t.Context())
 	defer pool.Stop()
 	waitStatus(t, e, id, "failed")

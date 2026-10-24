@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -32,24 +31,19 @@ func (c Ops) PutMemoryEdge(ctx context.Context, e *model.MemoryEdge) error {
 
 	// The type is a closed vocabulary (supersedes, derives, extends) and stays
 	// plain; the free-text source is sealed.
-	var source, sourceCT any
-	enc := c.Encrypted()
+	var sourceCT any
 	if e.Source != "" {
-		if enc {
-			ct, err := c.SealStr(store.TblMemoryEdges, e.ID, "source", e.Source)
-			if err != nil {
-				return err
-			}
-			sourceCT = ct
-		} else {
-			source = e.Source
+		ct, err := c.SealStr(store.TblMemoryEdges, e.ID, "source", e.Source)
+		if err != nil {
+			return err
 		}
+		sourceCT = ct
 	}
 	_, err := c.DB.ExecContext(ctx,
-		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, enc, source, source_ct, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source_ct, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
-		e.ID, c.UserID, e.SourceID, e.TargetID, e.Type, enc, source, sourceCT, e.CreatedAt,
+		e.ID, c.UserID, e.SourceID, e.TargetID, e.Type, sourceCT, e.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory edge: %w", err)
@@ -65,7 +59,7 @@ func (c Ops) GetMemoryEdges(ctx context.Context, memoryID string) ([]model.Memor
 		return nil, err
 	}
 	return c.queryMemoryEdges(ctx,
-		`SELECT id, source_id, target_id, type, source, created_at, enc, source_ct
+		`SELECT id, source_id, target_id, type, created_at, source_ct
 		 FROM memory_edges
 		 WHERE user_id = ? AND (source_id = ? OR target_id = ?)
 		 ORDER BY created_at`,
@@ -80,7 +74,7 @@ func (c Ops) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType string
 		return nil, err
 	}
 	return c.queryMemoryEdges(ctx,
-		`SELECT id, source_id, target_id, type, source, created_at, enc, source_ct
+		`SELECT id, source_id, target_id, type, created_at, source_ct
 		 FROM memory_edges
 		 WHERE user_id = ? AND (source_id = ? OR target_id = ?) AND type = ?
 		 ORDER BY created_at`,
@@ -98,22 +92,13 @@ func (c Ops) queryMemoryEdges(ctx context.Context, query string, args ...any) ([
 	var edges []model.MemoryEdge
 	for rows.Next() {
 		var e model.MemoryEdge
-		var source sql.NullString
-		var enc bool
 		var sourceCT []byte
-		if err := rows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.Type, &source, &e.CreatedAt, &enc, &sourceCT); err != nil {
+		if err := rows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.Type, &e.CreatedAt, &sourceCT); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory edge: %w", err)
 		}
-		if err := c.CheckRowForm(enc); err != nil {
+		var err error
+		if e.Source, err = c.OpenOptStr(store.TblMemoryEdges, e.ID, "source", sourceCT); err != nil {
 			return nil, err
-		}
-		if enc {
-			var err error
-			if e.Source, err = c.OpenOptStr(store.TblMemoryEdges, e.ID, "source", sourceCT); err != nil {
-				return nil, err
-			}
-		} else if source.Valid {
-			e.Source = source.String
 		}
 		edges = append(edges, e)
 	}

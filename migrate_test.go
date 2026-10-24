@@ -76,7 +76,9 @@ func TestMigration002FromLegacy(t *testing.T) {
 		}
 		before[tb] = n
 	}
-	if err := c.migrate(ctx); err != nil {
+	// Migration 012 refuses while an unenrolled user holds data (this fixture
+	// is a pre-encryption deployment), so stop before it.
+	if err := c.migrateUpTo(ctx, 11); err != nil {
 		t.Fatalf("migrate 002: %v", err)
 	}
 	for _, tb := range tables {
@@ -109,25 +111,12 @@ func TestMigration002FromLegacy(t *testing.T) {
 		t.Error("cortex_meta embedding_dims row not deleted")
 	}
 
-	// Open on the migrated DB; the bootstrap user can search its old vector.
-	cx, err := Open(dsn, WithEmbedder(&dimsEmbedder{512}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
-	got, err := cx.SearchMemoryVector(ctx, "tea", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].ID != "m1" {
-		t.Fatalf("SearchMemoryVector = %+v", got)
-	}
 }
 
 func TestMigration002SetsBootstrapOwnerEntity(t *testing.T) {
 	ctx := context.Background()
 	c := legacyFixture(t, pgtest.DSN(t))
-	if err := c.migrate(ctx); err != nil {
+	if err := c.migrateUpTo(ctx, 11); err != nil {
 		t.Fatal(err)
 	}
 	var owner string
@@ -143,13 +132,12 @@ func TestMigration002FreshDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var typ string
-	if err := c.h.DB.QueryRowContext(ctx,
-		`SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a
-		 WHERE a.attrelid = 'embeddings'::regclass AND a.attname = 'embedding'`).Scan(&typ); err != nil || typ != "halfvec" {
-		t.Fatalf("embedding type = %q err=%v, want untyped halfvec", typ, err)
-	}
 	var n int
+	if err := c.h.DB.QueryRowContext(ctx,
+		`SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
+		 AND table_name = 'embeddings' AND column_name IN ('embedding_ct', 'embedding', 'enc')`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("embeddings carries only embedding_ct, got %d of the three err=%v", n, err)
+	}
 	if err := c.h.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
 		 AND table_name = 'embeddings' AND column_name IN ('dims', 'generation')`).Scan(&n); err != nil || n != 2 {
@@ -165,13 +153,17 @@ func TestMigration002FreshDB(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer c2.Close()
-	if v := schemaVersion(t, c2); v != 11 {
+	if v := schemaVersion(t, c2); v != 12 {
 		t.Errorf("version = %d", v)
 	}
 }
 
 func TestBootstrapDefault(t *testing.T) {
-	c := openTestDB(t)
+	c, err := Open(pgtest.DSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
 	if c.UserID() != "u_bootstrap" {
 		t.Fatalf("UserID = %q", c.UserID())
 	}
@@ -182,7 +174,11 @@ func TestBootstrapDefault(t *testing.T) {
 
 func TestPutEntityConflictPerUser(t *testing.T) {
 	ctx := context.Background()
-	c := openTestDB(t)
+	c, err := Open(pgtest.DSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
 	a, err := c.CreateUser(ctx, "sub-a", "a@x.com", "A", true)
 	if err != nil {
 		t.Fatal(err)
@@ -191,64 +187,50 @@ func TestPutEntityConflictPerUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{a.ID, b.ID, a.ID, b.ID} {
-		if err := c.ForUser(id).PutEntity(ctx, &Entity{Type: "person", Name: "Alice"}); err != nil {
+	ha, hb := keyedHandle(t, c, a.ID), keyedHandle(t, c, b.ID)
+	for _, h := range []*Cortex{ha, hb, ha, hb} {
+		if err := h.PutEntity(ctx, &Entity{Type: "person", Name: "Alice"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var n, na, nb int
-	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND deleted_at IS NULL`).Scan(&n)
-	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND user_id = ?`, a.ID).Scan(&na)
-	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE name = 'Alice' AND user_id = ?`, b.ID).Scan(&nb)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE deleted_at IS NULL`).Scan(&n)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE user_id = ?`, a.ID).Scan(&na)
+	_ = c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM entities WHERE user_id = ?`, b.ID).Scan(&nb)
 	if n != 2 || na != 1 || nb != 1 {
 		t.Fatalf("rows total=%d a=%d b=%d, want 2/1/1", n, na, nb)
 	}
 	// Each user's data is invisible to the other.
-	got, err := c.ForUser(a.ID).FindEntities(ctx, EntityFilter{NameLike: "Alice"})
+	got, err := ha.FindEntities(ctx, EntityFilter{NameLike: "Alice"})
 	if err != nil || len(got) != 1 {
 		t.Fatalf("user a sees %d Alice entities err=%v, want 1", len(got), err)
 	}
-	if _, err := c.ForUser(b.ID).GetEntity(ctx, got[0].ID); !errors.Is(err, ErrNotFound) {
+	if _, err := hb.GetEntity(ctx, got[0].ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign GetEntity err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestSyncStatePerUser(t *testing.T) {
 	ctx := context.Background()
-	c := openTestDB(t)
+	c, err := Open(pgtest.DSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
 	a, _ := c.CreateUser(ctx, "sa", "a@x.com", "A", true)
 	b, _ := c.CreateUser(ctx, "sb", "b@x.com", "B", true)
-	if err := c.ForUser(a.ID).SetSyncState(ctx, "files", "A-state"); err != nil {
+	ha, hb := keyedHandle(t, c, a.ID), keyedHandle(t, c, b.ID)
+	if err := ha.SetSyncState(ctx, "files", "A-state"); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ForUser(b.ID).SetSyncState(ctx, "files", "B-state"); err != nil {
+	if err := hb.SetSyncState(ctx, "files", "B-state"); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := c.ForUser(a.ID).GetSyncState(ctx, "files"); s != "A-state" {
+	if s, _ := ha.GetSyncState(ctx, "files"); s != "A-state" {
 		t.Errorf("a = %q", s)
 	}
-	if s, _ := c.ForUser(b.ID).GetSyncState(ctx, "files"); s != "B-state" {
+	if s, _ := hb.GetSyncState(ctx, "files"); s != "B-state" {
 		t.Errorf("b = %q", s)
-	}
-	if s, _ := c.GetSyncState(ctx, "files"); s != "" {
-		t.Errorf("bootstrap = %q, want empty", s)
-	}
-}
-
-func TestPutEntityDoesNotDemoteOwner(t *testing.T) {
-	ctx := context.Background()
-	c := openTestDB(t)
-	o := &Entity{Type: "person", Name: "Sau", Source: "owner"}
-	if err := c.PutEntity(ctx, o); err != nil {
-		t.Fatal(err)
-	}
-	markOwner(t, c, o.ID)
-	if err := c.PutEntity(ctx, &Entity{Type: "person", Name: "Sau", Source: "extracted"}); err != nil {
-		t.Fatal(err)
-	}
-	var src string
-	if err := c.h.DB.QueryRowContext(ctx, `SELECT source FROM entities WHERE name = 'Sau'`).Scan(&src); err != nil || src != "owner" {
-		t.Fatalf("source = %q err=%v, want owner", src, err)
 	}
 }
 

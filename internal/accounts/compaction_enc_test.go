@@ -1,6 +1,7 @@
 package accounts
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -42,15 +43,10 @@ func TestCompactionProposalEncryptedAtRest(t *testing.T) {
 	if err := e.st.StoreCompactionProposal(ctx, uid, "c_1", nil, ch); err != model.ErrLocked {
 		t.Fatalf("keyless store = %v", err)
 	}
-	// Legacy users keep the plain form.
-	lu := e.user(t, "legacy")
+	// An unenrolled user has no key to seal with.
+	lu := e.user(t, "unenrolled")
 	e.st.DB.ExecContext(ctx, `INSERT INTO compactions (id, user_id, status) VALUES ('c_2', $1, 'proposing')`, lu)
-	if err := e.st.StoreCompactionProposal(ctx, lu, "c_2", nil, ch); err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	e.st.DB.QueryRowContext(ctx, `SELECT count(*) FROM compactions WHERE id = 'c_2' AND NOT enc AND proposal_json IS NOT NULL`).Scan(&n)
-	if n != 1 {
-		t.Fatal("legacy proposal form changed")
+	if err := e.st.StoreCompactionProposal(ctx, lu, "c_2", nil, ch); !errors.Is(err, model.ErrEnrollRequired) {
+		t.Fatalf("unenrolled store = %v", err)
 	}
 }

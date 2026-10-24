@@ -2,13 +2,11 @@ package accounts
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"
 )
@@ -16,40 +14,39 @@ import (
 func TestPutSettingsFirstSaveAndMasking(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	u := e.user(t, "a")
-	if _, err := e.st.GetSettings(ctx, u, nil); !errors.Is(err, ErrNoSettings) {
+	u, uk := e.encUser(t, "a")
+	if _, err := e.st.GetSettings(ctx, u, uk); !errors.Is(err, ErrNoSettings) {
 		t.Fatalf("got %v", err)
 	}
-	re, err := e.st.PutSettings(ctx, u, okSettings(), nil)
+	re, err := e.st.PutSettings(ctx, u, okSettings(), uk)
 	if err != nil || re {
 		t.Fatalf("first save: %v %v", re, err)
 	}
-	g, err := e.st.GetSettings(ctx, u, nil)
+	g, err := e.st.GetSettings(ctx, u, uk)
 	if err != nil || g.APIKey != "sk-secret-3f9a" || g.Masked().APIKey != "••••3f9a" {
 		t.Fatalf("%+v %v", g, err)
 	}
 	var raw string
-	e.st.DB.QueryRow(`SELECT api_key_sealed FROM user_settings WHERE user_id=$1`, u).Scan(&raw)
+	e.st.DB.QueryRow(`SELECT to_jsonb(t)::text FROM user_settings t WHERE user_id=$1`, u).Scan(&raw)
 	if strings.Contains(raw, "secret") {
 		t.Fatal("key stored in plaintext")
 	}
-	act, err := e.st.GetActiveEmbed(ctx, u, nil)
+	act, err := e.st.GetActiveEmbed(ctx, u, uk)
 	if err != nil || act.EmbedModel != "e" || act.EmbedDims != 512 || act.EmbedAPIKey != "sk-secret-3f9a" {
 		t.Fatalf("%+v %v", act, err)
 	}
 	// private URL refused, nothing saved
 	bad := okSettings()
 	bad.BaseURL = "https://10.0.0.5/v1"
-	if _, err := e.st.PutSettings(ctx, u, bad, nil); err == nil {
+	if _, err := e.st.PutSettings(ctx, u, bad, uk); err == nil {
 		t.Fatal("private URL saved")
 	}
 }
 
 func insertEmbedding(t *testing.T, e *env, user string) {
 	t.Helper()
-	// a halfvec(8) value; the column is untyped halfvec so any length works
-	if _, err := e.st.DB.Exec(`INSERT INTO embeddings (id, ref_id, ref_type, user_id, embedding, dims, generation)
-		VALUES ('emb1','r1','memory',$1,'[1,2,3,4,5,6,7,8]'::halfvec,8,1)`, user); err != nil {
+	if _, err := e.st.DB.Exec(`INSERT INTO embeddings (id, ref_id, ref_type, user_id, embedding_ct, dims, generation)
+		VALUES ('emb1','r1','memory',$1,'\x01',8,1)`, user); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -57,52 +54,52 @@ func insertEmbedding(t *testing.T, e *env, user string) {
 func TestPutSettingsReembedDecision(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	u := e.user(t, "a")
-	e.st.PutSettings(ctx, u, okSettings(), nil)
+	u, uk := e.encUser(t, "a")
+	e.st.PutSettings(ctx, u, okSettings(), uk)
 
 	// no data: model/dims change promotes at once
 	s := okSettings()
 	s.EmbedModel, s.EmbedDims = "e2", 1024
-	if re, err := e.st.PutSettings(ctx, u, s, nil); err != nil || re {
+	if re, err := e.st.PutSettings(ctx, u, s, uk); err != nil || re {
 		t.Fatalf("no-data change: %v %v", re, err)
 	}
-	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedModel != "e2" || a.EmbedDims != 1024 {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, uk); a.EmbedModel != "e2" || a.EmbedDims != 1024 {
 		t.Fatalf("not promoted: %+v", a)
 	}
 
 	insertEmbedding(t, e, u)
 	// data present, embed key only: promoted at once with the new key
 	s.EmbedAPIKey = "new-embed-key"
-	if re, err := e.st.PutSettings(ctx, u, s, nil); err != nil || re {
+	if re, err := e.st.PutSettings(ctx, u, s, uk); err != nil || re {
 		t.Fatalf("key-only change: %v %v", re, err)
 	}
-	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedAPIKey != "new-embed-key" {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, uk); a.EmbedAPIKey != "new-embed-key" {
 		t.Fatalf("key not swapped: %+v", a)
 	}
 	// chat-only change: nothing to re-embed
 	s.ChatModel = "other-chat"
-	if re, err := e.st.PutSettings(ctx, u, s, nil); err != nil || re {
+	if re, err := e.st.PutSettings(ctx, u, s, uk); err != nil || re {
 		t.Fatalf("chat change: %v %v", re, err)
 	}
 	// data present, model change: needs re-embed, active untouched
 	s.EmbedModel = "e3"
-	re, err := e.st.PutSettings(ctx, u, s, nil)
+	re, err := e.st.PutSettings(ctx, u, s, uk)
 	if err != nil || !re {
 		t.Fatalf("model change: %v %v", re, err)
 	}
-	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedModel != "e2" {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, uk); a.EmbedModel != "e2" {
 		t.Fatalf("active changed early: %+v", a)
 	}
-	g, _ := e.st.GetSettings(ctx, u, nil)
+	g, _ := e.st.GetSettings(ctx, u, uk)
 	if g.EmbedModel != "e3" {
 		t.Fatal("desired not saved")
 	}
 	tx, _ := e.st.DB.Begin()
-	if err := e.st.PromoteActiveEmbedTx(ctx, tx, u, nil); err != nil {
+	if err := e.st.PromoteActiveEmbedTx(ctx, tx, u, uk); err != nil {
 		t.Fatal(err)
 	}
 	tx.Commit()
-	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedModel != "e3" {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, uk); a.EmbedModel != "e3" {
 		t.Fatalf("promote failed: %+v", a)
 	}
 }
@@ -110,8 +107,8 @@ func TestPutSettingsReembedDecision(t *testing.T) {
 func TestAgentTokenResolves(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	u := e.user(t, "a")
-	tok, conn, err := e.st.CreateAgentToken(ctx, u, "laptop", nil)
+	u, uk := e.encUser(t, "a")
+	tok, conn, err := e.st.CreateAgentToken(ctx, u, "laptop", uk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +128,8 @@ func TestAgentTokenResolves(t *testing.T) {
 func TestRevokedTokenFails(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	u := e.user(t, "a")
-	tok, conn, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
+	u, uk := e.encUser(t, "a")
+	tok, conn, _ := e.st.CreateAgentToken(ctx, u, "x", uk)
 	if err := e.st.RevokeConnection(ctx, u, conn.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +140,8 @@ func TestRevokedTokenFails(t *testing.T) {
 
 func TestTokensStoredHashed(t *testing.T) {
 	e := newEnv(t)
-	u := e.user(t, "a")
-	tok, _, _ := e.st.CreateAgentToken(context.Background(), u, "x", nil)
+	u, uk := e.encUser(t, "a")
+	tok, _, _ := e.st.CreateAgentToken(context.Background(), u, "x", uk)
 	var id, conn, hash string
 	if err := e.st.DB.QueryRow(`SELECT id, connection_id, token_hash FROM agent_tokens`).Scan(&id, &conn, &hash); err != nil {
 		t.Fatal(err)
@@ -162,8 +159,9 @@ func TestTokensStoredHashed(t *testing.T) {
 func TestRevokeForeignConnectionNotFound(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	a, b := e.user(t, "a"), e.user(t, "b")
-	_, conn, _ := e.st.CreateAgentToken(ctx, b, "x", nil)
+	a, _ := e.encUser(t, "a")
+	b, ukb := e.encUser(t, "b")
+	_, conn, _ := e.st.CreateAgentToken(ctx, b, "x", ukb)
 	e1 := e.st.RevokeConnection(ctx, a, conn.ID)
 	e2 := e.st.RevokeConnection(ctx, a, "c_absent")
 	if !errors.Is(e1, ErrNotFound) || !errors.Is(e2, ErrNotFound) || e1.Error() != e2.Error() {
@@ -205,8 +203,8 @@ func TestOAuthAccessTokenExpiry(t *testing.T) {
 func TestDeletedAccountTokensRejected(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	u := e.user(t, "a")
-	agent, _, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
+	u, uk := e.encUser(t, "a")
+	agent, _, _ := e.st.CreateAgentToken(ctx, u, "x", uk)
 	c, _ := e.st.CreateConnection(ctx, u, "oauth", "Claude", "client1")
 	addOAuthToken(t, e, u, c.ID, "acc", "access", time.Hour)
 	e.st.DB.Exec(`INSERT INTO sessions (id_hash, user_id, csrf, expires_at) VALUES ('s1',$1,'c',$2)`, u, e.now.Add(time.Hour))
@@ -278,117 +276,19 @@ func TestListConnectionsWrittenCount(t *testing.T) {
 	ctx := context.Background()
 	u := e.user(t, "a")
 	c, _ := e.st.CreateConnection(ctx, u, "oauth", "Claude", "cid")
-	e.st.DB.Exec(`INSERT INTO memories (id, user_id, content, written_by_connection_id) VALUES ('m1',$1,'x',$2),('m2',$1,'y',$2)`, u, c.ID)
+	e.st.DB.Exec(`INSERT INTO memories (id, user_id, content_ct, source_ct, written_by_connection_id) VALUES ('m1',$1,'\x01','\x01',$2),('m2',$1,'\x01','\x01',$2)`, u, c.ID)
 	cs, _ := e.st.ListConnections(ctx, u)
 	if cs[0].Written != 2 {
 		t.Fatalf("written %d", cs[0].Written)
 	}
 }
 
-func bootEnv() map[string]string {
-	return map[string]string{"OPENAI_API_KEY": "sk-op", "CORTEX_AUTH_TOKEN": "tunnel-token", "LLM_MODEL": "gpt-x"}
-}
-
-func TestMigrateBootstrapIdempotent(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	for i := 0; i < 2; i++ {
-		if err := MigrateBootstrap(ctx, e.st, bootEnv()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var n, m int
-	e.st.DB.QueryRow(`SELECT count(*) FROM user_settings`).Scan(&n)
-	e.st.DB.QueryRow(`SELECT count(*) FROM agent_tokens`).Scan(&m)
-	if n != 1 || m != 1 {
-		t.Fatalf("settings %d tokens %d", n, m)
-	}
-	uid, _, _, err := e.st.ResolveBearer(ctx, "tunnel-token")
-	if err != nil || uid != cortex.BootstrapUserID {
-		t.Fatalf("%s %v", uid, err)
-	}
-	s, _ := e.st.GetSettings(ctx, cortex.BootstrapUserID, nil)
-	if s.APIKey != "sk-op" || s.ChatModel != "gpt-x" || s.BaseURL != DefaultBaseURL || s.EmbedDims != 512 || s.EmbedModel != DefaultEmbedModel {
-		t.Fatalf("%+v", s)
-	}
-	if a, err := e.st.GetActiveEmbed(ctx, cortex.BootstrapUserID, nil); err != nil || a.EmbedDims != 512 {
-		t.Fatal(err)
-	}
-	cs, _ := e.st.ListConnections(ctx, cortex.BootstrapUserID)
-	if cs[0].Name != "claude-code (tunnel)" {
-		t.Fatalf("%+v", cs)
-	}
-}
-
-func TestMigrateBootstrapNeverResurrects(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	MigrateBootstrap(ctx, e.st, bootEnv())
-	cs, _ := e.st.ListConnections(ctx, cortex.BootstrapUserID)
-	e.st.RevokeConnection(ctx, cortex.BootstrapUserID, cs[0].ID)
-	if err := MigrateBootstrap(ctx, e.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := e.st.ResolveBearer(ctx, "tunnel-token"); err == nil {
-		t.Fatal("revoked tunnel token works again")
-	}
-	cs, _ = e.st.ListConnections(ctx, cortex.BootstrapUserID)
-	if len(cs) != 1 {
-		t.Fatalf("%d connections", len(cs))
-	}
-}
-
-func TestMigrateBootstrapNeedsKey(t *testing.T) {
-	e := newEnv(t)
-	err := MigrateBootstrap(context.Background(), e.st, map[string]string{"CORTEX_AUTH_TOKEN": "t"})
-	if err == nil {
-		t.Fatal("want error")
-	}
-	var n int
-	e.st.DB.QueryRow(`SELECT count(*) FROM agent_tokens`).Scan(&n)
-	if n != 0 {
-		t.Fatal("token created despite failure")
-	}
-}
-
-func TestBootstrapOwnerEntityIsOwner(t *testing.T) { TestMigrateBootstrapSetsOwnerEntity(t) }
-
-func TestMigrateBootstrapSetsOwnerEntity(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	if err := MigrateBootstrap(ctx, e.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	var owner sql.NullString
-	e.st.DB.QueryRow(`SELECT owner_entity_id FROM users WHERE id='u_bootstrap'`).Scan(&owner)
-	if !owner.Valid {
-		t.Fatal("owner_entity_id not set")
-	}
-	var src string
-	var isOwner bool
-	e.st.DB.QueryRow(`SELECT source, is_owner FROM entities WHERE id=$1`, owner.String).Scan(&src, &isOwner)
-	if src != "owner" || !isOwner {
-		t.Fatalf("source %q is_owner %v", src, isOwner)
-	}
-	// existing owner entity is adopted
-	e2 := newEnv(t)
-	e2.st.DB.Exec(`INSERT INTO entities (id, user_id, type, name, source) VALUES ('legacy','u_bootstrap','person','Sau','x')`)
-	e2.st.DB.Exec(`UPDATE entities SET is_owner = TRUE WHERE id = 'legacy'`)
-	if err := MigrateBootstrap(ctx, e2.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	e2.st.DB.QueryRow(`SELECT owner_entity_id FROM users WHERE id='u_bootstrap'`).Scan(&owner)
-	if owner.String != "legacy" {
-		t.Fatalf("got %q", owner.String)
-	}
-}
-
 func TestResolveUserNoSettings(t *testing.T) {
 	e := newEnv(t)
-	u := e.user(t, "a")
+	u, uk := e.encUser(t, "a")
 	// operator key in env must never be used: no settings means ErrNoProvider.
 	t.Setenv("OPENAI_API_KEY", "sk-operator")
-	_, err := e.st.ResolveUser(context.Background(), e.root, u, "c1", nil)
+	_, err := e.st.ResolveUser(context.Background(), e.root, u, "c1", uk)
 	if !errors.Is(err, ErrNoProvider) || !strings.Contains(err.Error(), "/settings") {
 		t.Fatalf("got %v", err)
 	}
@@ -397,9 +297,9 @@ func TestResolveUserNoSettings(t *testing.T) {
 func TestUserDeleteCascadesAllTables(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	u := e.user(t, "a")
-	e.st.PutSettings(ctx, u, okSettings(), nil)
-	_, conn, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
+	u, uk := e.encUser(t, "a")
+	e.st.PutSettings(ctx, u, okSettings(), uk)
+	_, conn, _ := e.st.CreateAgentToken(ctx, u, "x", uk)
 	oc, _ := e.st.CreateConnection(ctx, u, "oauth", "C", "cid")
 	exec := func(q string, args ...any) {
 		t.Helper()
@@ -413,10 +313,10 @@ func TestUserDeleteCascadesAllTables(t *testing.T) {
 	exec(`INSERT INTO oauth_codes (code_hash, user_id, connection_id, expires_at) VALUES ('cd',$1,$2,now())`, u, oc.ID)
 	exec(`INSERT INTO oauth_tokens (token_hash, kind, connection_id, user_id, expires_at) VALUES ('tk','access',$1,$2,now())`, oc.ID, u)
 	exec(`INSERT INTO authorize_requests (id, user_id, client_id, redirect_uri, code_challenge, expires_at) VALUES ('ar',$1,'cid','https://x','ch',now())`, u)
-	exec(`INSERT INTO memories (id, user_id, content, written_by_connection_id) VALUES ('m1',$1,'x',$2)`, u, conn.ID)
-	exec(`INSERT INTO entities (id, user_id, type, name) VALUES ('e1',$1,'person','Al')`, u)
+	exec(`INSERT INTO memories (id, user_id, content_ct, source_ct, written_by_connection_id) VALUES ('m1',$1,'\x01','\x01',$2)`, u, conn.ID)
+	exec(`INSERT INTO entities (id, user_id, name_ct, type_ct, name_blind, type_blind) VALUES ('e1',$1,'\x01','\x01','\x01','\x02')`, u)
 	exec(`INSERT INTO delete_batches (id, user_id, kind) VALUES ('b1',$1,'delete')`, u)
-	exec(`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json) VALUES ('b1',$1,'memories','delete','{}')`, u)
+	exec(`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_ct) VALUES ('b1',$1,'memories','delete','\x01')`, u)
 
 	// every table with a user_id column has a cascading FK to users
 	rows, err := e.st.DB.Query(`SELECT c.table_name FROM information_schema.columns c
@@ -471,10 +371,7 @@ func TestResolveUserEncryptedWithoutKeyIsLocked(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "enc")
-	if _, err := e.st.PutSettings(ctx, u, okSettings(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if cx, err := e.st.ResolveUser(ctx, e.root, u, "c1", nil); err != nil || cx.Encrypted() {
+	if _, err := e.st.ResolveUser(ctx, e.root, u, "c1", nil); !errors.Is(err, model.ErrEnrollRequired) {
 		t.Fatalf("state none: %v", err)
 	}
 	if _, err := e.st.DB.ExecContext(ctx, `UPDATE users SET encryption_state='encrypted' WHERE id=$1`, u); err != nil {
@@ -485,6 +382,9 @@ func TestResolveUserEncryptedWithoutKeyIsLocked(t *testing.T) {
 	}
 	uk, _ := keys.NewUK()
 	defer uk.Zero()
+	if _, err := e.st.PutSettings(ctx, u, okSettings(), uk); err != nil {
+		t.Fatal(err)
+	}
 	cx, err := e.st.ResolveUser(ctx, e.root, u, "c1", uk)
 	if err != nil || !cx.Encrypted() {
 		t.Fatalf("with key: %v", err)
@@ -499,7 +399,7 @@ func TestResolveBearerEncryptedNeedsReconnect(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "encb")
-	tok, _, err := e.st.CreateAgentToken(ctx, u, "agent", nil)
+	tok, err := legacyAgentToken(ctx, e, u)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,4 +412,27 @@ func TestResolveBearerEncryptedNeedsReconnect(t *testing.T) {
 	if _, _, _, err := e.st.ResolveBearer(ctx, tok); !errors.Is(err, model.ErrNeedsReconnect) {
 		t.Fatalf("got %v", err)
 	}
+}
+
+// legacyAgentToken stores an agent token the way pre-encryption versions did:
+// a connection and a token hash, with no key wrap and no expiry.
+func legacyAgentToken(ctx context.Context, e *env, userID string) (string, error) {
+	plain, err := newAgentTokenString()
+	if err != nil {
+		return "", err
+	}
+	tx, err := e.st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	conn, err := e.st.createConnection(ctx, tx, userID, "agent", "legacy", "")
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_tokens (id, connection_id, token_hash) VALUES ($1,$2,$3)`,
+		"t_"+randHex(8), conn.ID, HashToken(plain)); err != nil {
+		return "", err
+	}
+	return plain, tx.Commit()
 }

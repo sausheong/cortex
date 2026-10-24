@@ -2,9 +2,10 @@ package web
 
 import (
 	"bytes"
-	"github.com/sausheong/cortex/internal/web/pages"
 	"html"
 	"html/template"
+
+	"github.com/sausheong/cortex/internal/web/pages"
 
 	"regexp"
 	"strings"

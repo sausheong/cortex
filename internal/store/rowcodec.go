@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -37,27 +36,17 @@ func NormName(s string) string {
 	return norm.NFC.String(strings.ToLower(strings.TrimSpace(norm.NFC.String(s))))
 }
 
-// Migrating reports whether the user is mid-migration, the only state in
-// which legacy plaintext rows are still looked up and rewritten.
-func (h *Handle) Migrating() bool { return h.EncState == "migrating" }
-
-// RequireKey returns ErrLocked when the user is encrypted but this handle
-// carries no key. Unencrypted handles pass.
+// RequireKey returns model.ErrEnrollRequired when the user has not enrolled
+// (state "none": nothing can be stored without a key) and model.ErrLocked when
+// the user is enrolled but this handle carries no key.
 func (h *Handle) RequireKey() error {
-	if h.Encrypted() && h.Key == nil {
-		return model.ErrLocked
+	if h.Key != nil {
+		return nil
 	}
-	return nil
-}
-
-// CheckRowForm is the row-form guard: for a user in state "encrypted" a row
-// with enc=false is rejected. Legacy rows are accepted only in "none" and
-// "migrating".
-func (h *Handle) CheckRowForm(rowEnc bool) error {
-	if !rowEnc && h.EncState == "encrypted" {
-		return model.ErrPlaintextRow
+	if !h.Encrypted() {
+		return model.ErrEnrollRequired
 	}
-	return nil
+	return model.ErrLocked
 }
 
 // BlindNorm returns the blind index of NormName(s), nil when keyless.
@@ -78,18 +67,6 @@ func (h *Handle) OpenStr(table, rowID, col string, ct []byte) (string, error) {
 		return "", err
 	}
 	return string(b), nil
-}
-
-// OpenCol reads one text column of a row of either form: the plain value for
-// a legacy row, the opened ciphertext for an enc row, after the row-form guard.
-func (h *Handle) OpenCol(table, rowID, col string, enc bool, plain sql.NullString, ct []byte) (string, error) {
-	if err := h.CheckRowForm(enc); err != nil {
-		return "", err
-	}
-	if !enc {
-		return plain.String, nil
-	}
-	return h.OpenStr(table, rowID, col, ct)
 }
 
 // OpenOptStr opens an optional string column: NULL yields "".

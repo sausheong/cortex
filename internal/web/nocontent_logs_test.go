@@ -52,7 +52,7 @@ func TestNoContentInLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer uk.Zero()
-	cx := p.e.root.ForUser(uid, cortex.WithLogger(logf), cortex.WithEmbedder(unitEmb{}), cortex.WithExtractor(deterministic.New())).
+	cx := p.e.cx(uid, cortex.WithLogger(logf), cortex.WithEmbedder(unitEmb{}), cortex.WithExtractor(deterministic.New())).
 		WithKey(uk, "encrypted")
 	defer cx.Release()
 

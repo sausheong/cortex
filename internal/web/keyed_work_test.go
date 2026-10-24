@@ -54,28 +54,3 @@ func TestMemoriesShowsParkedBanner(t *testing.T) {
 		t.Fatal("em dash in page")
 	}
 }
-
-func TestHomeShowsMigrationStatus(t *testing.T) {
-	e := newEnv(t)
-	e.signIn(alice(), "")
-	uid := e.userBySub("g-alice").ID
-	e.setProvider(uid)
-	if _, err := e.st.DB.Exec(`UPDATE users SET encryption_state = 'migrating' WHERE id = $1`, uid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.DB.Exec(`INSERT INTO jobs (id, user_id, kind, status, progress_done, progress_total) VALUES ('j_m', $1, 'encmigrate', 'running', 40, 1200)`, uid); err != nil {
-		t.Fatal(err)
-	}
-	_, body := e.get("/")
-	if !strings.Contains(body, "Encrypting your memory: 40 of 1,200") {
-		t.Fatalf("migration line missing: %.600s", body)
-	}
-	e.st.DB.Exec(`UPDATE jobs SET status = 'queued' WHERE id = 'j_m'`)
-	if _, body = e.get("/"); !strings.Contains(body, "waiting for your next visit") {
-		t.Fatal("parked migration text missing")
-	}
-	e.st.DB.Exec(`UPDATE users SET encryption_state = 'none'`)
-	if _, body = e.get("/"); strings.Contains(body, "Encrypting your memory") {
-		t.Fatal("migration line shown for a non-migrating user")
-	}
-}

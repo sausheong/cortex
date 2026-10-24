@@ -6,7 +6,7 @@ import (
 	"github.com/sausheong/cortex"
 )
 
-func TestForEachModeRunsBothArms(t *testing.T) {
+func TestForEachModeRunsEncryptedArm(t *testing.T) {
 	ForEachMode(t, func(t *testing.T, c *cortex.Cortex) {
 		if c.UserID() == "" {
 			t.Fatal("no user")

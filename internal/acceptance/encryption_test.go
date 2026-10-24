@@ -269,7 +269,6 @@ func TestCiphertextMovedAcrossRowOrUserFailsAAD(t *testing.T) {
 	e := newEnv(t)
 	ua, ub := e.user("zxqa"), e.user("zxqb")
 	e.exec(`UPDATE users SET encryption_state = 'encrypted' WHERE id IN ($1,$2)`, ua, ub)
-	e.exec(`DELETE FROM entities WHERE enc IS NOT TRUE`)
 	// Both users share one key: AAD is then the only thing that stops a
 	// ciphertext moved between rows or users from decrypting.
 	uk, _ := keys.NewUK()
@@ -512,226 +511,9 @@ func TestParkedJobResumesOnNextVisit(t *testing.T) {
 	t.Fatal("parked job did not resume on the next keyed request")
 }
 
-// legacyOwner builds a plaintext owner with a seeded team and settings, then
-// enrolls it (state migrating, a parked migration job) and returns the key.
-func legacyOwner(t *testing.T, e *env) (uid string, en *enrolled) {
-	t.Helper()
-	// Seed a pre-enrollment account: drop the "encryption required" cohort
-	// marker so legacy writes are allowed, as for the existing owner.
-	e.exec(`DELETE FROM cortex_meta WHERE key = 'encryption_required_since'`)
-	uid = e.user("zxqowner")
-	cx := e.root.ForUser(uid)
-	if _, err := testutil.SeedTeam(bg, cx); err != nil {
-		t.Fatal(err)
-	}
-	if err := cx.PutMemory(bg, &cortex.Memory{Content: "zxqmemory legacy fact"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := cx.PutChunk(bg, &cortex.Chunk{Content: "zxqchunk legacy body", Metadata: map[string]any{"source": "zxqmeta legacy"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.PutSettings(bg, uid, accounts.Settings{BaseURL: "https://zxqprovider.example/v1", APIKey: "sk-zxqapikey", ChatModel: "zxqchatmodel", EmbedModel: "zxqembedmodel", EmbedDims: 256}, nil); err != nil {
-		t.Fatal(err)
-	}
-	en = e.enroll(uid)
-	if en.State != "migrating" {
-		t.Fatalf("owner with data enrolled to %q, want migrating", en.State)
-	}
-	return uid, en
-}
-
-func TestMigrationIdempotentAndResumable(t *testing.T) {
-	e := newEnv(t)
-	uid, en := legacyOwner(t, e)
-	uk := en.Res.UK
-
-	// Interrupt after the first batch, then resume to completion.
-	old := jobs.BatchSize
-	jobs.BatchSize = 3
-	defer func() { jobs.BatchSize = old }()
-	ctx, cancel := context.WithCancel(bg)
-	cancel()
-	if err := jobs.EncryptUserJob(ctx, e.root, e.st, uid, uk, nil); err == nil {
-		t.Fatal("cancelled run reported success")
-	}
-	if e.state(uid) != "migrating" {
-		t.Fatal("interrupted migration changed state")
-	}
-	if err := jobs.MigrateOwner(bg, e.root, e.st, uid, uk, nil); err != nil {
-		t.Fatal(err)
-	}
-	if e.state(uid) != "encrypted" {
-		t.Fatalf("state = %q after resume", e.state(uid))
-	}
-	snap := func() string {
-		var s string
-		if err := e.db.QueryRow(`SELECT
-			(SELECT md5(string_agg(encode(name_ct,'hex'), ',' ORDER BY id)) FROM entities WHERE user_id = $1) || '/' ||
-			(SELECT md5(string_agg(encode(content_ct,'hex'), ',' ORDER BY id)) FROM memories WHERE user_id = $1) || '/' ||
-			(SELECT md5(string_agg(encode(content_ct,'hex'), ',' ORDER BY id)) FROM chunks WHERE user_id = $1)`, uid).Scan(&s); err != nil {
-			t.Fatal(err)
-		}
-		return s
-	}
-	first := snap()
-	moved := -1
-	if err := jobs.EncryptUserJob(bg, e.root, e.st, uid, uk, func(done, _ int) { moved = done }); err != nil {
-		t.Fatal(err)
-	}
-	if moved > 0 || snap() != first {
-		t.Fatalf("second run changed rows (moved %d)", moved)
-	}
-	// Everything is still readable.
-	cx := e.keyed(uid, uk, "encrypted")
-	es, err := cx.FindEntities(bg, cortex.EntityFilter{})
-	if err != nil || len(es) < 7 {
-		t.Fatalf("entities after migration: %d, %v", len(es), err)
-	}
-}
-
-func TestPlaintextPostCheckFindsNothing(t *testing.T) {
-	e := newEnv(t)
-	uid, en := legacyOwner(t, e)
-	uk := en.Res.UK
-	// Before the migration the dump is full of plaintext (control).
-	if !strings.Contains(e.dump(), "zxqmemory") {
-		t.Fatal("control: seeded plaintext absent before migration")
-	}
-	if err := jobs.MigrateOwner(bg, e.root, e.st, uid, uk, nil); err != nil {
-		t.Fatal(err)
-	}
-	rep, err := jobs.PostCheck(bg, e.st, uid)
-	if err != nil || rep.Total != 0 {
-		t.Fatalf("post-check = %+v, %v", rep, err)
-	}
-	dump := e.dump()
-	for _, tok := range append([]string{"alice chen", "acme corp", "widgetco", "team-seed", "zxqmemory", "zxqchunk", "zxqprovider", "zxqapikey", "zxqchatmodel"}, corpusTokens...) {
-		if strings.Contains(dump, strings.ToLower(tok)) {
-			i := strings.Index(dump, strings.ToLower(tok))
-			t.Errorf("plaintext %q survives migration near: %s", tok, dump[max(0, i-60):min(len(dump), i+60)])
-		}
-	}
-}
-
-func TestEncFlagTamperRejected(t *testing.T) {
-	e := newEnv(t)
-	uid := e.user("zxqowner")
-	en := e.enroll(uid)
-	cx := e.keyed(uid, en.Res.UK, "encrypted")
-	populate(t, cx, "a")
-	if _, err := cx.FindEntities(bg, cortex.EntityFilter{}); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		table string
-		plant string // the plaintext an attacker must supply to satisfy the *_plain_check
-		load  func(c *cortex.Cortex) error
-	}{
-		{"entities", "name = 'planted', type = 'person'", func(c *cortex.Cortex) error { _, err := c.FindEntities(bg, cortex.EntityFilter{}); return err }},
-		{"memories", "content = 'planted'", func(c *cortex.Cortex) error {
-			_, _, err := c.ListMemories(bg, cortex.MemoryListFilter{}, 50, 0)
-			return err
-		}},
-		{"chunks", "content = 'planted'", func(c *cortex.Cortex) error { _, err := c.SearchKeyword(bg, "zxqchunk", 5); return err }},
-		{"relationships", "type = 'planted'", func(c *cortex.Cortex) error { _, err := c.AllRelationships(bg); return err }},
-	} {
-		t.Run(tc.table, func(t *testing.T) {
-			workset.Drop(uid)
-			e.exec(`UPDATE `+tc.table+` SET enc = FALSE, `+tc.plant+` WHERE id = (SELECT id FROM `+tc.table+` WHERE user_id = $1 AND enc ORDER BY id LIMIT 1)`, uid)
-			// A fresh handle so no cached working set masks the flip.
-			fresh := e.keyed(uid, en.Res.UK, "encrypted")
-			err := tc.load(fresh)
-			if !errors.Is(err, model.ErrPlaintextRow) {
-				t.Fatalf("flipped enc flag on %s: err = %v, want ErrPlaintextRow", tc.table, err)
-			}
-			if err != nil && strings.Contains(strings.ToLower(err.Error()), "zxq") {
-				t.Fatalf("error leaks content: %v", err)
-			}
-			e.exec(`DELETE FROM `+tc.table+` WHERE user_id = $1 AND enc IS NOT TRUE`, uid)
-		})
-	}
-}
-
-func TestMigratingWriteNoDuplicates(t *testing.T) {
-	e := newEnv(t)
-	uid := e.user("zxqowner")
-	uk, _ := keys.NewUK()
-	defer uk.Zero()
-	// Plaintext rows written while the user is still legacy.
-	legacy := e.root.ForUser(uid)
-	ent := &cortex.Entity{Type: "person", Name: "Old Friend"}
-	org := &cortex.Entity{Type: "organization", Name: "Old Org"}
-	for _, x := range []*cortex.Entity{ent, org} {
-		if err := legacy.PutEntity(bg, x); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := legacy.AddAlias(bg, ent.ID, "email", "Old@X.test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.PutRelationship(bg, &cortex.Relationship{SourceID: ent.ID, TargetID: org.ID, Type: "works_at", Confidence: 0.5}); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.PutChunk(bg, &cortex.Chunk{Content: "zxqchunk legacy", Metadata: map[string]any{"source": "Old Doc"}}); err != nil {
-		t.Fatal(err)
-	}
-	e.exec(`UPDATE users SET encryption_state = 'migrating' WHERE id = $1`, uid)
-	cx := e.keyed(uid, uk, "migrating")
-
-	// The same things written again, with different case and spacing.
-	again := &cortex.Entity{Type: "person", Name: "  old FRIEND "}
-	if err := cx.PutEntity(bg, again); err != nil {
-		t.Fatal(err)
-	}
-	if again.ID != ent.ID {
-		t.Fatalf("entity forked: %s vs %s", again.ID, ent.ID)
-	}
-	if err := cx.AddAlias(bg, ent.ID, "email", "OLD@x.test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cx.PutRelationship(bg, &cortex.Relationship{SourceID: ent.ID, TargetID: org.ID, Type: "works_at", Confidence: 0.7}); err != nil {
-		t.Fatal(err)
-	}
-	if n := e.count(`SELECT count(*) FROM entities WHERE user_id = $1 AND NOT is_owner`, uid); n != 2 {
-		t.Errorf("entities = %d, want 2", n)
-	}
-	if n := e.count(`SELECT count(*) FROM entity_aliases WHERE user_id = $1`, uid); n != 1 {
-		t.Errorf("aliases = %d, want 1", n)
-	}
-	if n := e.count(`SELECT count(*) FROM relationships WHERE user_id = $1 AND deleted_at IS NULL`, uid); n != 1 {
-		t.Errorf("edges = %d, want 1", n)
-	}
-	// Chunks have no write-side uniqueness; the mixed (legacy plus encrypted)
-	// reads must show each chunk once.
-	if err := cx.PutChunk(bg, &cortex.Chunk{Content: "zxqchunk fresh", Metadata: map[string]any{"source": "Old Doc"}}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := cx.SearchKeyword(bg, "zxqchunk", 10)
-	if err != nil || len(got) != 2 {
-		t.Fatalf("chunks across both forms = %d, %v", len(got), err)
-	}
-	ids := map[string]bool{}
-	for _, c := range got {
-		if ids[c.ID] {
-			t.Fatalf("chunk %s returned twice", c.ID)
-		}
-		ids[c.ID] = true
-	}
-	// After migration the counts are unchanged.
-	if err := jobs.MigrateOwner(bg, e.root, e.st, uid, uk, nil); err != nil {
-		t.Fatal(err)
-	}
-	if n := e.count(`SELECT count(*) FROM entities WHERE user_id = $1 AND NOT is_owner`, uid); n != 2 {
-		t.Errorf("entities after migration = %d", n)
-	}
-	if n := e.count(`SELECT count(*) FROM chunks WHERE user_id = $1`, uid); n != 2 {
-		t.Errorf("chunks after migration = %d", n)
-	}
-}
-
 // TestExistingSuiteForEncryptedUser proves the ForEachMode encrypted
-// parameterisation is not silently skipped: it runs a probe through both
-// modes and checks the registry counted each arm. Together with the
+// parameterisation is not silently skipped: it runs a probe and checks the
+// registry counted the arm. Together with the
 // per-package ForEachMode users (recall, search modes) this keeps "the whole
 // suite passes for an encrypted user" honest.
 func TestExistingSuiteForEncryptedUser(t *testing.T) {
@@ -747,7 +529,7 @@ func TestExistingSuiteForEncryptedUser(t *testing.T) {
 		}
 	})
 	after := testutil.ModeCounts()
-	for _, arm := range []string{"legacy", "encrypted"} {
+	for _, arm := range []string{"encrypted"} {
 		if after[arm] != before[arm]+1 {
 			t.Fatalf("ForEachMode arm %q ran %d times, want 1", arm, after[arm]-before[arm])
 		}

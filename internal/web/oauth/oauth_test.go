@@ -25,8 +25,6 @@ import (
 	"github.com/sausheong/cortex/internal/web"
 )
 
-const testKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-
 type stubIdP struct{}
 
 func (stubIdP) AuthURL(state, nonce string) string { return "https://idp.test/" }
@@ -60,12 +58,8 @@ func newEnv(t *testing.T, o Options) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	sl, err := accounts.NewSealer(testKeyHex)
-	if err != nil {
-		t.Fatal(err)
-	}
 	e := &env{t: t, root: root, now: time.Now().UTC(), logs: &bytes.Buffer{}}
-	e.st = &accounts.Store{DB: db, Sealer: sl, Now: func() time.Time { return e.now }}
+	e.st = &accounts.Store{DB: db, Now: func() time.Time { return e.now }}
 	mcp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if _, _, _, err := e.st.ResolveBearer(r.Context(), tok); err != nil {
@@ -120,7 +114,9 @@ func (e *env) do(method, path string, s *sess, body io.Reader, ctype string) (*h
 	return resp, string(b)
 }
 
-func (e *env) get(path string, s *sess) (*http.Response, string) { return e.do("GET", path, s, nil, "") }
+func (e *env) get(path string, s *sess) (*http.Response, string) {
+	return e.do("GET", path, s, nil, "")
+}
 
 func (e *env) postForm(path string, s *sess, v url.Values) (*http.Response, string) {
 	if s != nil && v.Get("csrf") == "" {

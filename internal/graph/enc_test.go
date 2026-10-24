@@ -242,143 +242,16 @@ func TestMergeDedupsEncryptedRelationships(t *testing.T) {
 	}
 }
 
-func insertLegacyEntity(env *enctest.Env, id, typ, name string) {
-	env.Exec(`INSERT INTO entities (id, user_id, type, name, attributes, source) VALUES ($1,$2,$3,$4,'{"k":"v"}'::jsonb,'old')`,
-		id, env.UserID, typ, name)
-}
-
-func TestMigratingWriteDoesNotDuplicateLegacyEntity(t *testing.T) {
-	env := enctest.Open(t, "migrating")
-	g := New(env.H)
-	insertLegacyEntity(env, "legacy-ent", "person", "Old Friend")
-	e := &model.Entity{Type: "person", Name: "old friend", Source: "new", Attributes: map[string]any{"k2": "v2"}}
-	if err := g.PutEntity(bg, e); err != nil {
-		t.Fatal(err)
-	}
-	if e.ID != "legacy-ent" {
-		t.Fatalf("legacy row forked: %s", e.ID)
-	}
-	if n := env.Count(`SELECT count(*) FROM entities WHERE user_id=$1 AND NOT is_owner`, env.UserID); n != 1 {
-		t.Fatalf("rows = %d", n)
-	}
-	// The legacy row is now encrypted with its plaintext gone.
-	if n := env.Count(`SELECT count(*) FROM entities WHERE id='legacy-ent' AND enc AND name IS NULL AND type IS NULL AND source IS NULL AND attributes IS NULL AND name_ct IS NOT NULL`); n != 1 {
-		t.Fatal("legacy row not rewritten as encrypted")
-	}
-	got, err := g.GetEntity(bg, "legacy-ent")
-	if err != nil || got.Name != "Old Friend" || got.Attributes["k2"] != "v2" {
-		t.Fatalf("got %+v, %v", got, err)
-	}
-	// Resolve by name also finds a (still) legacy row and rewrites it.
-	insertLegacyEntity(env, "legacy-2", "person", "Second Old")
-	res, err := g.ResolveEntity(bg, "SECOND old", "person")
-	if err != nil || res.Entity == nil || res.Entity.ID != "legacy-2" {
-		t.Fatalf("resolve legacy = %+v, %v", res, err)
-	}
-	if n := env.Count(`SELECT count(*) FROM entities WHERE id='legacy-2' AND enc AND name IS NULL`); n != 1 {
-		t.Fatal("resolve hit not rewritten")
-	}
-}
-
-func TestMigratingWriteDoesNotDuplicateLegacyAlias(t *testing.T) {
-	env := enctest.Open(t, "migrating")
-	g := New(env.H)
-	a := &model.Entity{Type: "person", Name: "A"}
-	b := &model.Entity{Type: "person", Name: "B"}
-	g.PutEntity(bg, a)
-	g.PutEntity(bg, b)
-	env.Exec(`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source) VALUES ($1,$2,'email','Old@X.test','old@x.test','user')`,
-		env.UserID, a.ID)
-	// Same alias for another entity: the legacy row still owns it.
-	if err := g.AddAlias(bg, b.ID, model.AliasEmail, "old@x.test"); !errors.Is(err, model.ErrAliasTaken) {
-		t.Fatalf("want ErrAliasTaken against the legacy alias, got %v", err)
-	}
-	// Same entity: no duplicate, legacy row rewritten encrypted.
-	if err := g.AddAlias(bg, a.ID, model.AliasEmail, "OLD@x.test"); err != nil {
-		t.Fatal(err)
-	}
-	if n := env.Count(`SELECT count(*) FROM entity_aliases WHERE user_id=$1`, env.UserID); n != 1 {
-		t.Fatalf("alias rows = %d", n)
-	}
-	if n := env.Count(`SELECT count(*) FROM entity_aliases WHERE user_id=$1 AND enc AND value IS NULL AND value_norm IS NULL AND source IS NULL`, env.UserID); n != 1 {
-		t.Fatal("legacy alias not rewritten")
-	}
-	al, err := g.Aliases(bg, a.ID)
-	if err != nil || len(al) != 1 || al[0].Value != "Old@X.test" {
-		t.Fatalf("aliases = %+v, %v", al, err)
-	}
-	// Quiet add of the same value is a no-op.
-	g.AddAliasQuiet(bg, b.ID, model.AliasEmail, "old@x.test", "ingest")
-	if n := env.Count(`SELECT count(*) FROM entity_aliases WHERE user_id=$1`, env.UserID); n != 1 {
-		t.Fatalf("quiet add duplicated: %d", n)
-	}
-	res, err := g.ResolveEntity(bg, "old@x.test", "")
-	if err != nil || res.Entity == nil || res.Entity.ID != a.ID {
-		t.Fatalf("resolve = %+v, %v", res, err)
-	}
-}
-
-func TestMigratingWriteDoesNotDuplicateLegacyEdge(t *testing.T) {
-	env := enctest.Open(t, "migrating")
-	g := New(env.H)
-	x := &model.Entity{Type: "person", Name: "X"}
-	y := &model.Entity{Type: "organization", Name: "Y"}
-	g.PutEntity(bg, x)
-	g.PutEntity(bg, y)
-	env.Exec(`INSERT INTO relationships (id, user_id, source_id, target_id, type, attributes, source, confidence, evidence_count)
-	          VALUES ('legacy-rel',$1,$2,$3,'works_at','{"old":"1"}'::jsonb,'src',0.5,3)`, env.UserID, x.ID, y.ID)
-	r := &model.Relationship{SourceID: x.ID, TargetID: y.ID, Type: "works_at", Confidence: 0.7}
-	if err := g.PutRelationship(bg, r); err != nil {
-		t.Fatal(err)
-	}
-	if r.ID != "legacy-rel" || r.EvidenceCount != 4 {
-		t.Fatalf("legacy edge duplicated or count wrong: id %s count %d", r.ID, r.EvidenceCount)
-	}
-	if n := env.Count(`SELECT count(*) FROM relationships WHERE user_id=$1 AND deleted_at IS NULL`, env.UserID); n != 1 {
-		t.Fatalf("edges = %d", n)
-	}
-	if n := env.Count(`SELECT count(*) FROM relationships WHERE id='legacy-rel' AND enc AND type IS NULL AND source IS NULL AND attributes IS NULL AND type_ct IS NOT NULL`); n != 1 {
-		t.Fatal("legacy edge not rewritten")
-	}
-	rels, err := g.GetRelationships(bg, x.ID)
-	if err != nil || len(rels) != 1 || rels[0].Attributes["old"] != "1" || rels[0].Source != "src" || rels[0].Type != "works_at" {
-		t.Fatalf("rels = %+v, %v", rels, err)
-	}
-}
-
-func TestEncryptedUserRejectsPlaintextRow(t *testing.T) {
-	env := enctest.Open(t, "encrypted")
-	g := New(env.H)
-	insertLegacyEntity(env, "plain-1", "person", "Sneaky")
-	if _, err := g.GetEntity(bg, "plain-1"); !errors.Is(err, model.ErrPlaintextRow) {
-		t.Fatalf("read: want ErrPlaintextRow, got %v", err)
-	}
-	e := &model.Entity{ID: "plain-1", Type: "person", Name: "Sneaky"}
-	if err := g.PutEntity(bg, e); !errors.Is(err, model.ErrPlaintextRow) {
-		t.Fatalf("write: want ErrPlaintextRow, got %v", err)
-	}
-	if strings.Contains(model.ErrPlaintextRow.Error(), "Sneaky") {
-		t.Fatal("error leaks content")
-	}
-	// A plaintext alias row is rejected too.
-	ok := &model.Entity{Type: "person", Name: "Real"}
-	g.PutEntity(bg, ok)
-	env.Exec(`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm) VALUES ($1,$2,'name','Nick','nick')`, env.UserID, ok.ID)
-	if _, err := g.Aliases(bg, ok.ID); !errors.Is(err, model.ErrPlaintextRow) {
-		t.Fatalf("alias read: want ErrPlaintextRow, got %v", err)
-	}
-}
-
-func TestEncTrueWithNullCiphertextFailsDecrypt(t *testing.T) {
+func TestEmptyCiphertextFailsDecrypt(t *testing.T) {
 	env := enctest.Open(t, "encrypted")
 	g := New(env.H)
 	e := &model.Entity{Type: "person", Name: "Victim"}
 	g.PutEntity(bg, e)
-	env.Exec(`UPDATE entities SET name_ct = NULL WHERE id = $1`, e.ID)
+	env.Exec(`UPDATE entities SET name_ct = '\x' WHERE id = $1`, e.ID)
 	if _, err := g.GetEntity(bg, e.ID); err == nil {
 		t.Fatal("NULL ciphertext on an enc row must fail")
 	}
-	env.Exec(`UPDATE entities SET name_ct = NULL, type_ct = NULL, attributes_ct = NULL WHERE id = $1`, e.ID)
+	env.Exec(`UPDATE entities SET name_ct = '\x', type_ct = '\x', attributes_ct = NULL WHERE id = $1`, e.ID)
 	if _, err := g.GetEntity(bg, e.ID); err == nil {
 		t.Fatal("NULL ciphertext on an enc row must fail")
 	}
@@ -393,8 +266,8 @@ func TestBlindCollisionAcrossUsersNeverReads(t *testing.T) {
 	// blind bytes copied onto their own row.
 	other := env.NewUser("other", "encrypted")
 	oh := env.HandleFor(other, "encrypted", env.UK)
-	env.Exec(`INSERT INTO entities (id, user_id, enc, name_ct, type_ct, source_ct, attributes_ct, name_blind, type_blind)
-	          SELECT 'collide', $2, true, name_ct, type_ct, source_ct, attributes_ct, name_blind, type_blind FROM entities WHERE id = $1`, e.ID, other)
+	env.Exec(`INSERT INTO entities (id, user_id, name_ct, type_ct, source_ct, attributes_ct, name_blind, type_blind)
+	          SELECT 'collide', $2, name_ct, type_ct, source_ct, attributes_ct, name_blind, type_blind FROM entities WHERE id = $1`, e.ID, other)
 	// User A's lookups only ever see A's row.
 	res, err := g.ResolveEntity(bg, "mallory target", "person")
 	if err != nil || res.Entity == nil || res.Entity.ID != e.ID {

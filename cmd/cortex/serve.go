@@ -19,7 +19,6 @@ import (
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/jobs"
 	"github.com/sausheong/cortex/internal/keys"
-	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/web"
 	"github.com/sausheong/cortex/internal/web/oauth"
 
@@ -36,18 +35,9 @@ type serveApp struct {
 }
 
 // runServe builds the service in its fixed startup order: (1) require the
-// secret key and database URL, (2) open the database (applies migrations),
-// (3) seed the bootstrap user, (4) start the job pool. The caller listens
-// only after it returns.
+// database URL, (2) open the database (applies migrations), (3) start the job
+// pool. The caller listens only after it returns.
 func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
-	secret := env["CORTEX_SECRET_KEY"]
-	if secret == "" {
-		return nil, errors.New("cortex serve: CORTEX_SECRET_KEY is required (32 bytes, hex)")
-	}
-	sealer, err := accounts.NewSealer(secret)
-	if err != nil {
-		return nil, fmt.Errorf("cortex serve: CORTEX_SECRET_KEY: %w", err)
-	}
 	dsn := env["CORTEX_DATABASE_URL"]
 	if dsn == "" {
 		return nil, errors.New("cortex serve: set CORTEX_DATABASE_URL or pass --db <postgres-url>")
@@ -70,14 +60,9 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		root.Close()
 		return nil, fmt.Errorf("cortex serve: open database: %w", err)
 	}
-	st := &accounts.Store{DB: db, Sealer: sealer, AllowPrivate: env["CORTEX_ALLOW_PRIVATE_PROVIDERS"] == "1"}
+	st := &accounts.Store{DB: db, AllowPrivate: env["CORTEX_ALLOW_PRIVATE_PROVIDERS"] == "1"}
 	st.SetStaticToken(env["CORTEX_AUTH_TOKEN"])
 	cleanup := func() { db.Close(); root.Close() }
-
-	if err := accounts.MigrateBootstrap(ctx, st, env); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("cortex serve: bootstrap: %w", err)
-	}
 
 	// keyAttachTTL is how long a keyed request lets the pool hold a key clone.
 	const keyAttachTTL = 15 * time.Minute
@@ -90,13 +75,10 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		switch j.Kind {
 		case jobs.RememberKind:
 			return jobs.RememberJobKey(ctx, root, st, j.UserID, j.Payload, j.Key)
-		case "index":
-			return jobs.IndexJobKey(ctx, root, st, j.UserID, j.Key)
-		case accounts.MigrateEncKind:
-			if j.Key == nil {
-				return model.ErrLocked
-			}
-			return jobs.MigrateOwner(ctx, root, st, j.UserID, j.Key, func(done, total int) { pool.Progress(ctx, j.ID, done, total) })
+		case "index", accounts.MigrateEncKind:
+			// Retired kinds (HNSW index builds, the owner migration): a row
+			// queued before the cleanup completes without work.
+			return nil
 		case "reembed":
 			set, err := st.GetSettings(ctx, j.UserID, j.Key)
 			if err != nil {
@@ -130,9 +112,6 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		if uk == nil {
 			return
 		}
-		// A migrating owner gets a runnable migration job before the key
-		// attaches, so the attach resumes it (also after a failed run).
-		_ = jobs.EnsureMigrationJob(context.Background(), pool, userID)
 		pool.AttachKey(userID, uk, keyAttachTTL)
 		jobs.MaintainOnUse(root, st, uk, userID, jobs.NightlyOptions{Enqueue: pool.Enqueue})
 	}

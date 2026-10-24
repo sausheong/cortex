@@ -25,11 +25,6 @@
   </nav>{{end}}
 </header>
 <main id="main" tabindex="-1">
-{{if and .EnrollBanner (ne .Path "/enroll")}}<section class="notice" aria-labelledby="enc-h">
-  <h2 id="enc-h">Your memory is not encrypted yet</h2>
-  <p>Protect it with a passkey and cortex encrypts everything it stores about you. Your assistants will need to reconnect afterwards, and you do that from Connections.</p>
-  <p><a href="/enroll">Set up a passkey</a></p>
-</section>{{end}}
 {{template "content" .}}</main>
 <script nonce="{{$.Nonce}}">
 (function(){

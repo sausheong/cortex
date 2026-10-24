@@ -84,7 +84,8 @@ func (s *server) encState(ctx context.Context, userID string) (string, error) {
 
 // authUnlocked is auth plus the lock gate. For an encrypted account without a
 // key it shows the unlock page (GET) or answers 423 (anything else), and the
-// handler never runs. A legacy ('none') account passes straight through.
+// handler never runs. An account that has not enrolled has no key to unlock,
+// so it is sent to enrollment instead.
 func (s *server) authUnlocked(next func(w http.ResponseWriter, r *http.Request, u SessionUser)) http.HandlerFunc {
 	return s.auth(func(w http.ResponseWriter, r *http.Request, u SessionUser) {
 		st, err := s.encState(r.Context(), u.UserID)
@@ -92,7 +93,15 @@ func (s *server) authUnlocked(next func(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		if st != "none" && !u.Unlocked {
+		if st == "none" {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead {
+				http.Redirect(w, r, "/enroll", http.StatusSeeOther)
+				return
+			}
+			http.Error(w, "protect your memory with a passkey first", http.StatusLocked)
+			return
+		}
+		if !u.Unlocked {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
 				http.Redirect(w, r, "/unlock?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 				return

@@ -180,49 +180,30 @@ func (c Ops) recallSeedMemoriesEnc(ctx context.Context, g graphContext, limit in
 }
 
 // InsertMemoryTx inserts m (ID, timestamps and confidence already set by the
-// caller) inside tx, as an encrypted row for encrypted users. Entity links
-// are the caller's business.
+// caller) inside tx as a sealed row. Entity links are the caller's business.
 func (c Ops) InsertMemoryTx(ctx context.Context, tx *store.Tx, m *model.Memory) error {
-	if c.Encrypted() {
-		if err := c.RequireKey(); err != nil {
-			return err
-		}
-		return c.insertMemoryEnc(ctx, tx, m)
+	if err := c.RequireKey(); err != nil {
+		return err
 	}
-	var speaker any
-	if m.Speaker != "" {
-		speaker = m.Speaker
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO memories (id, user_id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, static, forget_after, written_by_connection_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, c.UserID, m.Content, m.Source, speaker, m.Confidence, m.CreatedAt, m.UpdatedAt, m.ValidAt, m.InvalidAt, m.Static, m.ForgetAfter, c.NullConn()); err != nil {
-		return fmt.Errorf("cortex: insert memory: %w", err)
-	}
-	return nil
+	return c.insertMemoryEnc(ctx, tx, m)
 }
 
-// InsertMemoryEdgeTx inserts a memory edge inside tx (source sealed for
-// encrypted users), ignoring a duplicate.
+// InsertMemoryEdgeTx inserts a memory edge inside tx (source sealed),
+// ignoring a duplicate.
 func (c Ops) InsertMemoryEdgeTx(ctx context.Context, tx *store.Tx, e *model.MemoryEdge) error {
-	var source, sourceCT any
-	enc := c.Encrypted()
+	var sourceCT any
 	if e.Source != "" {
-		if enc {
-			ct, err := c.SealStr(store.TblMemoryEdges, e.ID, "source", e.Source)
-			if err != nil {
-				return err
-			}
-			sourceCT = ct
-		} else {
-			source = e.Source
+		ct, err := c.SealStr(store.TblMemoryEdges, e.ID, "source", e.Source)
+		if err != nil {
+			return err
 		}
+		sourceCT = ct
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, enc, source, source_ct, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source_ct, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
-		e.ID, c.UserID, e.SourceID, e.TargetID, e.Type, enc, source, sourceCT, e.CreatedAt); err != nil {
+		e.ID, c.UserID, e.SourceID, e.TargetID, e.Type, sourceCT, e.CreatedAt); err != nil {
 		return fmt.Errorf("cortex: insert memory edge: %w", err)
 	}
 	return nil

@@ -46,9 +46,8 @@ func TestSettingsEncryptedAtRest(t *testing.T) {
 		}
 	}
 	var ct []byte
-	var enc bool
-	e.st.DB.QueryRowContext(ctx, `SELECT settings_ct, enc FROM user_settings WHERE user_id = $1`, uid).Scan(&ct, &enc)
-	if !enc || len(ct) == 0 {
+	e.st.DB.QueryRowContext(ctx, `SELECT settings_ct FROM user_settings WHERE user_id = $1`, uid).Scan(&ct)
+	if len(ct) == 0 {
 		t.Fatal("not stored encrypted")
 	}
 	if _, err := uk.Open(uid, "user_settings", uid, "settings", ct); err != nil {
@@ -72,52 +71,6 @@ func TestSettingsEncryptedAtRest(t *testing.T) {
 	}
 	if got, _ := e.st.GetSettings(ctx, uid, uk); got.APIKey != want.APIKey {
 		t.Fatalf("blank key not kept: %+v", got)
-	}
-}
-
-func TestSettingsPlainColumnsBlankedIncludingEmbedBaseURL(t *testing.T) {
-	e := newEnv(t)
-	ctx := t.Context()
-	// A migrating user with a plaintext row, then a save under the UK.
-	uid, uk := encUser(t, e, "enc2", "migrating")
-	if _, err := e.st.DB.ExecContext(ctx, `UPDATE users SET encryption_state = 'none' WHERE id = $1`, uid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.st.PutSettings(ctx, uid, encSettings(), nil); err != nil {
-		t.Fatal(err)
-	}
-	e.st.DB.ExecContext(ctx, `UPDATE users SET encryption_state = 'migrating' WHERE id = $1`, uid)
-	// Dual read: plaintext row readable with or without the key.
-	if got, err := e.st.GetSettings(ctx, uid, nil); err != nil || got.APIKey != "sk-SECRETKEY-1234" {
-		t.Fatalf("migrating plaintext read: %+v %v", got, err)
-	}
-	s := encSettings()
-	s.EmbedDims = 768
-	if _, err := e.st.PutSettings(ctx, uid, s, uk); err != nil {
-		t.Fatal(err)
-	}
-	var p, b, k, cm, em, eb, ek, ae string
-	var dims int
-	err := e.st.DB.QueryRowContext(ctx, `SELECT provider, base_url, api_key_sealed, chat_model, embed_model, embed_base_url,
-		embed_key_sealed, active_embed_sealed, embed_dims FROM user_settings WHERE user_id = $1`, uid).Scan(&p, &b, &k, &cm, &em, &eb, &ek, &ae, &dims)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, v := range map[string]string{"provider": p, "base_url": b, "api_key_sealed": k, "chat_model": cm,
-		"embed_model": em, "embed_base_url": eb, "embed_key_sealed": ek, "active_embed_sealed": ae} {
-		if v != "" {
-			t.Fatalf("column %s not blanked: %q", name, v)
-		}
-	}
-	if dims != 768 {
-		t.Fatalf("embed_dims = %d, want plain 768", dims)
-	}
-	if got, err := e.st.GetSettings(ctx, uid, uk); err != nil || got.EmbedBaseURL != "https://emb.secret-host.example/v1" || got.EmbedDims != 768 {
-		t.Fatalf("read back: %+v %v", got, err)
-	}
-	// The old plaintext active embedder carried across the conversion.
-	if act, err := e.st.GetActiveEmbed(ctx, uid, uk); err != nil || act.EmbedModel == "" {
-		t.Fatalf("active lost: %+v %v", act, err)
 	}
 }
 
@@ -192,5 +145,40 @@ func TestPutSettingsDetectsEmbedChangeUnderUK(t *testing.T) {
 	}
 	if need, err := e.st.PutSettings(ctx, uid, s, uk); err != nil || need {
 		t.Fatalf("same settings after flip: %v %v", need, err)
+	}
+}
+
+// The only plain column left on user_settings besides bookkeeping is embed_dims.
+func TestSettingsOnlyEmbedDimsStaysPlain(t *testing.T) {
+	e := newEnv(t)
+	ctx := t.Context()
+	uid, uk := encUser(t, e, "enc2", "encrypted")
+	s := encSettings()
+	s.EmbedDims = 768
+	if _, err := e.st.PutSettings(ctx, uid, s, uk); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := e.st.DB.QueryContext(ctx, `SELECT column_name FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'user_settings' ORDER BY column_name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var c string
+		rows.Scan(&c)
+		cols = append(cols, c)
+	}
+	if got, want := strings.Join(cols, ","), "embed_dims,settings_ct,updated_at,user_id"; got != want {
+		t.Fatalf("user_settings columns = %s, want %s", got, want)
+	}
+	var dims int
+	e.st.DB.QueryRowContext(ctx, `SELECT embed_dims FROM user_settings WHERE user_id = $1`, uid).Scan(&dims)
+	if dims != 768 {
+		t.Fatalf("embed_dims = %d, want 768", dims)
+	}
+	if _, err := e.st.PutSettings(ctx, e.user(t, "nokey"), s, nil); !errors.Is(err, model.ErrEnrollRequired) {
+		t.Fatalf("unenrolled put = %v, want ErrEnrollRequired", err)
 	}
 }

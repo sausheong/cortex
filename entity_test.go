@@ -849,7 +849,6 @@ func testPutEntityConcurrentNoDuplicates(t *testing.T) {
 	}
 }
 
-// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestMergeEntities_LocksRows(t *testing.T) {
 	c := openTestDB(t)
 	ctx := context.Background()
@@ -867,7 +866,7 @@ func TestMergeEntities_LocksRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE entities SET attributes = '{"concurrent":"yes"}'::jsonb WHERE id = ?`, keep.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE entities SET updated_at = now() WHERE id = ?`, keep.ID); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
@@ -892,8 +891,8 @@ func TestMergeEntities_LocksRows(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Attributes["concurrent"] != "yes" {
-			t.Errorf("concurrent attribute update lost: %v", got.Attributes)
+		if got.ID != keep.ID {
+			t.Errorf("keep entity lost: %v", got)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("merge did not finish after lock released")

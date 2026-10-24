@@ -218,34 +218,14 @@ func (c Ops) Forget(ctx context.Context, f model.Filter) error {
 	}
 	defer tx.Rollback()
 	var ids []string
-	if c.Encrypted() {
-		// Sources are ciphertext: pick the entities over the working set.
-		ws, err := workset.For(ctx, c.Handle)
-		if err != nil {
-			return err
-		}
-		for _, e := range ws.Entities() {
-			if e.Source == f.Source {
-				ids = append(ids, e.ID)
-			}
-		}
-	} else {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM entities WHERE user_id = ? AND source = ? AND deleted_at IS NULL`, c.UserID, f.Source)
-		if err != nil {
-			return fmt.Errorf("cortex: query entities by source: %w", err)
-		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return fmt.Errorf("cortex: scan entity id: %w", err)
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("cortex: iterate entity ids: %w", err)
+	// Sources are ciphertext: pick the entities over the working set.
+	ws, err := workset.For(ctx, c.Handle)
+	if err != nil {
+		return err
+	}
+	for _, e := range ws.Entities() {
+		if e.Source == f.Source {
+			ids = append(ids, e.ID)
 		}
 	}
 	if len(ids) == 0 {

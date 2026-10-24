@@ -33,7 +33,7 @@ func TestUndoSnapshotEncryptedAndRestores(t *testing.T) {
 	if n == 0 {
 		t.Fatal("no change records written")
 	}
-	if bad := env.Count(`SELECT count(*) FROM delete_batch_changes WHERE batch_id = $1 AND (row_json IS NOT NULL OR row_ct IS NULL OR NOT enc)`, st.BatchID); bad != 0 {
+	if bad := env.Count(`SELECT count(*) FROM delete_batch_changes WHERE batch_id = $1 AND length(row_ct) < 29`, st.BatchID); bad != 0 {
 		t.Fatalf("%d snapshot rows are not sealed", bad)
 	}
 	var dump string

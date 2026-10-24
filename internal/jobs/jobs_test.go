@@ -19,10 +19,9 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
-
-const testKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 // vecFor is a deterministic bag-of-words embedding.
 func vecFor(text string, dims int) []float32 {
@@ -67,6 +66,9 @@ type env struct {
 	root *cortex.Cortex
 	db   *sql.DB
 	st   *accounts.Store
+	// keys holds the user key of every user made with user (all accounts are
+	// encrypted since migration 012).
+	keys map[string]*keys.UK
 }
 
 func newEnv(t *testing.T) *env {
@@ -82,11 +84,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	sl, err := accounts.NewSealer(testKeyHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &env{dsn: dsn, root: root, db: db, st: &accounts.Store{DB: db, Sealer: sl}}
+	return &env{dsn: dsn, root: root, db: db, st: &accounts.Store{DB: db}, keys: map[string]*keys.UK{}}
 }
 
 func (e *env) user(t *testing.T, sub string) string {
@@ -95,18 +93,49 @@ func (e *env) user(t *testing.T, sub string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.db.ExecContext(t.Context(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uk.Zero)
+	e.keys[u.ID] = uk
 	if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{
 		BaseURL: "https://api.example.com/v1", APIKey: "sk-secret-3f9a", ChatModel: "m", EmbedModel: "e", EmbedDims: 256,
-	}, nil); err != nil {
+	}, uk); err != nil {
 		t.Fatal(err)
 	}
 	return u.ID
+}
+
+// bareEnc creates an encrypted user without settings and returns its key.
+func (e *env) bareEnc(t *testing.T, sub string) (string, *keys.UK) {
+	t.Helper()
+	u, err := e.root.CreateUser(t.Context(), sub, sub+"@x.test", sub, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.ExecContext(t.Context(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uk.Zero)
+	e.keys[u.ID] = uk
+	return u.ID, uk
 }
 
 func (e *env) handle(uid string, emb cortex.Embedder, gen int) *cortex.Cortex {
 	cx := e.root.ForUser(uid, cortex.WithEmbedder(emb))
 	if gen > 0 {
 		cx = cx.WithGeneration(gen)
+	}
+	if uk := e.keys[uid]; uk != nil {
+		cx = cx.WithKey(uk, "encrypted")
 	}
 	return cx
 }
@@ -318,23 +347,19 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 	e.st.AllowPrivate = true
 	es := newEmbedServer(t)
 	ctx := t.Context()
-	u, err := e.root.CreateUser(ctx, "a", "a@x.test", "a", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	uid := u.ID
+	uid, uk := e.bareEnc(t, "a")
 	s := accounts.Settings{BaseURL: es.URL + "/v1", APIKey: "sk-test", ChatModel: "chat", EmbedModel: "old", EmbedDims: 256}
-	if _, err := e.st.PutSettings(ctx, uid, s, nil); err != nil {
+	if _, err := e.st.PutSettings(ctx, uid, s, uk); err != nil {
 		t.Fatal(err)
 	}
-	cx, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
+	cx, err := e.st.ResolveUser(ctx, e.root, uid, "", uk)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ids := seedMemories(t, cx, cx.Embedder(), 70)
 
 	s.EmbedModel, s.EmbedDims = "new", 384
-	needs, err := e.st.PutSettings(ctx, uid, s, nil)
+	needs, err := e.st.PutSettings(ctx, uid, s, uk)
 	if err != nil || !needs {
 		t.Fatalf("PutSettings needsReembed=%v err=%v", needs, err)
 	}
@@ -348,7 +373,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 	<-reached
 
 	newBefore := es.count("new")
-	h, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
+	h, err := e.st.ResolveUser(ctx, e.root, uid, "", uk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +398,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h2, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
+	h2, err := e.st.ResolveUser(ctx, e.root, uid, "", uk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +438,7 @@ func (w *wrapEmb) Dimensions() int { return w.dims }
 // mustProviders builds the embedder for the user's desired (new) settings.
 func mustProviders(t *testing.T, e *env, uid string) cortex.Embedder {
 	t.Helper()
-	s, err := e.st.GetSettings(t.Context(), uid, nil)
+	s, err := e.st.GetSettings(t.Context(), uid, e.keys[uid])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +480,7 @@ func TestWriteAfterFlipWithStaleHandleRejected(t *testing.T) {
 	oldE := &stub{dims: 8}
 	cx := e.handle(uid, oldE, 0)
 	addMemory(t, cx, oldE, "something old")
-	stale := e.root.ForUser(uid, cortex.WithEmbedder(oldE), cortex.WithExtractor(extractStub{})).WithGeneration(1)
+	stale := e.root.ForUser(uid, cortex.WithEmbedder(oldE), cortex.WithExtractor(extractStub{})).WithGeneration(1).WithKey(e.keys[uid], "encrypted")
 	if err := ReEmbed(ctx, cx, e.st, &stub{dims: 16}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +531,7 @@ func TestReEmbedFlipExcludesWriters(t *testing.T) {
 	go func() { done <- ReEmbed(ctx, cx, e.st, target, nil) }()
 	<-inFlip
 
-	writer := e.root.ForUser(uid, cortex.WithEmbedder(oldE), cortex.WithExtractor(extractStub{})).WithGeneration(1)
+	writer := e.root.ForUser(uid, cortex.WithEmbedder(oldE), cortex.WithExtractor(extractStub{})).WithGeneration(1).WithKey(e.keys[uid], "encrypted")
 	wdone := make(chan error, 1)
 	go func() { wdone <- writer.Remember(ctx, "writer racing the flip") }()
 	select {
@@ -524,37 +549,6 @@ func TestReEmbedFlipExcludesWriters(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM embeddings WHERE user_id=$1 AND generation=2 AND dims<>16`, uid); n != 0 {
 		t.Fatalf("%d old-model vectors landed in the new generation", n)
-	}
-}
-
-func TestIndexJobBuildsForActiveDims(t *testing.T) {
-	e := newEnv(t)
-	ctx := t.Context()
-	uid := e.user(t, "a")
-	plain, err := e.st.Sealer.Seal(`{"url":"https://api.example.com/v1","key":"k","model":"m","dims":16}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.db.ExecContext(ctx, `UPDATE user_settings SET active_embed_sealed=$2 WHERE user_id=$1`, uid, plain); err != nil {
-		t.Fatal(err)
-	}
-	pool := NewPool(1, func(ctx context.Context, j Job) error {
-		if j.Kind != "index" {
-			return fmt.Errorf("unexpected kind %s", j.Kind)
-		}
-		return IndexJob(ctx, e.root, e.st, j.UserID)
-	}).WithDB(e.db)
-	pool.Start(ctx)
-	defer pool.Stop()
-	id, err := pool.Enqueue(ctx, uid, "index")
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitStatus(t, e, id, "done")
-	for _, rt := range []string{"entity", "memory", "chunk"} {
-		if n := e.count(t, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname=$1`, "emb_hnsw_"+rt+"_16"); n != 1 {
-			t.Fatalf("index emb_hnsw_%s_16 missing", rt)
-		}
 	}
 }
 
@@ -597,6 +591,7 @@ func TestPoolRunsTwoConcurrent(t *testing.T) {
 	}).WithDB(e.db)
 	pool.Start(ctx)
 	defer pool.Stop()
+	pool.AttachKey(uid, e.keys[uid], time.Minute)
 	var ids []string
 	for i := 0; i < 3; i++ {
 		id, err := pool.Enqueue(ctx, uid, "x")
@@ -643,22 +638,6 @@ func TestPoolSkipsDeletedUser(t *testing.T) {
 	}
 }
 
-func TestEnsureIndexesCreatesForDims(t *testing.T) {
-	e := newEnv(t)
-	ctx := t.Context()
-	cx := e.root.ForUser(cortex.BootstrapUserID)
-	for i := 0; i < 2; i++ { // idempotent
-		if err := EnsureIndexes(ctx, cx, 24); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, rt := range []string{"entity", "memory", "chunk"} {
-		if n := e.count(t, `SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname=$1`, "emb_hnsw_"+rt+"_24"); n != 1 {
-			t.Fatalf("index emb_hnsw_%s_24 missing", rt)
-		}
-	}
-}
-
 func TestIsolationReEmbed(t *testing.T) {
 	e := newEnv(t)
 	ctx := t.Context()
@@ -697,17 +676,17 @@ func TestReEmbedWithPromotesBuiltSettings(t *testing.T) {
 		other := built
 		other.EmbedModel = "model-c"
 		other.EmbedDims = 768
-		if _, err := e.st.PutSettings(ctx, uid, other, nil); err != nil {
+		if _, err := e.st.PutSettings(ctx, uid, other, e.keys[uid]); err != nil {
 			t.Error(err)
 		}
 	}
-	if _, err := e.st.PutSettings(ctx, uid, built, nil); err != nil {
+	if _, err := e.st.PutSettings(ctx, uid, built, e.keys[uid]); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReEmbedWith(ctx, cx, e.st, newE, &built, nil); err != nil {
 		t.Fatal(err)
 	}
-	a, err := e.st.GetActiveEmbed(ctx, uid, nil)
+	a, err := e.st.GetActiveEmbed(ctx, uid, e.keys[uid])
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sausheong/cortex/internal/testutil"
+
 	"github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 // mockExtractor returns predetermined entities from any input.
@@ -22,10 +23,7 @@ func (m *mockExtractor) Extract(ctx context.Context, content, contentType string
 
 func openTestDB(t *testing.T) *cortex.Cortex {
 	t.Helper()
-	cx, err := cortex.Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
+	cx, _ := testutil.OpenEncryptedWith(t)
 	t.Cleanup(func() { cx.Close() })
 	return cx
 }

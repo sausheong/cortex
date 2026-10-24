@@ -48,8 +48,8 @@ func TestRememberRecordsConnection(t *testing.T) {
 			t.Errorf("%s: no rows with connection c1", tbl)
 		}
 	}
-	// The user's own "self" entity (made by CreateUser) is the only NULL row.
-	if n := writtenByCounts(t, a, ""); n["memories"]+n["chunks"]+n["relationships"] != 0 || n["entities"] != 1 {
+	// Everything written through the connection carries it.
+	if n := writtenByCounts(t, a, ""); n["memories"]+n["chunks"]+n["relationships"]+n["entities"] != 0 {
 		t.Errorf("unexpected NULL rows: %v", n)
 	}
 	ents, _ := a.FindEntities(ctx, EntityFilter{})

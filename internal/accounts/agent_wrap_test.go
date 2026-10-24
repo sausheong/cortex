@@ -129,9 +129,12 @@ func TestNeedsReconnectError(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "w6")
-	tok, conn, _ := e.st.CreateAgentToken(ctx, u, "a", nil) // legacy token, no wrap
+	tok, err := legacyAgentToken(ctx, e, u) // legacy token, no wrap
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.st.DB.ExecContext(ctx, `UPDATE users SET encryption_state='encrypted' WHERE id=$1`, u)
-	_, _, _, err := e.st.ResolveBearer(ctx, tok)
+	_, _, _, err = e.st.ResolveBearer(ctx, tok)
 	if !errors.Is(err, model.ErrNeedsReconnect) || err.Error() != "cortex is now encrypted; reconnect this assistant in Connections" {
 		t.Fatalf("got %v", err)
 	}
@@ -149,7 +152,6 @@ func TestNeedsReconnectError(t *testing.T) {
 		if c.ID == c2.ID && c.NeedsReconnect && c.ExpiresAt != nil {
 			flagged = true
 		}
-		_ = conn
 	}
 	if !flagged {
 		t.Fatal("list lacks NeedsReconnect/ExpiresAt")

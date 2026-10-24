@@ -17,13 +17,9 @@ import (
 
 func TestEnrollmentMarksConnectionsNeedReconnect(t *testing.T) {
 	p := newPKWeb(t)
-	p.e.makeLegacy()
 	ctx := t.Context()
 	uid := p.e.userBySub("g-alice").ID
-	oldTok, agent, err := p.e.st.CreateAgentToken(ctx, uid, "laptop-agent", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	oldTok, agent := p.e.legacyToken(uid, "laptop-agent")
 	oc, err := p.e.st.CreateConnection(ctx, uid, "oauth", "Claude", "client-1")
 	if err != nil {
 		t.Fatal(err)
@@ -77,8 +73,8 @@ func TestMarkNeedsReconnectOnlyLiveConnections(t *testing.T) {
 	e.signIn(alice(), "")
 	ctx := t.Context()
 	uid := e.userBySub("g-alice").ID
-	_, live, _ := e.st.CreateAgentToken(ctx, uid, "a", nil)
-	_, dead, _ := e.st.CreateAgentToken(ctx, uid, "b", nil)
+	_, live, _ := e.st.CreateAgentToken(ctx, uid, "a", e.keys[uid])
+	_, dead, _ := e.st.CreateAgentToken(ctx, uid, "b", e.keys[uid])
 	e.st.RevokeConnection(ctx, uid, dead.ID)
 	if err := e.st.MarkNeedsReconnect(ctx, uid); err != nil {
 		t.Fatal(err)

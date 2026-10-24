@@ -165,63 +165,7 @@ func testLint_EntityWithoutMemories(t *testing.T) {
 
 // --- Test 5: Near-duplicate names (case-insensitive, same type) ---
 
-// Legacy only: case-variant names are one entity under the encrypted blind index.
-func TestLint_NearDuplicateNames(t *testing.T) {
-	cx := openTestDB(t)
-	ctx := context.Background()
-
-	a := &Entity{Type: "person", Name: "Alice Chen"}
-	b := &Entity{Type: "person", Name: "alice chen"}
-	// Different-type but same name shouldn't pair.
-	c := &Entity{Type: "organization", Name: "Alice Chen"}
-	for _, e := range []*Entity{a, b, c} {
-		if err := cx.PutEntity(ctx, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	r, err := cx.Lint(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(r.NearDuplicates) != 1 {
-		t.Fatalf("expected 1 near-duplicate pair, got %d: %+v", len(r.NearDuplicates), r.NearDuplicates)
-	}
-	pair := r.NearDuplicates[0]
-	if pair.Type != "person" {
-		t.Errorf("pair type = %q, want person", pair.Type)
-	}
-	// Verify both a and b are in the pair (in some order).
-	ids := map[string]bool{pair.A.ID: true, pair.B.ID: true}
-	if !ids[a.ID] || !ids[b.ID] {
-		t.Errorf("pair should contain both alice entities: got %s and %s", pair.A.ID, pair.B.ID)
-	}
-}
-
 // --- Test 6: Self-pair guard ---
-
-// Legacy only: case-variant names are one entity under the encrypted blind index.
-func TestLint_NearDuplicateNoSelfOrReversePair(t *testing.T) {
-	cx := openTestDB(t)
-	ctx := context.Background()
-
-	a := &Entity{Type: "concept", Name: "X"}
-	b := &Entity{Type: "concept", Name: "x"}
-	if err := cx.PutEntity(ctx, a); err != nil {
-		t.Fatal(err)
-	}
-	if err := cx.PutEntity(ctx, b); err != nil {
-		t.Fatal(err)
-	}
-
-	r, err := cx.Lint(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(r.NearDuplicates) != 1 {
-		t.Errorf("expected exactly 1 pair, got %d", len(r.NearDuplicates))
-	}
-}
 
 // --- Test 7: Dead source ---
 

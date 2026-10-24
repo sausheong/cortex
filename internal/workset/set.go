@@ -87,10 +87,11 @@ type Set struct {
 }
 
 // For returns the user's working set, loading what is missing. It needs an
-// encrypted user and a key, else model.ErrLocked.
+// enrolled user and a key: model.ErrEnrollRequired for an unenrolled user,
+// model.ErrLocked for a handle without a key.
 func For(ctx context.Context, h *store.Handle) (*Set, error) {
-	if !h.Encrypted() || h.Key == nil {
-		return nil, model.ErrLocked
+	if err := h.RequireKey(); err != nil {
+		return nil, err
 	}
 	probe := h.Key.Blind("probe")
 	if len(probe) == 0 {

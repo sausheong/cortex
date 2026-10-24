@@ -38,6 +38,7 @@ func rememberDoc(t *testing.T, emb *limitEmbedder) (*Cortex, error) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	c = modeHandle(t, c)
 	t.Cleanup(func() { c.Close() })
 	c.SetExtractor(&mockExtractor{
 		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {

@@ -12,18 +12,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
-	"github.com/sausheong/cortex/internal/pgtest"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 // newTestCortex returns a cortex backed by an isolated Postgres schema, using
 // only the deterministic extractor (no LLM, no embedder).
 func newTestCortex(t *testing.T) *cortex.Cortex {
 	t.Helper()
-	cx, err := cortex.Open(pgtest.DSN(t), cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatalf("cortex.Open: %v", err)
-	}
-	t.Cleanup(func() { cx.Close() })
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 	return cx
 }
 
@@ -201,7 +197,7 @@ func TestMergeTool_RoundTrip(t *testing.T) {
 	cx := newTestCortex(t)
 	ctx := context.Background()
 	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
-	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	drop := &cortex.Entity{Type: "person", Name: "Alice C."}
 	if err := cx.PutEntity(ctx, keep); err != nil {
 		t.Fatalf("PutEntity keep: %v", err)
 	}
@@ -245,7 +241,7 @@ func TestMergeTool_DryRun(t *testing.T) {
 	cx := newTestCortex(t)
 	ctx := context.Background()
 	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
-	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	drop := &cortex.Entity{Type: "person", Name: "Alice C."}
 	if err := cx.PutEntity(ctx, keep); err != nil {
 		t.Fatalf("PutEntity keep: %v", err)
 	}
@@ -401,7 +397,7 @@ func TestMCPMergeIsSoft(t *testing.T) {
 	cx := newTestCortex(t)
 	ctx := context.Background()
 	keep := &cortex.Entity{Type: "person", Name: "Alice Chen"}
-	drop := &cortex.Entity{Type: "person", Name: "alice chen"}
+	drop := &cortex.Entity{Type: "person", Name: "Alice C."}
 	for _, e := range []*cortex.Entity{keep, drop} {
 		if err := cx.PutEntity(ctx, e); err != nil {
 			t.Fatal(err)

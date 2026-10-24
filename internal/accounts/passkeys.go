@@ -38,12 +38,13 @@ const (
 	PendingTTL = time.Hour
 	// CeremonyTTL is how long a WebAuthn challenge lives.
 	CeremonyTTL = 5 * time.Minute
-	// MigrateEncKind is the job kind of the owner's encryption migration.
-	// ConfirmEnroll parks one; jobs.EnsureMigrationJob queues it once a key
-	// is attached and jobs.EncryptUserJob runs it. StatusParked jobs are not
-	// picked up by the pool.
+	// MigrateEncKind is the retired job kind of the owner's encryption
+	// migration; the worker completes a leftover row without work.
 	MigrateEncKind = "encmigrate"
 	StatusParked   = "parked"
+
+	// tunnelTokenName is the name the retired static owner token had.
+	tunnelTokenName = "claude-code (tunnel)"
 
 	maxConfirmAttempts = 5
 	recoveryRef        = "recovery"
@@ -685,36 +686,12 @@ func (st *Store) ConfirmEnroll(ctx context.Context, userID, confirmID string, as
 	if n, _ := res.RowsAffected(); n != 2 {
 		return "", nil, ErrCeremony
 	}
-	var legacy bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM memories WHERE user_id = $1)
-		     OR EXISTS (SELECT 1 FROM chunks WHERE user_id = $1)
-		     OR EXISTS (SELECT 1 FROM relationships WHERE user_id = $1)
-		     OR EXISTS (SELECT 1 FROM entities WHERE user_id = $1 AND NOT is_owner)`, userID).Scan(&legacy); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, userID); err != nil {
 		return "", nil, err
 	}
-	next := "encrypted"
-	if legacy {
-		next = "migrating"
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET encryption_state = $2 WHERE id = $1`, userID, next); err != nil {
+	// Sign-up writes no data: the account's person entity is created sealed.
+	if err := sealOwnerEntity(ctx, tx, uk, userID); err != nil {
 		return "", nil, err
-	}
-	if next == "migrating" {
-		// Parked until a key-bearing request attaches (Tasks 14 and 16).
-		if _, err := tx.ExecContext(ctx, `INSERT INTO jobs (id, user_id, kind, status) VALUES ($1,$2,$3,$4)`,
-			"j_"+randHex(12), userID, MigrateEncKind, StatusParked); err != nil {
-			return "", nil, err
-		}
-	}
-	if next == "encrypted" {
-		// A new account has no data yet except the owner entity that sign-up
-		// wrote in plaintext. Nothing else would encrypt it (the migration
-		// job only runs for 'migrating' accounts), and the row-form guard
-		// rejects a plaintext row in an encrypted account.
-		if err := sealOwnerEntity(ctx, tx, uk, userID); err != nil {
-			return "", nil, err
-		}
 	}
 	// Tokens issued before encryption carry no key wrap: flag them so
 	// Connections offers Reconnect and the MCP error says what to do.
@@ -736,7 +713,7 @@ func (st *Store) ConfirmEnroll(ctx context.Context, userID, confirmID string, as
 	}
 	done = true
 	st.touchCred(ctx, match.ID, cred)
-	return next, uk, nil
+	return "encrypted", uk, nil
 }
 
 // --- unlock ---
@@ -958,57 +935,53 @@ func (st *Store) PurgeEnrollments(ctx context.Context, now time.Time) error {
 	return err
 }
 
-// sealOwnerEntity rewrites the user's plaintext owner entity as encrypted:
-// the same shape graph.writeEntityEnc produces (ciphertext columns, blind
-// indexes on normalised name and type, plain columns cleared).
+// sealOwnerEntity creates the user's person entity sealed (the shape
+// graph.writeEntityEnc produces: ciphertext columns and blind indexes on the
+// normalised name and type) and records it in users.owner_entity_id. It does
+// nothing when the user already has one.
 func sealOwnerEntity(ctx context.Context, tx *sql.Tx, uk *keys.UK, userID string) error {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id, COALESCE(name,''), COALESCE(type,''), COALESCE(source,''), COALESCE(attributes::text,'{}')
-		 FROM entities WHERE user_id = $1 AND is_owner AND enc IS NOT TRUE FOR UPDATE`, userID)
+	var has bool
+	var name, email string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT owner_entity_id IS NOT NULL, COALESCE(name,''), COALESCE(email,'') FROM users WHERE id = $1`,
+		userID).Scan(&has, &name, &email); err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	display := name
+	if display == "" {
+		display = email
+	}
+	if display == "" {
+		display = userID
+	}
+	id := store.NewID()
+	seal := func(col, v string) ([]byte, error) { return uk.Seal(userID, store.TblEntities, id, col, []byte(v)) }
+	nameCT, err := seal("name", display)
 	if err != nil {
 		return err
 	}
-	type row struct{ id, name, typ, source, attrs string }
-	var owners []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.name, &r.typ, &r.source, &r.attrs); err != nil {
-			rows.Close()
-			return err
-		}
-		owners = append(owners, r)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
+	typeCT, err := seal("type", "person")
+	if err != nil {
 		return err
 	}
-	rows.Close()
-	for _, r := range owners {
-		seal := func(col, v string) ([]byte, error) { return uk.Seal(userID, store.TblEntities, r.id, col, []byte(v)) }
-		nameCT, err := seal("name", r.name)
-		if err != nil {
-			return err
-		}
-		typeCT, err := seal("type", r.typ)
-		if err != nil {
-			return err
-		}
-		sourceCT, err := seal("source", r.source)
-		if err != nil {
-			return err
-		}
-		attrsCT, err := seal("attributes", r.attrs)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE entities SET enc = TRUE, name = NULL, type = NULL, source = NULL, attributes = NULL,
-			   name_ct = $3, type_ct = $4, source_ct = $5, attributes_ct = $6, name_blind = $7, type_blind = $8
-			 WHERE id = $1 AND user_id = $2`,
-			r.id, userID, nameCT, typeCT, sourceCT, attrsCT,
-			uk.Blind(store.NormName(r.name)), uk.Blind(store.NormName(r.typ))); err != nil {
-			return err
-		}
+	sourceCT, err := seal("source", "owner")
+	if err != nil {
+		return err
 	}
-	return nil
+	attrsCT, err := seal("attributes", "{}")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO entities (id, user_id, is_owner, name_ct, type_ct, source_ct, attributes_ct, name_blind, type_blind)
+		 VALUES ($1, $2, TRUE, $3, $4, $5, $6, $7, $8)`,
+		id, userID, nameCT, typeCT, sourceCT, attrsCT,
+		uk.Blind(store.NormName(display)), uk.Blind(store.NormName("person"))); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET owner_entity_id = $2 WHERE id = $1`, userID, id)
+	return err
 }

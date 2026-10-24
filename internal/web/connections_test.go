@@ -32,7 +32,7 @@ func TestConnectionsListsOwnOnly(t *testing.T) {
 	if _, err := e.st.CreateConnection(t.Context(), ua.ID, "oauth", "AliceAssistant", "https://a.test/c"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent", nil); err != nil {
+	if _, _, err := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent", e.keys[ua.ID]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.st.CreateConnection(t.Context(), ub.ID, "oauth", "BobAssistant", "https://b.test/c"); err != nil {
@@ -55,12 +55,12 @@ func TestRevokeAndRemoveSoftDeletes(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	tok, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1", nil)
+	tok, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1", e.keys[ua.ID])
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := &cortex.Memory{Content: "written by agent1"}
-	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), m); err != nil {
+	if err := e.cx(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), m); err != nil {
 		t.Fatal(err)
 	}
 	conns, _ := e.st.ListConnections(t.Context(), ua.ID)
@@ -108,7 +108,7 @@ func TestRevokeAndRemoveSoftDeletes(t *testing.T) {
 		t.Fatal("undo re-enabled the token")
 	}
 	// Redo the delete part for the original assertions below.
-	e.root.ForUser(ua.ID).SoftDeleteByConnection(t.Context(), conn.ID)
+	e.cx(ua.ID).SoftDeleteByConnection(t.Context(), conn.ID)
 	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("revoked token still resolves")
 	}
@@ -122,7 +122,7 @@ func TestRevokeForeignConnectionIs404(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(Identity{Sub: "g-bob", Email: "bob@x.test", Name: "Bob", EmailVerified: true}, "")
 	ub := e.userBySub("g-bob")
-	btok, bconn, err := e.st.CreateAgentToken(t.Context(), ub.ID, "bobagent", nil)
+	btok, bconn, err := e.st.CreateAgentToken(t.Context(), ub.ID, "bobagent", e.keys[ub.ID])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,9 +176,9 @@ func TestRevokeKeepLeavesWrittenData(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1", nil)
+	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1", e.keys[ua.ID])
 	m := &cortex.Memory{Content: "kept"}
-	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), m); err != nil {
+	if err := e.cx(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), m); err != nil {
 		t.Fatal(err)
 	}
 	resp, _ := e.post("/connections/"+conn.ID+"/revoke", url.Values{"csrf": {e.connCSRF()}, "choice": {"keep"}})
@@ -221,11 +221,11 @@ func TestRenameConnection(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "old-name", nil)
+	_, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "old-name", e.keys[ua.ID])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "from the agent"}); err != nil {
+	if err := e.cx(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "from the agent"}); err != nil {
 		t.Fatal(err)
 	}
 	csrf := e.connCSRF()
@@ -263,7 +263,7 @@ func TestConnectionRenameRemoveIsolation(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent", e.keys[ua.ID])
 	if err := e.st.RevokeConnection(t.Context(), ua.ID, conn.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -287,8 +287,8 @@ func TestRemoveConnection(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "gone-agent", nil)
-	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "kept memory"}); err != nil {
+	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "gone-agent", e.keys[ua.ID])
+	if err := e.cx(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "kept memory"}); err != nil {
 		t.Fatal(err)
 	}
 	csrf := e.connCSRF()
@@ -347,7 +347,7 @@ func TestRemovedConnectionWithoutMemoriesLeavesFilter(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "empty-agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "empty-agent", e.keys[ua.ID])
 	_ = e.st.RevokeConnection(t.Context(), ua.ID, conn.ID)
 	if err := e.st.RemoveConnection(t.Context(), ua.ID, conn.ID); err != nil {
 		t.Fatal(err)

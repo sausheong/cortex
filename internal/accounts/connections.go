@@ -203,15 +203,11 @@ func (st *Store) CreateAgentToken(ctx context.Context, userID, name string, uk *
 	if err != nil {
 		return "", nil, err
 	}
-	if state != "none" && uk == nil {
-		return "", nil, model.ErrLocked
-	}
 	if state == "none" {
-		if req, err := st.EnrollRequired(ctx, userID); err != nil {
-			return "", nil, err
-		} else if req {
-			return "", nil, model.ErrEnrollRequired
-		}
+		return "", nil, model.ErrEnrollRequired
+	}
+	if uk == nil {
+		return "", nil, model.ErrLocked
 	}
 	plain, err := newAgentTokenString()
 	if err != nil {

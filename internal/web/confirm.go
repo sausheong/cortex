@@ -20,16 +20,16 @@ type confirmView struct {
 	Consequence string
 	Details     []string
 	// Items previews what is being deleted; More is the "and N more" line.
-	Items []string
-	More  string
-	Action      string
-	Fields      []confirmField
-	Count       int
-	Phrase      string // typed confirmation required when set
-	PhraseErr   string
-	Error       string
-	Button      string
-	CancelHref  string
+	Items      []string
+	More       string
+	Action     string
+	Fields     []confirmField
+	Count      int
+	Phrase     string // typed confirmation required when set
+	PhraseErr  string
+	Error      string
+	Button     string
+	CancelHref string
 }
 
 // expectCount reads confirm_count; ok is false when absent or malformed.

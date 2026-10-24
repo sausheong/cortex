@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sausheong/cortex/internal/testutil"
+
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
-	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 func TestSyncMarkdownFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	md1 := `---
 name: Alice
@@ -40,11 +40,7 @@ Bob manages the engineering team.
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()
@@ -79,7 +75,6 @@ Bob manages the engineering team.
 
 func TestSyncCSVFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	csv := `name,role,company
 Alice,Engineer,Stripe
@@ -89,11 +84,7 @@ Bob,Manager,Google
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()
@@ -113,7 +104,6 @@ Bob,Manager,Google
 
 func TestSyncYAMLFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	yaml := `people:
   - name: Carol
@@ -127,11 +117,7 @@ func TestSyncYAMLFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()
@@ -150,18 +136,13 @@ func TestSyncYAMLFiles(t *testing.T) {
 
 func TestSyncJSONFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	jsonContent := `{"employees": [{"name": "Eve", "role": "Designer"}, {"name": "Frank", "role": "Developer"}]}`
 	if err := os.WriteFile(filepath.Join(dir, "staff.json"), []byte(jsonContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()
@@ -180,7 +161,6 @@ func TestSyncJSONFiles(t *testing.T) {
 
 func TestSyncSkipsUnsupportedFiles(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	// Write a binary-like file with unsupported extension.
 	if err := os.WriteFile(filepath.Join(dir, "image.png"), []byte("fake png data"), 0o644); err != nil {
@@ -191,11 +171,7 @@ func TestSyncSkipsUnsupportedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()
@@ -224,7 +200,6 @@ func TestSyncSkipsUnsupportedFiles(t *testing.T) {
 
 func TestSyncIsIncremental(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	md := `---
 name: Charlie
@@ -237,11 +212,7 @@ Charlie is a developer.
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()
@@ -275,7 +246,6 @@ Charlie is a developer.
 
 func TestSyncMixedFileTypes(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := pgtest.DSN(t)
 
 	md := `---
 name: Grace
@@ -296,11 +266,7 @@ Grace is a researcher.
 		t.Fatal(err)
 	}
 
-	cx, err := cortex.Open(dbPath, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t, cortex.WithExtractor(deterministic.New()))
 
 	conn := New(dir)
 	ctx := context.Background()

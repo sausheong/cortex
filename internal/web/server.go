@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/sausheong/cortex"
@@ -93,7 +92,6 @@ type server struct {
 
 	// Seams for tests.
 	testProvider func(ctx context.Context, s accounts.Settings) error
-	indexExists  func(ctx context.Context, dims int) (bool, error)
 }
 
 func newServer(cfg Config, root *cortex.Cortex, st *accounts.Store, opts Options) *server {
@@ -122,7 +120,6 @@ func newServer(cfg Config, root *cortex.Cortex, st *accounts.Store, opts Options
 	s.testProvider = func(ctx context.Context, set accounts.Settings) error {
 		return accounts.TestProvider(ctx, set, accounts.SafeClient(st.AllowPrivate, accounts.ChatBodyCap))
 	}
-	s.indexExists = s.pgIndexExists
 	return s
 }
 
@@ -284,11 +281,6 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 		p.CSRF, p.SignedIn = u.CSRF, true
 		// Every signed-in page needs it: the nav shrinks while setup is open.
 		p.Setup, p.SetUp = s.setupRead(r.Context(), u.UserID, u.Key)
-		if s.st.EnrollEnabled() {
-			if info, err := s.st.EnrollInfo(r.Context(), u.UserID); err == nil {
-				p.EnrollBanner = info.State == "none" && !info.Cohort
-			}
-		}
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {
@@ -312,14 +304,6 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, u SessionUser) {
 		s.opts.OnLogout(u.UserID)
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func (s *server) pgIndexExists(ctx context.Context, dims int) (bool, error) {
-	var ok bool
-	err := s.st.DB.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = ANY(current_schemas(false))
-		 AND indexname = 'emb_hnsw_memory_' || $1)`, strconv.Itoa(dims)).Scan(&ok)
-	return ok, err
 }
 
 // cxFor returns a handle for u's own data. For an unlocked session of an

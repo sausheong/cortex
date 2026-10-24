@@ -3,10 +3,11 @@ package accounts
 import (
 	"context"
 	"errors"
-	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/keys"
@@ -148,18 +149,27 @@ func TestEnrollCreatesWrapsAndRecovery(t *testing.T) {
 	_ = prf
 }
 
-func TestEnrollMigratingWhenUserHasRows(t *testing.T) {
+// Confirming creates the account's person entity sealed: sign-up writes no
+// data, and the entity is created under the new key.
+func TestEnrollCreatesSealedOwnerEntity(t *testing.T) {
 	p := newPK(t)
-	if _, err := p.st.DB.Exec(`INSERT INTO memories (id, user_id, content) VALUES ('m1', $1, 'hello')`, p.user); err != nil {
-		t.Fatal(err)
+	if n := p.count(t, `SELECT count(*) FROM entities WHERE user_id=$1`, p.user); n != 0 {
+		t.Fatalf("sign-up wrote %d entities", n)
 	}
-	res, _, state := p.enrollAndConfirm(t)
+	res, _, _ := p.enrollAndConfirm(t)
 	defer res.UK.Zero()
-	if state != "migrating" || p.state(t) != "migrating" {
-		t.Fatalf("state %q, want migrating", state)
+	var id string
+	if err := p.st.DB.QueryRow(`SELECT owner_entity_id FROM users WHERE id=$1`, p.user).Scan(&id); err != nil || id == "" {
+		t.Fatalf("owner_entity_id = %q, %v", id, err)
 	}
-	if n := p.count(t, `SELECT count(*) FROM jobs WHERE user_id=$1 AND kind=$2 AND status=$3`, p.user, MigrateEncKind, StatusParked); n != 1 {
-		t.Fatalf("%d parked migration jobs, want 1", n)
+	var nameCT []byte
+	var isOwner bool
+	if err := p.st.DB.QueryRow(`SELECT name_ct, is_owner FROM entities WHERE id=$1 AND user_id=$2`, id, p.user).Scan(&nameCT, &isOwner); err != nil || !isOwner {
+		t.Fatalf("owner entity: %v isOwner=%v", err, isOwner)
+	}
+	name, err := res.UK.Open(p.user, "entities", id, "name", nameCT)
+	if err != nil || string(name) != "Pk" {
+		t.Fatalf("owner name = %q, %v", name, err)
 	}
 }
 
@@ -192,26 +202,6 @@ func TestEnrollNotCompleteUntilUnlockProofAndRecoveryConfirmed(t *testing.T) {
 	}
 	if n := p.count(t, `SELECT count(*) FROM user_key_wraps WHERE user_id=$1 AND pending`, p.user); n != 0 {
 		t.Fatal("wraps still pending after confirm")
-	}
-}
-
-func TestMigrationNotStartedBeforeConfirmation(t *testing.T) {
-	p := newPK(t)
-	p.st.DB.Exec(`INSERT INTO memories (id, user_id, content) VALUES ('m1', $1, 'hello')`, p.user)
-	res, _ := p.enroll(t)
-	defer res.UK.Zero()
-	if n := p.count(t, `SELECT count(*) FROM jobs WHERE user_id=$1 AND kind=$2`, p.user, MigrateEncKind); n != 0 {
-		t.Fatalf("migration enqueued before confirmation (%d)", n)
-	}
-	if p.state(t) != "none" {
-		t.Fatal("state changed before confirmation")
-	}
-	// A failed confirm still enqueues nothing.
-	if _, _, err := p.confirm(t, res, make([]byte, 32), groupsFor(res)); err == nil {
-		t.Fatal("confirm with wrong PRF succeeded")
-	}
-	if n := p.count(t, `SELECT count(*) FROM jobs WHERE user_id=$1 AND kind=$2`, p.user, MigrateEncKind); n != 0 {
-		t.Fatal("migration enqueued after a failed confirm")
 	}
 }
 
@@ -597,7 +587,7 @@ func TestRegenerateRecoveryInvalidatesOld(t *testing.T) {
 func TestEnrollmentDeletesBootstrapToken(t *testing.T) {
 	p := newPK(t)
 	ctx := context.Background()
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
+	if err := seedTunnelToken(ctx, p.st); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, _, err := p.st.ResolveBearer(ctx, "tunnel-token"); err != nil {
@@ -616,68 +606,10 @@ func TestEnrollmentDeletesBootstrapToken(t *testing.T) {
 	// the inverse test below).
 }
 
-func TestEnrollmentOfOtherUserKeepsBootstrapToken(t *testing.T) {
-	p := newPK(t)
-	ctx := context.Background()
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	res, _, _ := p.enrollAndConfirm(t)
-	defer res.UK.Zero()
-	if _, _, _, err := p.st.ResolveBearer(ctx, "tunnel-token"); err != nil {
-		t.Fatalf("bootstrap token broken by another user's enrollment: %v", err)
-	}
-}
-
-func TestMigrateBootstrapSkipsEnrolledOwner(t *testing.T) {
-	p := newPK(t)
-	ctx := context.Background()
-	// First start with no provider key: only the owner entity, no marker.
-	if err := MigrateBootstrap(ctx, p.st, map[string]string{}); err != nil {
-		t.Fatal(err)
-	}
-	p.user = cortex.BootstrapUserID
-	res, _, _ := p.enrollAndConfirm(t)
-	defer res.UK.Zero()
-	// A restart with the full environment must not seed settings or a token.
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	if n := p.count(t, `SELECT count(*) FROM agent_tokens`); n != 0 {
-		t.Fatalf("%d tokens recreated for an enrolled owner", n)
-	}
-	if n := p.count(t, `SELECT count(*) FROM user_settings`); n != 0 {
-		t.Fatalf("%d settings rows seeded for an enrolled owner", n)
-	}
-	if n := p.count(t, `SELECT count(*) FROM cortex_meta WHERE key = 'bootstrap_migrated'`); n != 0 {
-		t.Fatal("marker set for an enrolled owner")
-	}
-}
-
-func TestBootstrapDoesNotRecreateTunnelTokenAfterEncryption(t *testing.T) {
-	p := newPK(t)
-	ctx := context.Background()
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	p.user = cortex.BootstrapUserID
-	res, _, _ := p.enrollAndConfirm(t)
-	defer res.UK.Zero()
-	if _, err := p.st.DB.ExecContext(ctx, `DELETE FROM cortex_meta WHERE key = 'bootstrap_migrated'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
-		t.Fatal(err)
-	}
-	if n := p.count(t, `SELECT count(*) FROM agent_tokens`); n != 0 {
-		t.Fatalf("%d tunnel tokens recreated after encryption", n)
-	}
-}
-
 func TestStaticTokenRejectedForEncryptedUser(t *testing.T) {
 	p := newPK(t)
 	ctx := context.Background()
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
+	if err := seedTunnelToken(ctx, p.st); err != nil {
 		t.Fatal(err)
 	}
 	p.st.SetStaticToken("tunnel-token")
@@ -692,15 +624,21 @@ func TestStaticTokenRejectedForEncryptedUser(t *testing.T) {
 	}
 }
 
-func TestStaticTokenStillWorksForLegacyUser(t *testing.T) {
-	p := newPK(t)
-	ctx := context.Background()
-	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
-		t.Fatal(err)
+// seedTunnelToken gives the bootstrap user the static owner token the retired
+// environment seeding used to create.
+func seedTunnelToken(ctx context.Context, st *Store) error {
+	tx, err := st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	p.st.SetStaticToken("tunnel-token")
-	uid, _, uk, err := p.st.ResolveBearer(ctx, "tunnel-token")
-	if err != nil || uid != cortex.BootstrapUserID || uk != nil {
-		t.Fatalf("uid=%q uk=%v err=%v", uid, uk, err)
+	defer tx.Rollback()
+	conn, err := st.createConnection(ctx, tx, cortex.BootstrapUserID, "agent", tunnelTokenName, "")
+	if err != nil {
+		return err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_tokens (id, connection_id, token_hash) VALUES ('t_static',$1,$2)`,
+		conn.ID, HashToken("tunnel-token")); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

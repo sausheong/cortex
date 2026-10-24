@@ -37,7 +37,7 @@ func twoUsers(t *testing.T) (a, b *Cortex) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root.ForUser(ua.ID), root.ForUser(ub.ID)
+	return keyedHandle(t, root, ua.ID), keyedHandle(t, root, ub.ID)
 }
 
 func seedIso(t *testing.T, cx *Cortex, tag string) (e, e2 *Entity, m, m2 *Memory, ch *Chunk) {
@@ -93,12 +93,12 @@ func snapshot(t *testing.T, cx *Cortex, userID string) string {
 	ctx := context.Background()
 	var sb strings.Builder
 	for _, q := range []string{
-		`SELECT id||'|'||name||'|'||type||'|'||COALESCE(deleted_at::text,'') FROM entities WHERE user_id = ? ORDER BY id`,
-		`SELECT id||'|'||source_id||'|'||target_id||'|'||type||'|'||COALESCE(deleted_at::text,'') FROM relationships WHERE user_id = ? ORDER BY id`,
-		`SELECT id||'|'||content||'|'||confidence::text||'|'||COALESCE(expired_at::text,'')||'|'||COALESCE(invalid_at::text,'')||'|'||COALESCE(deleted_at::text,'') FROM memories WHERE user_id = ? ORDER BY id`,
+		`SELECT id||'|'||encode(name_ct,'hex')||'|'||encode(type_ct,'hex')||'|'||COALESCE(deleted_at::text,'') FROM entities WHERE user_id = ? ORDER BY id`,
+		`SELECT id||'|'||source_id||'|'||target_id||'|'||encode(type_ct,'hex')||'|'||COALESCE(deleted_at::text,'') FROM relationships WHERE user_id = ? ORDER BY id`,
+		`SELECT id||'|'||encode(content_ct,'hex')||'|'||confidence::text||'|'||COALESCE(expired_at::text,'')||'|'||COALESCE(invalid_at::text,'')||'|'||COALESCE(deleted_at::text,'') FROM memories WHERE user_id = ? ORDER BY id`,
 		`SELECT memory_id||'|'||entity_id FROM memory_entities WHERE user_id = ? ORDER BY 1`,
 		`SELECT id||'|'||source_id||'|'||target_id||'|'||type FROM memory_edges WHERE user_id = ? ORDER BY id`,
-		`SELECT id||'|'||COALESCE(entity_id,'')||'|'||content FROM chunks WHERE user_id = ? ORDER BY id`,
+		`SELECT id||'|'||COALESCE(entity_id,'')||'|'||encode(content_ct,'hex') FROM chunks WHERE user_id = ? ORDER BY id`,
 		`SELECT ref_type||'|'||ref_id FROM embeddings WHERE user_id = ? ORDER BY 1`,
 	} {
 		rows, err := cx.h.DB.QueryContext(ctx, q, userID)

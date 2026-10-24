@@ -2,7 +2,6 @@ package cortex
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sort"
 	"strings"
@@ -50,7 +49,7 @@ func nearAxis(i int) []float32 {
 func liveSnapshot(t *testing.T, c *Cortex) map[string]string {
 	t.Helper()
 	rows, err := c.h.DB.QueryContext(context.Background(),
-		`SELECT id, enc, content, content_ct FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
+		`SELECT id, content_ct FROM memories WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,13 +57,11 @@ func liveSnapshot(t *testing.T, c *Cortex) map[string]string {
 	out := map[string]string{}
 	for rows.Next() {
 		var id string
-		var enc bool
-		var plain sql.NullString
 		var ct []byte
-		if err := rows.Scan(&id, &enc, &plain, &ct); err != nil {
+		if err := rows.Scan(&id, &ct); err != nil {
 			t.Fatal(err)
 		}
-		text, err := c.h.OpenCol("memories", id, "content", enc, plain, ct)
+		text, err := c.h.OpenStr("memories", id, "content", ct)
 		if err != nil {
 			t.Fatal(err)
 		}

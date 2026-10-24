@@ -23,8 +23,9 @@ func scanUser(sc interface{ Scan(...any) error }) (*model.User, error) {
 	return &u, nil
 }
 
-// CreateUser inserts a user and its person entity (Source "owner"), whose ID
-// is stored in users.owner_entity_id.
+// CreateUser inserts a user in state "none". The person entity that
+// users.owner_entity_id points at is created sealed when the user enrolls a
+// passkey (accounts.ConfirmEnroll); until then the account holds no data.
 func (c Ops) CreateUser(ctx context.Context, googleSub, email, name string, emailVerified bool) (*model.User, error) {
 	id := "u_" + store.NewID()
 	tx, err := c.DB.BeginTx(ctx, nil)
@@ -41,35 +42,10 @@ func (c Ops) CreateUser(ctx context.Context, googleSub, email, name string, emai
 		id, sub, email, emailVerified, name); err != nil {
 		return nil, fmt.Errorf("cortex: create user: %w", err)
 	}
-	if err := createOwnerEntity(ctx, tx, id, name, email); err != nil {
-		return nil, err
-	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("cortex: commit create user: %w", err)
 	}
 	return c.userByID(ctx, id)
-}
-
-// createOwnerEntity creates the user's person entity and records it.
-func createOwnerEntity(ctx context.Context, tx *store.Tx, userID, name, email string) error {
-	display := name
-	if display == "" {
-		display = email
-	}
-	if display == "" {
-		display = userID
-	}
-	entID := store.NewID()
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO entities (id, user_id, type, name, source, is_owner) VALUES (?, ?, 'person', ?, 'owner', TRUE)`,
-		entID, userID, display); err != nil {
-		return fmt.Errorf("cortex: create owner entity: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET owner_entity_id = ? WHERE id = ?`, entID, userID); err != nil {
-		return fmt.Errorf("cortex: record owner entity: %w", err)
-	}
-	return nil
 }
 
 func (c Ops) userByID(ctx context.Context, id string) (*model.User, error) {

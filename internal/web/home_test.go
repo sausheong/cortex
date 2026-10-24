@@ -36,14 +36,14 @@ func (l *countLLM) Summarize(context.Context, []string) (string, error) {
 func (e *env) setProvider(uid string) {
 	e.t.Helper()
 	s := accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "gpt-test", EmbedModel: "e", EmbedDims: 512}
-	if _, err := e.st.PutSettings(e.t.Context(), uid, s, nil); err != nil {
+	if _, err := e.st.PutSettings(e.t.Context(), uid, s, e.ensureEnc(uid)); err != nil {
 		e.t.Fatal(err)
 	}
 }
 
 func (e *env) write(uid, connID, text string) {
 	e.t.Helper()
-	if err := e.root.ForUser(uid).WithConnection(connID).PutMemory(e.t.Context(), &cortex.Memory{Content: text}); err != nil {
+	if err := e.cx(uid).WithConnection(connID).PutMemory(e.t.Context(), &cortex.Memory{Content: text}); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -109,7 +109,7 @@ func TestFirstRunNavShrinksAndChecklistLinks(t *testing.T) {
 	// Once set up the full nav returns.
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", e.keys[ua.ID])
 	e.write(ua.ID, conn.ID, "likes tea")
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
 	_, body = e.get("/")
@@ -139,7 +139,7 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	// Once everything is set up the checklist disappears.
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", e.keys[ua.ID])
 	e.write(ua.ID, conn.ID, "likes tea")
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
 	_, body = e.get("/")
@@ -161,8 +161,8 @@ func TestHomeNewSinceGroupsAndLinks(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT", nil)
-	_, other, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Claude", nil)
+	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT", e.keys[ua.ID])
+	_, other, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Claude", e.keys[ua.ID])
 	// First visit stamps the clock.
 	e.get("/")
 	for _, m := range []string{"one", "two", "three", "four"} {
@@ -203,10 +203,10 @@ func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT", nil)
+	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT", e.keys[ua.ID])
 	// Written before the visit marker, same calendar day.
 	e.write(ua.ID, chat.ID, "old chat note")
-	if err := e.root.ForUser(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "old direct note"}); err != nil {
+	if err := e.cx(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "old direct note"}); err != nil {
 		t.Fatal(err)
 	}
 	// The visit marker is whole seconds: put it in a later second than the old notes.
@@ -216,7 +216,7 @@ func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
 	e.now = e.now.Add(time.Hour)
 	e.write(ua.ID, chat.ID, "new chat one")
 	e.write(ua.ID, chat.ID, "new chat two")
-	if err := e.root.ForUser(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "new direct note"}); err != nil {
+	if err := e.cx(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "new direct note"}); err != nil {
 		t.Fatal(err)
 	}
 	_, body := e.get("/")
@@ -246,14 +246,14 @@ func TestSetupIgnoresRemovedConnections(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Gone", nil)
-	if st := e.srv.setupState(t.Context(), ua.ID); st == nil || !st.Connect {
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Gone", e.keys[ua.ID])
+	if st, _ := e.srv.setupRead(t.Context(), ua.ID, e.keys[ua.ID]); st == nil || !st.Connect {
 		t.Fatalf("live connection should tick Connect: %+v", st)
 	}
 	if _, err := e.st.DB.ExecContext(t.Context(), `UPDATE connections SET removed_at = now() WHERE id = $1`, conn.ID); err != nil {
 		t.Fatal(err)
 	}
-	if st := e.srv.setupState(t.Context(), ua.ID); st == nil || st.Connect {
+	if st, _ := e.srv.setupRead(t.Context(), ua.ID, e.keys[ua.ID]); st == nil || st.Connect {
 		t.Fatalf("removed connection must not tick Connect: %+v", st)
 	}
 }
@@ -262,7 +262,7 @@ func TestHomeLastVisitUpdatesAfterViewing(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Agent", e.keys[ua.ID])
 	e.get("/")
 	e.write(ua.ID, conn.ID, "fresh note")
 	// A reload inside the visit gap does not count as a new visit.
@@ -285,10 +285,10 @@ func TestHomeAssistantsFlags(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, fresh, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "FreshOne", nil)
-	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne", nil)
-	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne", nil)
-	_, gone, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "GoneOne", nil)
+	_, fresh, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "FreshOne", e.keys[ua.ID])
+	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne", e.keys[ua.ID])
+	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne", e.keys[ua.ID])
+	_, gone, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "GoneOne", e.keys[ua.ID])
 	if err := e.st.RevokeConnection(t.Context(), ua.ID, gone.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestHomeHealthRows(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", e.keys[ua.ID])
 	e.write(ua.ID, conn.ID, "seed")
 	_, body := e.get("/")
 	// Provider configured and nothing wrong: one line, and no advice to set up
@@ -324,7 +324,7 @@ func TestHomeHealthRows(t *testing.T) {
 	if !strings.Contains(body, "Everything is working.") || strings.Contains(body, "once your AI provider") || strings.Contains(body, "Nightly maintenance") {
 		t.Errorf("healthy state should collapse to one line: %s", body)
 	}
-	cx := e.root.ForUser(ua.ID)
+	cx := e.cx(ua.ID)
 	if _, err := cx.RefreshUsage(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestHomeProfileFromCacheOnly(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	cx := e.root.ForUser(ua.ID)
+	cx := e.cx(ua.ID)
 	owner, err := cx.OwnerEntityID(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -373,7 +373,7 @@ func TestHomeProfileFromCacheOnly(t *testing.T) {
 	if err := cx.PutMemory(t.Context(), &cortex.Memory{Content: "Alice likes tea", Static: true, EntityIDs: []string{owner}}); err != nil {
 		t.Fatal(err)
 	}
-	e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
+	e.st.CreateAgentToken(t.Context(), ua.ID, "agent", e.keys[ua.ID])
 	// Not built yet: plain line, link kept.
 	_, body := e.get("/")
 	if !strings.Contains(body, "builds overnight") || !strings.Contains(body, `href="/graph"`) {
@@ -406,7 +406,7 @@ func TestHomeIsolation(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, ac, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "AliceBot", nil)
+	_, ac, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "AliceBot", e.keys[ua.ID])
 	e.write(ua.ID, ac.ID, "alice secret memory")
 	e.get("/")
 	e.newClient()
@@ -447,7 +447,7 @@ func TestHomeStatusNeverContradicts(t *testing.T) {
 	}
 
 	// Connected but never used: honest strip, no set-up line.
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", e.keys[ua.ID])
 	_, body = e.get("/")
 	if !strings.Contains(body, "1 assistant connected, not used yet") {
 		t.Errorf("connected-but-unused strip missing: %s", body)
@@ -475,9 +475,9 @@ func TestAssistantStatusAgreesAcrossPages(t *testing.T) {
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
 	e.write(ua.ID, "", "seed")
-	_, act, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ActiveOne", nil)
-	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne", nil)
-	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne", nil)
+	_, act, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ActiveOne", e.keys[ua.ID])
+	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne", e.keys[ua.ID])
+	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne", e.keys[ua.ID])
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, act.ID, e.now.Add(-time.Hour))
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, idle.ID, e.now.Add(-45*24*time.Hour))
 

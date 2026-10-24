@@ -56,20 +56,14 @@ func (c Ops) deleteWhere(ctx context.Context, f model.DeleteFilter) (string, []a
 	}
 	if f.Query != "" {
 		set = true
-		if c.Encrypted() {
-			// Content is ciphertext: the text match runs over the working
-			// set and the SQL keeps the other conditions plus the id list.
-			ids, err := c.memoryIDsContaining(ctx, f.Query)
-			if err != nil {
-				return "", nil, err
-			}
-			conds = append(conds, "id = ANY(?)")
-			args = append(args, ids)
-		} else {
-			esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Query)
-			conds = append(conds, `content ILIKE ? ESCAPE '\'`)
-			args = append(args, "%"+esc+"%")
+		// Content is ciphertext: the text match runs over the working set
+		// and the SQL keeps the other conditions plus the id list.
+		ids, err := c.memoryIDsContaining(ctx, f.Query)
+		if err != nil {
+			return "", nil, err
 		}
+		conds = append(conds, "id = ANY(?)")
+		args = append(args, ids)
 	}
 	if !set {
 		return "", nil, fmt.Errorf("cortex: delete filter is empty")
@@ -98,25 +92,7 @@ func (c Ops) SampleMemories(ctx context.Context, f model.DeleteFilter, limit int
 	if err != nil {
 		return nil, err
 	}
-	if c.Encrypted() {
-		return c.sampleMemoriesEnc(ctx, where, args, limit)
-	}
-	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, content, created_at FROM memories WHERE `+where+` AND enc IS NOT TRUE ORDER BY created_at DESC, id LIMIT ?`,
-		append(args, limit)...)
-	if err != nil {
-		return nil, fmt.Errorf("cortex: sample memories: %w", err)
-	}
-	defer rows.Close()
-	var out []model.Memory
-	for rows.Next() {
-		var m model.Memory
-		if err := rows.Scan(&m.ID, &m.Content, &m.CreatedAt); err != nil {
-			return nil, fmt.Errorf("cortex: scan memory: %w", err)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return c.sampleMemoriesEnc(ctx, where, args, limit)
 }
 
 // CountByConnection returns how many rows SoftDeleteByConnection would mark
@@ -306,7 +282,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 
 	// 1. Undo recorded changes, newest first.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, table_name, op, row_json::text, row_ct, enc FROM delete_batch_changes
+		`SELECT id, table_name, op, row_ct FROM delete_batch_changes
 		 WHERE batch_id = ? AND user_id = ? ORDER BY id DESC`, batchID, c.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: load batch changes: %w", err)
@@ -315,29 +291,19 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 	for rows.Next() {
 		var ch batchChange
 		var chID int64
-		var rowJSON sql.NullString
 		var ct []byte
-		var enc bool
-		if err := rows.Scan(&chID, &ch.table, &ch.op, &rowJSON, &ct, &enc); err != nil {
+		if err := rows.Scan(&chID, &ch.table, &ch.op, &ct); err != nil {
 			rows.Close()
 			return fmt.Errorf("cortex: scan batch change: %w", err)
 		}
-		if enc {
-			// The sealed snapshot is the row as stored (ciphertext columns
-			// included), so restoring it rewrites the encrypted row as it was.
-			j, err := c.OpenStr("delete_batch_changes", changeRowID(batchID, chID), "row_json", ct)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			ch.row = j
-		} else {
-			if err := c.CheckRowForm(false); err != nil {
-				rows.Close()
-				return err
-			}
-			ch.row = rowJSON.String
+		// The sealed snapshot is the row as stored (ciphertext columns
+		// included), so restoring it rewrites the row as it was.
+		j, err := c.OpenStr("delete_batch_changes", changeRowID(batchID, chID), "row_json", ct)
+		if err != nil {
+			rows.Close()
+			return err
 		}
+		ch.row = j
 		changes = append(changes, ch)
 	}
 	rows.Close()
@@ -358,7 +324,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 		 FROM relationships d
 		 WHERE d.user_id = ? AND d.delete_batch_id = ? AND l.user_id = d.user_id AND l.deleted_at IS NULL
 		   AND l.source_id = d.source_id AND l.target_id = d.target_id
-		   AND ((l.enc AND d.enc AND l.type_blind = d.type_blind) OR (l.enc IS NOT TRUE AND d.enc IS NOT TRUE AND l.type = d.type))`,
+		   AND l.type_blind = d.type_blind`,
 		c.UserID, batchID); err != nil {
 		return fmt.Errorf("cortex: fold restored relationships: %w", err)
 	}
@@ -367,7 +333,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 		 WHERE d.user_id = ? AND d.delete_batch_id = ?
 		   AND EXISTS (SELECT 1 FROM relationships l WHERE l.user_id = d.user_id AND l.deleted_at IS NULL
 		               AND l.source_id = d.source_id AND l.target_id = d.target_id
-		               AND ((l.enc AND d.enc AND l.type_blind = d.type_blind) OR (l.enc IS NOT TRUE AND d.enc IS NOT TRUE AND l.type = d.type)))`,
+		               AND l.type_blind = d.type_blind)`,
 		c.UserID, batchID); err != nil {
 		return fmt.Errorf("cortex: drop folded relationships: %w", err)
 	}
@@ -402,8 +368,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 		var liveID string
 		err := tx.QueryRowContext(ctx,
 			`SELECT l.id FROM entities l JOIN entities d ON
-			   ((d.enc AND l.enc AND d.name_blind = l.name_blind AND d.type_blind = l.type_blind)
-			    OR (d.enc IS NOT TRUE AND l.enc IS NOT TRUE AND d.name = l.name AND d.type = l.type))
+			   (d.name_blind = l.name_blind AND d.type_blind = l.type_blind)
 			 WHERE d.id = ? AND l.user_id = ? AND l.deleted_at IS NULL AND l.id <> d.id`,
 			id, c.UserID).Scan(&liveID)
 		switch {
@@ -462,7 +427,7 @@ func (c Ops) undoChange(ctx context.Context, tx *store.Tx, ch batchChange) error
 			q = `UPDATE entity_aliases t SET entity_id = r.entity_id
 			     FROM jsonb_populate_record(NULL::entity_aliases, ?::jsonb) r
 			     WHERE t.user_id = ? AND t.kind = r.kind
-			       AND ((t.enc AND t.value_blind = r.value_blind) OR (t.enc IS NOT TRUE AND t.value_norm = r.value_norm))`
+			       AND t.value_blind = r.value_blind`
 			args = []any{ch.row, c.UserID}
 		case "chunks":
 			q = `UPDATE chunks t SET entity_id = r.entity_id
@@ -479,21 +444,21 @@ func (c Ops) undoChange(ctx context.Context, tx *store.Tx, ch batchChange) error
 		q = `DELETE FROM entity_aliases t
 		     USING jsonb_populate_record(NULL::entity_aliases, ?::jsonb) r
 		     WHERE t.user_id = ? AND t.kind = r.kind AND t.entity_id = r.entity_id
-		       AND ((t.enc AND t.value_blind = r.value_blind) OR (t.enc IS NOT TRUE AND t.value_norm = r.value_norm))`
+		       AND t.value_blind = r.value_blind`
 		args = []any{ch.row, c.UserID}
 	case "update":
 		switch ch.table {
 		case "entities":
-			q = `UPDATE entities t SET attributes = r.attributes, updated_at = r.updated_at, type = r.type, name = r.name,
+			q = `UPDATE entities t SET updated_at = r.updated_at,
 			       attributes_ct = r.attributes_ct, type_ct = r.type_ct, name_ct = r.name_ct, source_ct = r.source_ct,
-			       name_blind = r.name_blind, type_blind = r.type_blind, enc = COALESCE(r.enc, FALSE)
+			       name_blind = r.name_blind, type_blind = r.type_blind
 			     FROM jsonb_populate_record(NULL::entities, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
 		case "relationships":
-			q = `UPDATE relationships t SET type = r.type, source_id = r.source_id, target_id = r.target_id,
-			       attributes = r.attributes, evidence_count = r.evidence_count,
+			q = `UPDATE relationships t SET source_id = r.source_id, target_id = r.target_id,
+			       evidence_count = r.evidence_count,
 			       type_ct = r.type_ct, type_blind = r.type_blind, source_ct = r.source_ct,
-			       attributes_ct = r.attributes_ct, enc = COALESCE(r.enc, FALSE)
+			       attributes_ct = r.attributes_ct
 			     FROM jsonb_populate_record(NULL::relationships, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
 		default:
@@ -515,7 +480,7 @@ func (c Ops) ListDeleted(ctx context.Context, limit, offset int) ([]model.Memory
 		limit = 50
 	}
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, enc, content, source, speaker, content_ct, source_ct, speaker_ct, confidence, created_at, updated_at
+		`SELECT id, content_ct, source_ct, speaker_ct, confidence, created_at, updated_at
 		 FROM memories WHERE user_id = ? AND deleted_at IS NOT NULL
 		 ORDER BY deleted_at DESC, id LIMIT ? OFFSET ?`, c.UserID, limit, offset)
 	if err != nil {
@@ -525,13 +490,11 @@ func (c Ops) ListDeleted(ctx context.Context, limit, offset int) ([]model.Memory
 	var out []model.Memory
 	for rows.Next() {
 		var m model.Memory
-		var enc bool
-		var content, src, spk sql.NullString
 		var contentCT, sourceCT, speakerCT []byte
-		if err := rows.Scan(&m.ID, &enc, &content, &src, &spk, &contentCT, &sourceCT, &speakerCT, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &contentCT, &sourceCT, &speakerCT, &m.Confidence, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan deleted memory: %w", err)
 		}
-		if err := c.OpenMemoryFields(&m, enc, content, src, spk, contentCT, sourceCT, speakerCT); err != nil {
+		if err := c.OpenMemoryFields(&m, contentCT, sourceCT, speakerCT); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

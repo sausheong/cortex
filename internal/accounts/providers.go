@@ -141,15 +141,11 @@ func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, c
 	if err != nil {
 		return nil, err
 	}
-	if state != "none" && uk == nil {
-		return nil, model.ErrLocked
-	}
 	if state == "none" {
-		if req, err := st.EnrollRequired(ctx, userID); err != nil {
-			return nil, err
-		} else if req {
-			return nil, model.ErrEnrollRequired
-		}
+		return nil, model.ErrEnrollRequired
+	}
+	if uk == nil {
+		return nil, model.ErrLocked
 	}
 	chat, err := st.GetSettings(ctx, userID, uk)
 	if errors.Is(err, ErrNoSettings) {
@@ -182,10 +178,7 @@ func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, c
 		return nil, errNeedPinning
 	}
 	cx = gp.WithGeneration(active)
-	if state != "none" {
-		cx = cx.WithKey(uk, state)
-	}
-	return cx, nil
+	return cx.WithKey(uk, state), nil
 }
 
 // encState reads users.encryption_state; an unknown user counts as "none"

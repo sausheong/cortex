@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/workset"
 )
 
 var memTextRe = regexp.MustCompile(`<span class="mem-text">row-(\d+)[^<]*</span>`)
@@ -25,7 +27,8 @@ func shownRows(body string) []string {
 // seedAt writes a memory and backdates it.
 func seedAt(t *testing.T, e *env, uid, content string, at time.Time) string {
 	t.Helper()
-	id := putMem(t, e.root.ForUser(uid), content)
+	id := putMem(t, e.cx(uid), content)
+	workset.Reset()
 	if _, err := e.st.DB.Exec(`UPDATE memories SET created_at=$1 WHERE id=$2 AND user_id=$3`, at, id, uid); err != nil {
 		t.Fatal(err)
 	}
@@ -249,15 +252,16 @@ func TestMemoriesFiltersCombined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lap := e.root.ForUser(id).WithConnection(conn.ID)
+	lap := e.cx(id).WithConnection(conn.ID)
 	e.now = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	mk := func(c interface{}, text string, at time.Time) {}
 	_ = mk
 	a := putMem(t, lap, "row-001 apples")
 	b := putMem(t, lap, "row-002 apples")
-	c := putMem(t, e.root.ForUser(id), "row-003 apples")
+	c := putMem(t, e.cx(id), "row-003 apples")
 	d := putMem(t, lap, "row-004 pears")
 	for i, m := range []string{a, b, c, d} {
+		workset.Reset()
 		if _, err := e.st.DB.Exec(`UPDATE memories SET created_at=$1 WHERE id=$2`, time.Date(2026, 6, 10+i*0, 12, 0, 0, 0, time.UTC).Add(time.Duration(i)*24*time.Hour), m); err != nil {
 			t.Fatal(err)
 		}
@@ -364,7 +368,7 @@ func TestMemoriesGarbageDateIgnoredWithMessage(t *testing.T) {
 // memories no connection wrote.
 func TestMemoriesSinceAndByNone(t *testing.T) {
 	e, c, id := memEnv(t)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), id, "Agent", nil)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), id, "Agent", e.keys[id])
 	putMem(t, c, "direct early")
 	time.Sleep(20 * time.Millisecond)
 	mark := time.Now().UTC().Truncate(time.Second).Add(time.Second)

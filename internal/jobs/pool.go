@@ -199,39 +199,41 @@ func (p *Pool) Enqueue(ctx context.Context, userID, kind string) (string, error)
 }
 
 // EnqueueWith is Enqueue for a job that carries an input payload, stored in
-// the jobs row so the job survives a restart. A non-empty payload of an
-// encrypted user needs a key: use EnqueueWithKey.
+// the jobs row so the job survives a restart. A non-empty payload needs the
+// user's key: use EnqueueWithKey.
 func (p *Pool) EnqueueWith(ctx context.Context, userID, kind, payload string) (string, error) {
 	return p.EnqueueWithKey(ctx, userID, kind, payload, nil)
 }
 
-// EnqueueWithKey is EnqueueWith for a caller holding the user's key. For an
-// encrypted user the payload is sealed into payload_ct (AAD column payload);
-// without a key it fails with model.ErrLocked and nothing is queued.
+// EnqueueWithKey is EnqueueWith for a caller holding the user's key. The
+// payload is sealed into payload_ct (AAD column payload); without a key it
+// fails with model.ErrLocked (model.ErrEnrollRequired for an unenrolled user)
+// and nothing is queued.
 func (p *Pool) EnqueueWithKey(ctx context.Context, userID, kind, payload string, uk *keys.UK) (string, error) {
 	if p.db == nil {
 		return "", errors.New("jobs: pool has no database")
 	}
 	id := newJobID()
-	plain, ct, enc := payload, []byte(nil), false
+	var ct []byte
 	if payload != "" {
 		var state string
 		if err := p.db.QueryRowContext(ctx, `SELECT encryption_state FROM users WHERE id = $1`, userID).Scan(&state); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("jobs: enqueue: %w", err)
-		} else if err == nil && state != "none" {
-			if uk == nil {
-				return "", model.ErrLocked
-			}
-			sealed, err := uk.Seal(userID, "jobs", id, "payload", []byte(payload))
-			if err != nil {
-				return "", err
-			}
-			plain, ct, enc = "", sealed, true
+		} else if err != nil || state == "none" {
+			return "", model.ErrEnrollRequired
 		}
+		if uk == nil {
+			return "", model.ErrLocked
+		}
+		sealed, err := uk.Seal(userID, "jobs", id, "payload", []byte(payload))
+		if err != nil {
+			return "", err
+		}
+		ct = sealed
 	}
 	if _, err := p.db.ExecContext(ctx,
-		`INSERT INTO jobs (id, user_id, kind, status, payload, payload_ct, enc) VALUES ($1,$2,$3,'queued',$4,$5,$6)`,
-		id, userID, kind, plain, ct, enc); err != nil {
+		`INSERT INTO jobs (id, user_id, kind, status, payload_ct) VALUES ($1,$2,$3,'queued',$4)`,
+		id, userID, kind, ct); err != nil {
 		return "", fmt.Errorf("jobs: enqueue: %w", err)
 	}
 	select {
@@ -315,9 +317,8 @@ func (p *Pool) sweep(ctx context.Context) {
 }
 
 // sweepBatch lists the queued jobs that are due. The select takes row locks
-// (SKIP LOCKED) so a migration or another sweeper rewriting a row's payload
-// form is never raced; the payload itself is read, in either form, when the
-// job runs.
+// (SKIP LOCKED) so two sweepers never take the same row; the payload itself
+// is read when the job runs.
 func (p *Pool) sweepBatch(ctx context.Context) []Job {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -395,7 +396,7 @@ func (p *Pool) setStatus(j Job, status, msg string) {
 	// A finished job no longer needs its input text.
 	clear := ""
 	if status == "done" {
-		clear = ", payload='', payload_ct=NULL, enc=FALSE"
+		clear = ", payload_ct=NULL"
 	}
 	p.db.ExecContext(c, `UPDATE jobs SET status=$2, error=$3, updated_at=now()`+clear+` WHERE id=$1`, j.ID, status, msg)
 }
@@ -441,12 +442,11 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 			return
 		}
 		encUser = err == nil && state != "none"
-		// Read the payload (either form) before claiming: a sealed payload
-		// without a key leaves the job queued for a later keyed pass.
+		// Read the payload before claiming: a sealed payload without a key
+		// leaves the job queued for a later keyed pass.
 		var ct []byte
-		var enc bool
-		if err := p.db.QueryRowContext(ctx, `SELECT payload, payload_ct, enc, attempts FROM jobs WHERE id=$1 AND status='queued'`, j.ID).
-			Scan(&j.Payload, &ct, &enc, &attempts); err != nil {
+		if err := p.db.QueryRowContext(ctx, `SELECT payload_ct, attempts FROM jobs WHERE id=$1 AND status='queued'`, j.ID).
+			Scan(&ct, &attempts); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return // already claimed or finished
 			}
@@ -454,13 +454,13 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 		}
 		// An encrypted user's job runs only under a key; without one it is
 		// parked: left queued, no error, attempts untouched.
-		if encUser || enc {
+		if encUser || ct != nil {
 			uk := p.key(j.UserID)
 			if uk == nil {
 				return // parked
 			}
 			defer uk.Zero()
-			if enc {
+			if ct != nil {
 				b, err := uk.Open(j.UserID, "jobs", j.ID, "payload", ct)
 				if err != nil {
 					p.setStatus(j, "failed", jobErrText(true, err))

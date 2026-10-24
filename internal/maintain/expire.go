@@ -2,7 +2,6 @@ package maintain
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
@@ -27,7 +26,7 @@ func (c Ops) ExpireMemories(ctx context.Context, opts ...model.ExpireOption) (mo
 	report := model.ExpireReport{DryRun: cfg.DryRun}
 
 	rows, err := c.DB.QueryContext(ctx,
-		`SELECT id, enc, content, content_ct, forget_after
+		`SELECT id, content_ct, forget_after
 		 FROM memories
 		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND forget_after IS NOT NULL AND forget_after <= ?`,
 		c.UserID, now,
@@ -44,15 +43,13 @@ func (c Ops) ExpireMemories(ctx context.Context, opts ...model.ExpireOption) (mo
 	var cands []candidate
 	for rows.Next() {
 		var id string
-		var enc bool
-		var plain sql.NullString
 		var ct []byte
 		var fa time.Time
-		if err := rows.Scan(&id, &enc, &plain, &ct, &fa); err != nil {
+		if err := rows.Scan(&id, &ct, &fa); err != nil {
 			rows.Close()
 			return model.ExpireReport{}, fmt.Errorf("cortex: expire scan row: %w", err)
 		}
-		content, err := c.OpenCol(store.TblMemories, id, "content", enc, plain, ct)
+		content, err := c.OpenStr(store.TblMemories, id, "content", ct)
 		if err != nil {
 			rows.Close()
 			return model.ExpireReport{}, err

@@ -11,9 +11,9 @@ import (
 
 func cmdReconcile() {
 	apply := false
-	out := ""      // markdown out
-	jsonOut := ""  // machine-readable report out (dry-run)
-	from := ""     // saved report to apply
+	out := ""     // markdown out
+	jsonOut := "" // machine-readable report out (dry-run)
+	from := ""    // saved report to apply
 	usage := "usage: cortex reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]\n" +
 		"  (no flags)        dry-run: detect contradictions, print report\n" +
 		"  --json <file>     dry-run: also write the report as JSON for later --from\n" +

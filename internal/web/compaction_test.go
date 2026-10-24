@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,7 +38,7 @@ func compactEnv(t *testing.T) *env {
 					return "j_stub", nil
 				},
 				func(ctx context.Context, userID string) (*cortex.Cortex, error) {
-					return e.root.ForUser(userID, cortex.WithEmbedder(compactEmb{})), nil
+					return e.cx(userID, cortex.WithEmbedder(compactEmb{})), nil
 				})}})
 	srv.testProvider = e.srv.testProvider
 	e.srv = srv
@@ -53,7 +52,7 @@ func compactEnv(t *testing.T) *env {
 func (e *env) seedMemory(userID, content string) string {
 	e.t.Helper()
 	m := &cortex.Memory{Content: content}
-	if err := e.root.ForUser(userID).PutMemory(e.t.Context(), m); err != nil {
+	if err := e.cx(userID).PutMemory(e.t.Context(), m); err != nil {
 		e.t.Fatal(err)
 	}
 	return m.ID
@@ -61,25 +60,24 @@ func (e *env) seedMemory(userID, content string) string {
 
 func (e *env) seedCompaction(id, userID string, changes []cortex.Change) {
 	e.t.Helper()
-	b, _ := json.Marshal(changes)
-	if _, err := e.st.DB.Exec(`INSERT INTO compactions (id, user_id, status, proposal_json) VALUES ($1,$2,'ready',$3::jsonb)`,
-		id, userID, string(b)); err != nil {
+	if _, err := e.st.DB.Exec(`INSERT INTO compactions (id, user_id, status) VALUES ($1,$2,'proposing')`, id, userID); err != nil {
+		e.t.Fatal(err)
+	}
+	e.cx(userID) // makes sure the user has a key
+	if err := e.st.StoreCompactionProposal(e.t.Context(), userID, id, e.keys[userID], changes); err != nil {
 		e.t.Fatal(err)
 	}
 }
 
 func (e *env) liveContents(userID string) map[string]bool {
 	e.t.Helper()
-	rows, err := e.st.DB.Query(`SELECT content FROM memories WHERE user_id=$1 AND deleted_at IS NULL`, userID)
+	ms, _, err := e.cx(userID).ListMemories(e.t.Context(), cortex.MemoryListFilter{}, 100000, 0)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	defer rows.Close()
 	out := map[string]bool{}
-	for rows.Next() {
-		var s string
-		rows.Scan(&s)
-		out[s] = true
+	for _, m := range ms {
+		out[m.Content] = true
 	}
 	return out
 }

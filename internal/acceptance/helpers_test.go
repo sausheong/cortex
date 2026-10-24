@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	testKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-	rpID       = "cortex.test"
-	origin     = "https://cortex.test"
+	rpID   = "cortex.test"
+	origin = "https://cortex.test"
 )
 
 type env struct {
@@ -47,11 +46,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	sl, err := accounts.NewSealer(testKeyHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := &env{t: t, dsn: dsn, root: root, db: db, st: &accounts.Store{DB: db, Sealer: sl}}
+	e := &env{t: t, dsn: dsn, root: root, db: db, st: &accounts.Store{DB: db}}
 	if err := e.st.ConfigurePasskeys(accounts.PasskeyConfig{RPID: rpID, Origins: []string{origin}, EnrollEnabled: true}); err != nil {
 		t.Fatal(err)
 	}

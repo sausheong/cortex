@@ -8,18 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sausheong/cortex/internal/testutil"
+
 	"github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 // seedBrain creates a temp Postgres schema with a small fixed graph and returns
 // an open *cortex.Cortex plus a cleanup func. No LLM / embedder configured.
 func seedBrain(t *testing.T) (*cortex.Cortex, func()) {
 	t.Helper()
-	cx, err := cortex.Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatalf("open cortex: %v", err)
-	}
+	cx, _ := testutil.OpenEncryptedWith(t)
 	ctx := context.Background()
 	alice := &cortex.Entity{Type: "person", Name: "Alice Chen", Source: "notes/intro.md"}
 	stripe := &cortex.Entity{Type: "organization", Name: "Stripe"}
@@ -301,11 +299,7 @@ func TestExport_EntityRenameMovesPage(t *testing.T) {
 }
 
 func TestExport_CollidingSourcesProduceMatchingLinks(t *testing.T) {
-	cx, err := cortex.Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t)
 	ctx := context.Background()
 
 	// Two entities, each from a different source, but the two sources
@@ -377,11 +371,7 @@ func TestExport_CollidingSourcesProduceMatchingLinks(t *testing.T) {
 }
 
 func TestExport_SourceSlugCollisionHandled(t *testing.T) {
-	cx, err := cortex.Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cx.Close()
+	cx, _ := testutil.OpenEncryptedWith(t)
 	ctx := context.Background()
 
 	// Two entities with different sources that slug to the same base.

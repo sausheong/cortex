@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
@@ -23,13 +22,11 @@ func (e *env) backdate(t *testing.T, uid string, days int) {
 	}
 }
 
+// bareUser is an encrypted user with no settings.
 func (e *env) bareUser(t *testing.T, sub string) string {
 	t.Helper()
-	u, err := e.root.CreateUser(t.Context(), sub, sub+"@x.test", sub, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return u.ID
+	id, _ := e.bareEnc(t, sub)
+	return id
 }
 
 // resolver returns a Resolve func that counts calls per user and fails for
@@ -52,59 +49,28 @@ func callsOf(m *sync.Map, id string) int64 {
 	return 0
 }
 
-func TestNightlyIsolatesFailures(t *testing.T) {
-	e := newEnv(t)
-	a, b := e.user(t, "a"), e.user(t, "b")
-	var calls sync.Map
-	rep, err := Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: e.resolver(&calls, map[string]bool{a: true})})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if callsOf(&calls, b) != 1 {
-		t.Fatalf("user B not maintained: %d", callsOf(&calls, b))
-	}
-	if rep.Failed != 1 || rep.Errors[a] == "" {
-		t.Fatalf("report %+v", rep)
-	}
-	var errA, errB *string
-	var atB *time.Time
-	if err := e.db.QueryRow(`SELECT last_maintenance_error FROM users WHERE id=$1`, a).Scan(&errA); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.db.QueryRow(`SELECT last_maintenance_error, last_maintenance_at FROM users WHERE id=$1`, b).Scan(&errB, &atB); err != nil {
-		t.Fatal(err)
-	}
-	if errA == nil || *errA == "" {
-		t.Fatal("A's error not recorded")
-	}
-	if strings.Contains(*errA, "secret") || strings.Contains(*errA, "https") {
-		t.Fatalf("error leaks upstream data: %q", *errA)
-	}
-	if errB != nil || atB == nil {
-		t.Fatalf("B should be clean and stamped: %v %v", errB, atB)
-	}
-}
-
-func TestNightlySkipsDeletedAndSettingslessUsers(t *testing.T) {
+// The server-wide nightly never opens an account: deleted users are skipped,
+// encrypted ones only get numeric usage counters, nobody is resolved.
+func TestNightlyIsKeyFree(t *testing.T) {
 	e := newEnv(t)
 	live := e.user(t, "live")
 	deleted := e.user(t, "gone")
-	bare := e.bareUser(t, "bare")
 	if err := e.st.DeleteAccount(t.Context(), deleted); err != nil {
 		t.Fatal(err)
 	}
 	var calls sync.Map
-	if _, err := Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: e.resolver(&calls, nil)}); err != nil {
+	rep, err := Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: e.resolver(&calls, nil)})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if callsOf(&calls, live) != 1 || callsOf(&calls, deleted) != 0 || callsOf(&calls, bare) != 0 {
-		t.Fatalf("calls live=%d deleted=%d bare=%d", callsOf(&calls, live), callsOf(&calls, deleted), callsOf(&calls, bare))
+	if callsOf(&calls, live) != 0 || callsOf(&calls, deleted) != 0 || rep.Maintained != 0 || rep.Failed != 0 {
+		t.Fatalf("calls live=%d deleted=%d rep=%+v", callsOf(&calls, live), callsOf(&calls, deleted), rep)
 	}
 }
 
 func seedRows(t *testing.T, e *env, uid string) {
 	t.Helper()
-	cx := e.root.ForUser(uid)
+	cx := e.handle(uid, nil, 0)
 	if err := cx.PutMemory(t.Context(), &cortex.Memory{Content: "remember " + uid}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +119,7 @@ func TestNightlyPurgeRunsEvenIfMaintenanceFails(t *testing.T) {
 func TestNightlyPurges(t *testing.T) {
 	e := newEnv(t)
 	uid := e.user(t, "p")
-	cx := e.root.ForUser(uid)
+	cx := e.handle(uid, nil, 0)
 	ctx := t.Context()
 	m := &cortex.Memory{Content: "old fact"}
 	if err := cx.PutMemory(ctx, m); err != nil {
@@ -268,18 +234,16 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 
 	e := newEnv(t)
 	e.st.AllowPrivate = true
-	u, err := e.root.CreateUser(t.Context(), "act", "act@x.test", "act", true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	uidA, uk := e.bareEnc(t, "act")
+	u := struct{ ID string }{uidA}
 	ctx := t.Context()
 	s := accounts.Settings{BaseURL: srv.URL, APIKey: "sk-test-1234", ChatModel: "m", EmbedModel: "model-active", EmbedDims: 256}
-	if _, err := e.st.PutSettings(ctx, u.ID, s, nil); err != nil {
+	if _, err := e.st.PutSettings(ctx, u.ID, s, uk); err != nil {
 		t.Fatal(err)
 	}
 	// An existing embedding makes the settings change non-promoting (re-embed pending).
 	m := &cortex.Memory{Content: "seed"}
-	cx0 := e.root.ForUser(u.ID)
+	cx0 := e.handle(u.ID, nil, 0)
 	if err := cx0.PutMemory(ctx, m); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +251,7 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.EmbedModel = "model-new"
-	needs, err := e.st.PutSettings(ctx, u.ID, s, nil)
+	needs, err := e.st.PutSettings(ctx, u.ID, s, uk)
 	if err != nil || !needs {
 		t.Fatalf("expected pending re-embed: %v %v", needs, err)
 	}
@@ -305,7 +269,8 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 			t.Errorf("active generation %d", g)
 		}
 	}
-	if _, err := Nightly(ctx, e.root, e.st, o); err != nil {
+	// Maintenance of an encrypted user runs only under its key.
+	if err := maintainUser(ctx, e.root, e.st, u.ID, &o, uk); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -319,7 +284,7 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 	}
 	// A queued reembed suppresses a second enqueue.
 	e.mustExec(t, `INSERT INTO jobs (id, user_id, kind, status) VALUES ('jq',$1,'reembed','queued')`, u.ID)
-	if _, err := Nightly(ctx, e.root, e.st, o); err != nil {
+	if err := maintainUser(ctx, e.root, e.st, u.ID, &o, uk); err != nil {
 		t.Fatal(err)
 	}
 	if len(enq) != 1 {
@@ -351,7 +316,7 @@ func TestNightlyDoesNotDecryptAndStillPurges(t *testing.T) {
 	uid, _ := e.encUser(t, "np")
 	var calls sync.Map
 	m := &cortex.Memory{Content: "old fact"}
-	if err := e.root.ForUser(uid).PutMemory(t.Context(), m); err != nil {
+	if err := e.handle(uid, nil, 0).PutMemory(t.Context(), m); err != nil {
 		t.Fatal(err)
 	}
 	e.mustExec(t, `UPDATE memories SET deleted_at = now() - interval '31 days' WHERE user_id=$1`, uid)

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/extractor/deterministic"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
@@ -61,100 +58,31 @@ func mcpCall(t *testing.T, h http.Handler, token string, body string, session st
 	return rec, string(b)
 }
 
-func TestServeStartupOrder(t *testing.T) {
-	dsn := pgtest.DSN(t)
-	ctx := context.Background()
-	// Seed the "legacy" brain before serve starts: bootstrap user data.
-	seed, err := cortex.Open(dsn, cortex.WithExtractor(deterministic.New()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := seed.Remember(ctx, "Quentin works at Wonka Industries."); err != nil {
-		t.Fatal(err)
-	}
-	seed.Close()
-
-	env := map[string]string{
-		"CORTEX_DATABASE_URL": dsn, "CORTEX_SECRET_KEY": serveSecret,
-		"CORTEX_AUTH_TOKEN": "tunnel-tok", "OPENAI_API_KEY": "k", "OPENAI_BASE_URL": stubOpenAI(t),
-		"CORTEX_ALLOW_PRIVATE_PROVIDERS": "1",
-		// The bootstrap user here is created after the migrations, so with
-		// enrollment on it would count as a new account that must enroll
-		// first; a real legacy deployment's owner predates the marker.
-		"CORTEX_ENCRYPTION_ENROLL": "0",
-	}
-	app, err := runServe(ctx, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Close()
-
-	rec, _ := mcpCall(t, app.Handler, "wrong", `{}`, "")
-	if rec.Code != 401 {
-		t.Fatalf("wrong token: %d, want 401", rec.Code)
-	}
-	rec, _ = mcpCall(t, app.Handler, "tunnel-tok", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`, "")
-	if rec.Code != 200 {
-		t.Fatalf("tunnel token initialize: %d, want 200", rec.Code)
-	}
-	sess := rec.Header().Get("Mcp-Session-Id")
-	rec, body := mcpCall(t, app.Handler, "tunnel-tok",
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"recall","arguments":{"query":"Quentin"}}}`, sess)
-	if rec.Code != 200 || !strings.Contains(body, "Wonka") {
-		t.Fatalf("recall as bootstrap: %d %s", rec.Code, body)
-	}
-}
-
-func TestServeFailsWithoutSecretKey(t *testing.T) {
-	_, err := runServe(context.Background(), map[string]string{"CORTEX_DATABASE_URL": "postgres://nowhere.invalid/x"})
-	if err == nil || !strings.Contains(err.Error(), "CORTEX_SECRET_KEY") {
-		t.Fatalf("err = %v, want CORTEX_SECRET_KEY error", err)
-	}
-}
-
-func TestServeBootstrapRunsOnce(t *testing.T) {
-	dsn := pgtest.DSN(t)
-	env := map[string]string{
-		"CORTEX_DATABASE_URL": dsn, "CORTEX_SECRET_KEY": serveSecret,
-		"CORTEX_AUTH_TOKEN": "tunnel-tok", "OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "https://api.example.com/v1",
-	}
-	ctx := context.Background()
-	app, err := runServe(ctx, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	app.Close()
-
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`UPDATE connections SET revoked_at = now()`); err != nil {
-		t.Fatal(err)
-	}
-	app, err = runServe(ctx, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Close()
-	var live, total int
-	if err := db.QueryRow(`SELECT count(*) FILTER (WHERE revoked_at IS NULL), count(*) FROM connections`).Scan(&live, &total); err != nil {
-		t.Fatal(err)
-	}
-	if live != 0 || total != 1 {
-		t.Fatalf("after restart: %d live of %d connections, want 0 of 1", live, total)
-	}
-	rec, _ := mcpCall(t, app.Handler, "tunnel-tok", `{}`, "")
-	if rec.Code != 401 {
-		t.Fatalf("revoked tunnel token: %d, want 401", rec.Code)
-	}
-}
-
 func TestEnrollmentFlagDefaultsOn(t *testing.T) {
 	for v, want := range map[string]bool{"": true, "1": true, "on": true, "0": false, "false": false, "off": false, "garbage": true} {
 		if got := envBoolDefault(v, true); got != want {
 			t.Errorf("envBoolDefault(%q, true) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+// The static owner token is retired: serve starts without it and the token
+// opens nothing, whatever the environment says.
+func TestServeStartsAndRejectsStaticToken(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	env := map[string]string{
+		"CORTEX_DATABASE_URL": dsn,
+		"CORTEX_AUTH_TOKEN":   "tunnel-tok", "OPENAI_API_KEY": "k", "OPENAI_BASE_URL": stubOpenAI(t),
+		"CORTEX_ALLOW_PRIVATE_PROVIDERS": "1",
+	}
+	app, err := runServe(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	for _, tok := range []string{"wrong", "tunnel-tok"} {
+		if rec, _ := mcpCall(t, app.Handler, tok, `{}`, ""); rec.Code != 401 {
+			t.Fatalf("token %q: %d, want 401", tok, rec.Code)
 		}
 	}
 }

@@ -5,53 +5,50 @@ import (
 	"testing"
 
 	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/store"
 )
 
-// testMode is "" (legacy, plaintext) or "encrypted". The package-internal
-// tests cannot use internal/testutil.ForEachMode (testutil imports this
-// package), so they run through forEachMode and the openers below, which
-// wrap the freshly opened handle with modeHandle. Tests that read content
-// columns with raw SQL stay single-mode.
+// testMode is "encrypted" while forEachMode runs. The package-internal tests
+// cannot use internal/testutil.ForEachMode (testutil imports this package), so
+// they run through forEachMode and the openers below, which wrap the freshly
+// opened handle with modeHandle. Plaintext accounts no longer exist (migration
+// 012): every account is encrypted.
 var testMode string
 
-// forEachMode runs fn as subtests "legacy" and "encrypted".
+// forEachMode runs fn as the subtest "encrypted".
 func forEachMode(t *testing.T, fn func(*testing.T)) {
 	t.Helper()
-	for _, m := range []string{"legacy", "encrypted"} {
-		t.Run(m, func(t *testing.T) {
-			if m == "encrypted" {
-				testMode = "encrypted"
-				t.Cleanup(func() { testMode = "" })
-			}
-			fn(t)
-		})
-	}
+	t.Run("encrypted", func(t *testing.T) {
+		testMode = "encrypted"
+		t.Cleanup(func() { testMode = "" })
+		fn(t)
+	})
 }
 
-// modeHandle returns c as is in legacy mode. In encrypted mode it creates a
-// fresh user in state 'encrypted' (without the plaintext owner entity that
-// CreateUser writes, which the row-form guard rejects until the Task 16
-// enrollment encrypts it) and returns a handle for it holding a user key.
+// modeHandle creates a fresh user in state 'encrypted' and returns a handle
+// for it holding a user key.
 func modeHandle(t *testing.T, c *Cortex) *Cortex { return modeHandleTB(t, c) }
 
 func modeHandleTB(t testing.TB, c *Cortex) *Cortex {
 	t.Helper()
-	if testMode != "encrypted" {
-		return c
-	}
-	ctx := context.Background()
-	u, err := c.CreateUser(ctx, "enc-sub", "enc@x.test", "enc", true)
+	u, err := c.CreateUser(context.Background(), "enc-sub", "enc@x.test", "enc", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, q := range []string{
-		`UPDATE users SET owner_entity_id = NULL, encryption_state = 'encrypted' WHERE id = ?`,
-	} {
-		if _, err := c.h.DB.ExecContext(ctx, q, u.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := c.h.DB.ExecContext(ctx, `DELETE FROM entities WHERE user_id = ? AND enc IS NOT TRUE`, u.ID); err != nil {
+	return keyedHandle(t, c, u.ID)
+}
+
+// keyedHandle makes user id an encrypted account and returns a handle for it
+// holding a fresh user key. opts apply to the returned handle.
+func keyedHandle(t testing.TB, root *Cortex, id string, opts ...Option) *Cortex {
+	t.Helper()
+	cx, _ := keyedHandleUK(t, root, id, opts...)
+	return cx
+}
+
+func keyedHandleUK(t testing.TB, root *Cortex, id string, opts ...Option) (*Cortex, *keys.UK) {
+	t.Helper()
+	if _, err := root.h.DB.ExecContext(context.Background(), `UPDATE users SET encryption_state = 'encrypted' WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
 	uk, err := keys.NewUK()
@@ -59,7 +56,32 @@ func modeHandleTB(t testing.TB, c *Cortex) *Cortex {
 		t.Fatal(err)
 	}
 	t.Cleanup(uk.Zero)
-	cx := c.ForUser(u.ID).WithKey(uk, "encrypted")
+	cx := root.ForUser(id, opts...).WithKey(uk, "encrypted")
 	t.Cleanup(cx.Release)
-	return cx
+	return cx, uk
+}
+
+// sealOwner creates the user's sealed owner entity the way enrollment does and
+// records it in users.owner_entity_id.
+func sealOwner(t testing.TB, root *Cortex, uk *keys.UK, userID, display string) {
+	t.Helper()
+	ctx := context.Background()
+	id := store.NewID()
+	seal := func(col, v string) []byte {
+		ct, err := uk.Seal(userID, store.TblEntities, id, col, []byte(v))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ct
+	}
+	if _, err := root.h.DB.ExecContext(ctx,
+		`INSERT INTO entities (id, user_id, is_owner, name_ct, type_ct, source_ct, attributes_ct, name_blind, type_blind)
+		 VALUES (?, ?, TRUE, ?, ?, ?, ?, ?, ?)`,
+		id, userID, seal("name", display), seal("type", "person"), seal("source", "owner"), seal("attributes", "{}"),
+		uk.Blind(store.NormName(display)), uk.Blind(store.NormName("person"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := root.h.DB.ExecContext(ctx, `UPDATE users SET owner_entity_id = ? WHERE id = ?`, id, userID); err != nil {
+		t.Fatal(err)
+	}
 }

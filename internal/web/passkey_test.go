@@ -34,6 +34,7 @@ func newPKWeb(t *testing.T) *pkWeb {
 		c.EncryptionEnroll = true
 		c.Logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	})
+	e.plain = true // these tests enroll the user themselves
 	e.signIn(alice(), "")
 	return &pkWeb{e: e, dev: webauthntest.New(t, "cortex.test", "https://cortex.test"), csrf: e.csrf(), logs: logs}
 }
@@ -251,9 +252,9 @@ func TestEnrollPageForLegacyUser(t *testing.T) {
 
 func TestLockedSessionShowsUnlockPage(t *testing.T) {
 	p := newPKWeb(t)
-	// A legacy user is not locked.
-	if r, body := p.e.get("/memories"); r.StatusCode != 200 || strings.Contains(body, "Unlock with your passkey") {
-		t.Fatalf("legacy user: %d", r.StatusCode)
+	// An unenrolled user is sent to enrollment, not to unlock.
+	if r, _ := p.e.get("/memories"); r.StatusCode != 303 || r.Header.Get("Location") != "/enroll" {
+		t.Fatalf("unenrolled user: %d %q", r.StatusCode, r.Header.Get("Location"))
 	}
 	p.enrollAndConfirm(t)
 	p.e.dropCookie(unlockCookie) // enrollment unlocked this session; model a fresh device

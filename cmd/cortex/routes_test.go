@@ -12,6 +12,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/pgtest"
 	"github.com/sausheong/cortex/internal/web"
 )
@@ -39,10 +40,23 @@ func TestServeRouteInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	sealer, _ := accounts.NewSealer(serveSecret)
-	st := &accounts.Store{DB: db, Sealer: sealer}
+	st := &accounts.Store{DB: db}
 	uid := cortex.BootstrapUserID
-	sid, _, err := web.NewSessions(st, nil).Create(ctx, uid)
+	sessions := web.NewSessions(st, nil)
+	sid, _, err := sessions.Create(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An enrolled account with an unlocked session.
+	if _, err := db.Exec(`UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uk.Zero()
+	unlock, _, err := sessions.Unlock(ctx, sid, uk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +74,7 @@ func TestServeRouteInventory(t *testing.T) {
 		}
 		if session {
 			req.AddCookie(&http.Cookie{Name: "cortex_session", Value: sid})
+			req.AddCookie(&http.Cookie{Name: "cortex_unlock", Value: unlock})
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)

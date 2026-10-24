@@ -113,8 +113,10 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 	if deleted {
 		return errSkipped
 	}
-	encUser := state != "none"
-	if encUser && uk == nil {
+	if state == "none" {
+		return errSkipped // not enrolled: no data to maintain
+	}
+	if uk == nil {
 		// Key-free: only numeric usage counters (no content, no key).
 		_, _ = root.ForUser(userID).RefreshUsage(ctx)
 		return errSkipped
@@ -128,12 +130,7 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 			return st.ResolveUser(ctx, root, id, "", uk)
 		}
 	}
-	errText := func(err error) string {
-		if encUser {
-			return "maintenance failed"
-		}
-		return "maintenance failed: " + accounts.ProviderError(err).Error()
-	}
+	errText := func(error) string { return "maintenance failed" }
 	record := func(msg string) {
 		var m any
 		if msg != "" {
@@ -150,12 +147,10 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 		record("provider settings could not be loaded")
 		return errors.New("provider settings could not be loaded")
 	}
-	if encUser {
-		if !cx.Encrypted() {
-			cx = cx.WithKey(uk, state)
-		}
-		defer cx.Release() // the handle's own clone; uk stays the caller's
+	if !cx.Encrypted() {
+		cx = cx.WithKey(uk, state)
 	}
+	defer cx.Release() // the handle's own clone; uk stays the caller's
 	if o.beforeMaintain != nil {
 		o.beforeMaintain(ctx, userID, cx)
 	}

@@ -15,8 +15,8 @@ var (
 	modeCounts = map[string]int{}
 )
 
-// ModeCounts reports how many times each ForEachMode arm ("legacy",
-// "encrypted") has run in this process.
+// ModeCounts reports how many times each ForEachMode arm ("encrypted") has
+// run in this process.
 func ModeCounts() map[string]int {
 	modeMu.Lock()
 	defer modeMu.Unlock()
@@ -31,14 +31,19 @@ func ModeCounts() map[string]int {
 // new user whose encryption_state is 'encrypted', carrying its own clone of
 // the returned user key.
 //
-// CreateUser writes a plaintext owner entity that the Task 16 enrollment
-// encrypts; the row-form guard rejects it when the working set loads, so the
-// fixture removes it. Search, filters and listings work for the returned
-// handle (Task 12).
+// CreateUser writes no owner entity (enrollment creates it sealed), so the
+// returned account starts empty. Search, filters and listings work for the
+// returned handle.
 func OpenEncrypted(t testing.TB) (*cortex.Cortex, *keys.UK) {
 	t.Helper()
+	return OpenEncryptedWith(t)
+}
+
+// OpenEncryptedWith is OpenEncrypted with options for the opened instance.
+func OpenEncryptedWith(t testing.TB, opts ...cortex.Option) (*cortex.Cortex, *keys.UK) {
+	t.Helper()
 	dsn := pgtest.DSN(t)
-	root, err := cortex.Open(dsn)
+	root, err := cortex.Open(dsn, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,12 +60,6 @@ func OpenEncrypted(t testing.TB) (*cortex.Cortex, *keys.UK) {
 	if _, err := db.Exec(`UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE users SET owner_entity_id = NULL WHERE id = $1`, u.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`DELETE FROM entities WHERE user_id = $1 AND enc IS NOT TRUE`, u.ID); err != nil {
-		t.Fatal(err)
-	}
 	uk, err := keys.NewUK()
 	if err != nil {
 		t.Fatal(err)
@@ -71,23 +70,13 @@ func OpenEncrypted(t testing.TB) (*cortex.Cortex, *keys.UK) {
 	return cx, uk
 }
 
-// ForEachMode runs fn once against a legacy (unencrypted) handle and once
-// against an encrypted one, as subtests "legacy" and "encrypted". The counts
-// are recorded for the Task 18 coverage check. Tests inside package cortex
+// ForEachMode runs fn once against an encrypted handle, as subtest
+// "encrypted". Plaintext accounts no longer exist (migration 012), so the
+// legacy arm is gone; the helper keeps its name so call sites read the same.
+// The count is recorded for the coverage check. Tests inside package cortex
 // cannot import this package (import cycle) and use their own forEachMode.
 func ForEachMode(t *testing.T, fn func(*testing.T, *cortex.Cortex)) {
 	t.Helper()
-	t.Run("legacy", func(t *testing.T) {
-		root, err := cortex.Open(pgtest.DSN(t))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { root.Close() })
-		modeMu.Lock()
-		modeCounts["legacy"]++
-		modeMu.Unlock()
-		fn(t, root)
-	})
 	t.Run("encrypted", func(t *testing.T) {
 		cx, _ := OpenEncrypted(t)
 		modeMu.Lock()

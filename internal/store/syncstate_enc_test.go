@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestSyncStateEncryptedAtRest(t *testing.T) {
 	if strings.Contains(raw, "CURSORSECRET") {
 		t.Fatalf("sync state leaks: %s", raw)
 	}
-	if env.Count(`SELECT count(*) FROM sync_state WHERE user_id = $1 AND enc AND state IS NULL AND state_ct IS NOT NULL`, env.UserID) != 1 {
+	if env.Count(`SELECT count(*) FROM sync_state WHERE user_id = $1 AND state_ct IS NOT NULL`, env.UserID) != 1 {
 		t.Fatal("row not sealed")
 	}
 	got, err := env.H.GetSyncState(ctx, "gmail")
@@ -38,16 +39,10 @@ func TestSyncStateEncryptedAtRest(t *testing.T) {
 	}
 }
 
-func TestSyncStateLegacyUnchanged(t *testing.T) {
+// An unenrolled user has no key, so nothing is stored for them.
+func TestSyncStateRequiresEnrollment(t *testing.T) {
 	env := enctest.Open(t, "none")
-	ctx := context.Background()
-	if err := env.H.SetSyncState(ctx, "gmail", "plain"); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := env.H.GetSyncState(ctx, "gmail"); got != "plain" {
-		t.Fatalf("got %q", got)
-	}
-	if env.Count(`SELECT count(*) FROM sync_state WHERE user_id = $1 AND NOT enc AND state = 'plain'`, env.UserID) != 1 {
-		t.Fatal("legacy row form changed")
+	if err := env.Keyless.SetSyncState(context.Background(), "gmail", "plain"); !errors.Is(err, model.ErrEnrollRequired) {
+		t.Fatalf("SetSyncState = %v, want ErrEnrollRequired", err)
 	}
 }

@@ -182,29 +182,6 @@ func testPutMemory_ConfidenceClamped(t *testing.T) {
 	}
 }
 
-// Legacy only: reads or writes plaintext columns with raw SQL.
-func TestPutMemory_PopulatesFTS(t *testing.T) {
-	c := openTestDB(t)
-	ctx := context.Background()
-
-	m := &Memory{Content: "Alice migrated the billing service to Stripe"}
-	if err := c.PutMemory(ctx, m); err != nil {
-		t.Fatalf("PutMemory: %v", err)
-	}
-
-	// The generated tsv column must match the memory.
-	var got string
-	err := c.h.DB.QueryRowContext(ctx,
-		`SELECT content FROM memories WHERE tsv @@ plainto_tsquery('english', ?)`, "Stripe",
-	).Scan(&got)
-	if err != nil {
-		t.Fatalf("expected FTS match for memory, got error: %v", err)
-	}
-	if got != m.Content {
-		t.Fatalf("FTS content mismatch: got %q want %q", got, m.Content)
-	}
-}
-
 func TestSearchMemoriesOddQueries(t *testing.T) { forEachMode(t, testSearchMemoriesOddQueries) }
 
 func testSearchMemoriesOddQueries(t *testing.T) {

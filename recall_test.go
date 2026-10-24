@@ -894,6 +894,7 @@ func TestRecallWithStrength_EmbedErrorFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	ctx := context.Background()
 
 	if err := c.PutMemory(ctx, &Memory{Content: "User's name is Sau Sheong", Confidence: 1.0}); err != nil {
@@ -1162,6 +1163,7 @@ func TestRecall_LogsEmbedderError(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
+	c = modeHandle(t, c)
 	ctx := context.Background()
 
 	// A memory so there's something to (fail to) vector-search.

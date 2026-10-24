@@ -18,10 +18,9 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
-
-const testKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 type fakeIdP struct {
 	mu       sync.Mutex
@@ -64,6 +63,12 @@ type env struct {
 	enq     []string
 	enqUser []string
 	provErr error
+
+	// plain keeps signIn from enrolling the user: the account stays in state
+	// "none", as a fresh sign-up does. Every other test works with encrypted
+	// accounts and an unlocked session (plaintext accounts no longer exist).
+	plain bool
+	keys  map[string]*keys.UK
 }
 
 // testMounts lets per-page test files register their routes in newEnv.
@@ -82,12 +87,8 @@ func newEnv(t *testing.T, mods ...func(*Config)) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	sl, err := accounts.NewSealer(testKeyHex)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := &env{t: t, root: root, now: time.Now().UTC(), idp: &fakeIdP{ids: map[string]Identity{}}}
-	e.st = &accounts.Store{DB: db, Sealer: sl, Now: func() time.Time { return e.now }}
+	e := &env{t: t, root: root, now: time.Now().UTC(), idp: &fakeIdP{ids: map[string]Identity{}}, keys: map[string]*keys.UK{}}
+	e.st = &accounts.Store{DB: db, Now: func() time.Time { return e.now }}
 	cfg := Config{PublicURL: "https://cortex.test", BootstrapEmail: "owner@x.test", Identity: e.idp}
 	for _, m := range mods {
 		m(&cfg)
@@ -162,7 +163,77 @@ func (e *env) signIn(id Identity, next string) *http.Response {
 	code := "code-" + id.Sub
 	e.idp.ids[code] = id
 	resp, _ := e.callback(e.start(next), code)
+	if !e.plain {
+		e.enroll(id)
+	}
 	return resp
+}
+
+// enroll turns the signed-in user into an encrypted account with an unlocked
+// session: see ensureEnc, then the session is unlocked with the key.
+func (e *env) enroll(id Identity) {
+	e.t.Helper()
+	u, err := e.root.UserByGoogleSub(e.t.Context(), id.Sub)
+	if err != nil {
+		return // the sign-in did not create an account (a refused identity)
+	}
+	uk := e.ensureEnc(u.ID)
+	if sid := e.cookieVal(sessionCookie); sid != "" {
+		secret, _, err := e.srv.sessions.Unlock(e.t.Context(), sid, uk)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		e.setCookie(unlockCookie, secret)
+	}
+}
+
+// ensureEnc makes the user an encrypted account (once): the state flips to
+// encrypted, a user key is created and the owner entity is created sealed, as
+// enrollment does. It returns the key.
+func (e *env) ensureEnc(userID string) *keys.UK {
+	e.t.Helper()
+	if uk := e.keys[userID]; uk != nil {
+		return uk
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(uk.Zero)
+	e.keys[userID] = uk
+	var name, email string
+	if err := e.st.DB.QueryRow(`SELECT name, email FROM users WHERE id = $1`, userID).Scan(&name, &email); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(`UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, userID); err != nil {
+		e.t.Fatal(err)
+	}
+	if name == "" {
+		name = email
+	}
+	cx := e.root.ForUser(userID).WithKey(uk, "encrypted")
+	defer cx.Release()
+	owner := &cortex.Entity{Type: "person", Name: name, Source: "owner"}
+	if err := cx.PutEntity(e.t.Context(), owner); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(`UPDATE entities SET is_owner = TRUE WHERE id = $1`, owner.ID); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.DB.Exec(`UPDATE users SET owner_entity_id = $1 WHERE id = $2`, owner.ID, userID); err != nil {
+		e.t.Fatal(err)
+	}
+	return uk
+}
+
+// cx returns a handle for user id holding the user's key; a user without one
+// (created directly rather than by signing in) is encrypted first.
+func (e *env) cx(id string, opts ...cortex.Option) *cortex.Cortex {
+	e.t.Helper()
+	uk := e.ensureEnc(id)
+	cx := e.root.ForUser(id, opts...).WithKey(uk, "encrypted")
+	e.t.Cleanup(cx.Release)
+	return cx
 }
 
 var csrfRe = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
@@ -171,6 +242,10 @@ func (e *env) csrf() string {
 	e.t.Helper()
 	_, body := e.get("/settings")
 	m := csrfRe.FindStringSubmatch(body)
+	if m == nil { // an account that has not enrolled is sent to enrollment
+		_, body = e.get("/enroll")
+		m = csrfRe.FindStringSubmatch(body)
+	}
 	if m == nil {
 		e.t.Fatalf("no csrf in page: %.200s", body)
 	}
@@ -201,16 +276,8 @@ func settingsForm(csrf string, kv ...string) url.Values {
 
 func (e *env) insertEmbedding(userID string) {
 	e.t.Helper()
-	vec := "[" + strings.Repeat("0.1,", 511) + "0.1]"
-	if _, err := e.st.DB.Exec(`INSERT INTO embeddings (id, ref_id, ref_type, user_id, embedding, dims, generation)
-		VALUES ($1,'r','memory',$2,$3::halfvec,512,1)`, "emb_"+userID, userID, vec); err != nil {
-		e.t.Fatal(err)
-	}
-}
-
-func (e *env) createIndex512() {
-	e.t.Helper()
-	if _, err := e.st.DB.Exec(`CREATE INDEX emb_hnsw_memory_512 ON embeddings (ref_id)`); err != nil {
+	if _, err := e.st.DB.Exec(`INSERT INTO embeddings (id, ref_id, ref_type, user_id, embedding_ct, dims, generation)
+		VALUES ($1,'r','memory',$2,'\x00'::bytea,512,1)`, "emb_"+userID, userID); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -409,6 +476,7 @@ func TestSigninRestoresDeletedAccountWithNotice(t *testing.T) {
 	if e.userBySub("g-alice").DeletedAt != nil {
 		t.Fatal("not restored")
 	}
+	e.enroll(alice()) // the new session starts locked
 	if r, _ := e.get("/settings"); r.StatusCode != 200 {
 		t.Fatalf("settings after restore: %d", r.StatusCode)
 	}
@@ -439,7 +507,7 @@ func TestPostWithoutCSRFRejected(t *testing.T) {
 	if r, _ := e.post("/logout", url.Values{}); r.StatusCode != http.StatusForbidden {
 		t.Fatalf("logout without csrf: %d", r.StatusCode)
 	}
-	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil); !errors.Is(err, accounts.ErrNoSettings) {
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, e.keys[e.userBySub("g-alice").ID]); !errors.Is(err, accounts.ErrNoSettings) {
 		t.Fatal("settings saved without csrf")
 	}
 }
@@ -492,35 +560,35 @@ func TestPutSettingsPromotesWhenNothingToReembed(t *testing.T) {
 	// A user with no data changing model and dims.
 	a, _ := e.root.CreateUser(ctx, "ga", "a@x.test", "A", true)
 	s := accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
-	if need, err := e.st.PutSettings(ctx, a.ID, s, nil); err != nil || need {
+	if need, err := e.st.PutSettings(ctx, a.ID, s, e.ensureEnc(a.ID)); err != nil || need {
 		t.Fatalf("first: %v %v", need, err)
 	}
 	s.EmbedModel, s.EmbedDims = "e2", 768
-	if need, err := e.st.PutSettings(ctx, a.ID, s, nil); err != nil || need {
+	if need, err := e.st.PutSettings(ctx, a.ID, s, e.ensureEnc(a.ID)); err != nil || need {
 		t.Fatalf("no data: need=%v err=%v", need, err)
 	}
-	if act, _ := e.st.GetActiveEmbed(ctx, a.ID, nil); act.EmbedModel != "e2" || act.EmbedDims != 768 {
+	if act, _ := e.st.GetActiveEmbed(ctx, a.ID, e.keys[a.ID]); act.EmbedModel != "e2" || act.EmbedDims != 768 {
 		t.Fatalf("active %+v", act)
 	}
 	// A user with data changing only the embed key.
 	b, _ := e.root.CreateUser(ctx, "gb", "b@x.test", "B", true)
 	s = accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
-	e.st.PutSettings(ctx, b.ID, s, nil)
+	e.st.PutSettings(ctx, b.ID, s, e.ensureEnc(b.ID))
 	e.insertEmbedding(b.ID)
 	s.EmbedAPIKey = "newkey-9999"
-	if need, err := e.st.PutSettings(ctx, b.ID, s, nil); err != nil || need {
+	if need, err := e.st.PutSettings(ctx, b.ID, s, e.ensureEnc(b.ID)); err != nil || need {
 		t.Fatalf("key only: need=%v err=%v", need, err)
 	}
-	if act, _ := e.st.GetActiveEmbed(ctx, b.ID, nil); act.EmbedAPIKey != "newkey-9999" {
+	if act, _ := e.st.GetActiveEmbed(ctx, b.ID, e.keys[b.ID]); act.EmbedAPIKey != "newkey-9999" {
 		t.Fatalf("key not swapped: %+v", act)
 	}
 	// A user with data changing the model keeps the old active embedder.
 	s.EmbedModel = "e3"
-	need, err := e.st.PutSettings(ctx, b.ID, s, nil)
+	need, err := e.st.PutSettings(ctx, b.ID, s, e.ensureEnc(b.ID))
 	if err != nil || !need {
 		t.Fatalf("model change: need=%v err=%v", need, err)
 	}
-	if act, _ := e.st.GetActiveEmbed(ctx, b.ID, nil); act.EmbedModel != "e" {
+	if act, _ := e.st.GetActiveEmbed(ctx, b.ID, e.keys[b.ID]); act.EmbedModel != "e" {
 		t.Fatalf("active changed early: %+v", act)
 	}
 }
@@ -533,7 +601,7 @@ func TestSettingsProviderFailureSavesNothing(t *testing.T) {
 	if r.StatusCode != 400 || !strings.Contains(body, "provider rejected the key") {
 		t.Fatalf("%d %.300s", r.StatusCode, body)
 	}
-	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil); !errors.Is(err, accounts.ErrNoSettings) {
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, e.keys[e.userBySub("g-alice").ID]); !errors.Is(err, accounts.ErrNoSettings) {
 		t.Fatal("settings saved after failed test")
 	}
 	if len(e.enq) != 0 {
@@ -550,7 +618,7 @@ func TestSettingsRejectsPrivateURL(t *testing.T) {
 			t.Errorf("%s: %d", u, r.StatusCode)
 		}
 	}
-	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil); !errors.Is(err, accounts.ErrNoSettings) {
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, e.keys[e.userBySub("g-alice").ID]); !errors.Is(err, accounts.ErrNoSettings) {
 		t.Fatal("settings saved")
 	}
 }
@@ -578,7 +646,6 @@ func TestSettingsEmbedChangeEnqueuesReembed(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	id := e.userBySub("g-alice").ID
-	e.createIndex512()
 	if r, _ := e.post("/settings", settingsForm(e.csrf())); r.StatusCode != http.StatusSeeOther {
 		t.Fatalf("first save: %d", r.StatusCode)
 	}
@@ -597,32 +664,6 @@ func TestSettingsEmbedChangeEnqueuesReembed(t *testing.T) {
 	}
 	if len(e.enq) != 1 || e.enq[0] != "reembed" || e.enqUser[0] != id {
 		t.Fatalf("enqueued %v for %v", e.enq, e.enqUser)
-	}
-}
-
-func TestFirstSaveEnqueuesIndex(t *testing.T) {
-	e := newEnv(t)
-	e.signIn(alice(), "")
-	e.createIndex512() // present, yet the first save still enqueues
-	e.post("/settings", settingsForm(e.csrf()))
-	if len(e.enq) != 1 || e.enq[0] != "index" {
-		t.Fatalf("enqueued %v", e.enq)
-	}
-}
-
-func TestDimsChangeEnqueuesIndex(t *testing.T) {
-	e := newEnv(t)
-	e.signIn(alice(), "")
-	e.createIndex512()
-	e.post("/settings", settingsForm(e.csrf()))
-	e.enq = nil
-	e.post("/settings", settingsForm(e.csrf(), "chat_model", "other"))
-	if len(e.enq) != 0 {
-		t.Fatalf("chat-only change enqueued %v", e.enq)
-	}
-	e.post("/settings", settingsForm(e.csrf(), "embed_dims", "768"))
-	if len(e.enq) != 1 || e.enq[0] != "index" {
-		t.Fatalf("new dims enqueued %v", e.enq)
 	}
 }
 
@@ -651,7 +692,6 @@ func TestFailedReembedShowsRetry(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	id := e.userBySub("g-alice").ID
-	e.createIndex512()
 	e.post("/settings", settingsForm(e.csrf()))
 	e.insertEmbedding(id)
 	e.post("/settings", settingsForm(e.csrf(), "embed_model", "e-new")) // pending
@@ -689,7 +729,7 @@ func TestSettingsShowsMaskedKey(t *testing.T) {
 	}
 	// A blank key on save keeps the stored one.
 	e.post("/settings", settingsForm(e.csrf(), "api_key", "", "chat_model", "m9"))
-	s, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil)
+	s, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, e.keys[e.userBySub("g-alice").ID])
 	if err != nil || s.APIKey != "sk-secret-3f9a" || s.ChatModel != "m9" {
 		t.Fatalf("%+v %v", s, err)
 	}
@@ -785,4 +825,20 @@ func TestCSPNonceMatchesInlineScripts(t *testing.T) {
 			}
 		}
 	}
+}
+
+// legacyToken stores an agent token the way pre-encryption versions did: a
+// connection and a token hash with no key wrap.
+func (e *env) legacyToken(userID, name string) (string, *accounts.Connection) {
+	e.t.Helper()
+	conn, err := e.st.CreateConnection(e.t.Context(), userID, "agent", name, "")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	tok := "ctx_legacy_" + conn.ID
+	if _, err := e.st.DB.Exec(`INSERT INTO agent_tokens (id, connection_id, token_hash) VALUES ($1,$2,$3)`,
+		"t_"+conn.ID, conn.ID, accounts.HashToken(tok)); err != nil {
+		e.t.Fatal(err)
+	}
+	return tok, conn
 }

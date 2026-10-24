@@ -34,8 +34,8 @@ func TestFolderForType(t *testing.T) {
 		{"concept", "concepts"},
 		{"event", "events"},
 		{"document", "documents"},
-		{"project", "projects"},     // unknown → +s
-		{"Person", "people"},        // case-insensitive lookup
+		{"project", "projects"}, // unknown → +s
+		{"Person", "people"},    // case-insensitive lookup
 	}
 	for _, tt := range tests {
 		got := folderForType(tt.in)

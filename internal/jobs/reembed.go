@@ -46,10 +46,7 @@ func ReEmbedWith(ctx context.Context, cx *cortex.Cortex, st *accounts.Store, tar
 	if report == nil {
 		report = func(int, int) {}
 	}
-	if err := EnsureIndexes(ctx, cx, target.Dimensions()); err != nil {
-		return err
-	}
-	uk := cx.CloneKey() // nil for a legacy user
+	uk := cx.CloneKey()
 	defer uk.Zero()
 	active, err := cx.ActiveGeneration(ctx)
 	if err != nil {

@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -327,13 +328,27 @@ func snapMerge(t *testing.T, c *Cortex, ids ...string) mergeSnap {
 		return strings.Join(out, "\n")
 	}
 	var s mergeSnap
-	s.ents = collect(`SELECT id||'|'||COALESCE(deleted_at::text,'')||'|'||attributes::text||'|'||updated_at::text FROM entities WHERE user_id = ?`, c.h.UserID)
+	s.ents = collect(`SELECT id||'|'||COALESCE(deleted_at::text,'') FROM entities WHERE user_id = ?`, c.h.UserID)
+	// Attributes are sealed: compare them through the handle.
+	var attrs []string
+	for _, id := range ids {
+		if e, err := c.GetEntity(ctx, id); err == nil {
+			b, _ := json.Marshal(e.Attributes)
+			attrs = append(attrs, id+"|"+string(b))
+		}
+	}
+	live, _ := c.FindEntities(ctx, EntityFilter{})
+	for _, e := range live {
+		b, _ := json.Marshal(e.Attributes)
+		attrs = append(attrs, e.ID+"|"+string(b))
+	}
+	sort.Strings(attrs)
+	s.attrs = strings.Join(attrs, "\n")
 	s.links = collect(`SELECT memory_id||'|'||entity_id FROM memory_entities WHERE user_id = ?`, c.h.UserID)
-	s.rels = collect(`SELECT id||'|'||source_id||'|'||target_id||'|'||type FROM relationships WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
+	s.rels = collect(`SELECT id||'|'||source_id||'|'||target_id FROM relationships WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
 	return s
 }
 
-// Legacy only: reads or writes plaintext columns with raw SQL.
 func TestMergeRestoreReversesExactly(t *testing.T) {
 	ctx := context.Background()
 	c := openSD(t)

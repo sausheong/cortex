@@ -23,13 +23,10 @@ func setup(t *testing.T) {
 	t.Cleanup(workset.Reset)
 }
 
-// openEnc opens a fully encrypted user. CreateUser still writes a plaintext
-// owner entity (encrypted by the Task 16 enrollment), which the row-form
-// guard rightly rejects, so the test removes it.
+// openEnc opens a fully encrypted user.
 func openEnc(t *testing.T) *enctest.Env {
 	t.Helper()
 	env := enctest.Open(t, "encrypted")
-	env.Exec(`DELETE FROM entities WHERE user_id = $1 AND enc IS NOT TRUE`, env.UserID)
 	return env
 }
 
@@ -82,47 +79,6 @@ func TestWorksetLoadsDecryptedEntitiesMemoriesRels(t *testing.T) {
 	hits := s.MemIndex().Search("first program", 5, nil)
 	if len(hits) != 1 || hits[0].ID != mem {
 		t.Fatalf("memindex %v", hits)
-	}
-}
-
-func TestWorksetMergesLegacyAndEncryptedRows(t *testing.T) {
-	setup(t)
-	env := enctest.Open(t, "migrating")
-	legacy := env.HandleFor(env.UserID, "none", nil)
-	pm := &model.Memory{Content: "legacy plaintext memory", Source: "s"}
-	if err := memory.New(legacy).PutMemory(bg, pm); err != nil {
-		t.Fatal(err)
-	}
-	if err := graph.New(legacy).PutEntity(bg, &model.Entity{Type: "person", Name: "Legacy Lee"}); err != nil {
-		t.Fatal(err)
-	}
-	em := &model.Memory{Content: "encrypted memory", Source: "s"}
-	if err := memory.New(env.H).PutMemory(bg, em); err != nil {
-		t.Fatal(err)
-	}
-	if err := graph.New(env.H).PutEntity(bg, &model.Entity{Type: "person", Name: "Enc Eve"}); err != nil {
-		t.Fatal(err)
-	}
-	if env.Count(`SELECT count(*) FROM memories WHERE enc`) != 1 || env.Count(`SELECT count(*) FROM memories WHERE NOT enc`) != 1 {
-		t.Fatal("expected one legacy and one encrypted memory")
-	}
-	s, err := workset.For(bg, env.H)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seen := map[string]int{}
-	for _, m := range s.Memories() {
-		seen[m.Content]++
-	}
-	if seen["legacy plaintext memory"] != 1 || seen["encrypted memory"] != 1 || len(seen) != 2 {
-		t.Fatalf("memories %v", seen)
-	}
-	names := map[string]int{}
-	for _, e := range s.Entities() {
-		names[e.Name]++
-	}
-	if names["Legacy Lee"] != 1 || names["Enc Eve"] != 1 {
-		t.Fatalf("entities %v", names)
 	}
 }
 
@@ -277,7 +233,6 @@ func TestWorksetEvictsLRUUnderCap(t *testing.T) {
 	env := openEnc(t)
 	seed(t, env)
 	u2 := env.NewUser("second", "encrypted")
-	env.Exec(`DELETE FROM entities WHERE user_id = $1 AND enc IS NOT TRUE`, u2)
 	h2 := env.HandleFor(u2, "encrypted", env.UK)
 	if err := memory.New(h2).PutMemory(bg, &model.Memory{Content: "second user memory", Source: "s"}); err != nil {
 		t.Fatal(err)
@@ -308,8 +263,8 @@ func TestWorksetKeylessIsLocked(t *testing.T) {
 		t.Fatalf("keyless: %v", err)
 	}
 	plain := env.HandleFor(env.UserID, "none", nil)
-	if _, err := workset.For(bg, plain); !errors.Is(err, model.ErrLocked) {
-		t.Fatalf("unencrypted: %v", err)
+	if _, err := workset.For(bg, plain); !errors.Is(err, model.ErrEnrollRequired) {
+		t.Fatalf("unenrolled: %v", err)
 	}
 }
 
@@ -386,48 +341,6 @@ func TestRecallAccessUpdateDoesNotInvalidateCache(t *testing.T) {
 		n, last, ok := x.MemoryAccess(mem)
 		if !ok || n != 2 || last == nil || !last.Equal(at) {
 			t.Fatalf("access = %d %v %v", n, last, ok)
-		}
-	}
-}
-
-func TestVectorBruteForceMatchesSQLCosine(t *testing.T) {
-	setup(t)
-	env := enctest.Open(t, "migrating")
-	legacy := env.HandleFor(env.UserID, "none", nil)
-	lm := memory.New(legacy)
-	vecs := [][]float32{{1, 0, 0}, {0.9, 0.3, 0}, {0.5, 0.5, 0.5}, {0, 1, 0}, {0, 0.2, 1}, {-1, 0.1, 0}}
-	for i, v := range vecs {
-		m := &model.Memory{Content: "m" + string(rune('a'+i)), Source: "s"}
-		if err := lm.PutMemory(bg, m); err != nil {
-			t.Fatal(err)
-		}
-		if err := lm.PutEmbedding(bg, m.ID, "memory", v); err != nil {
-			t.Fatal(err)
-		}
-	}
-	q := []float32{1, 0.2, 0.1}
-	want, err := lm.SearchVectorRaw(bg, q, "memory", 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := workset.For(bg, env.H)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gen, _ := lm.ActiveGeneration(bg)
-	got, err := s.SearchVectors(bg, q, "memory", gen, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != len(want) {
-		t.Fatalf("len %d vs %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i].RefID != want[i].RefID {
-			t.Fatalf("rank %d: %s vs %s", i, got[i].RefID, want[i].RefID)
-		}
-		if d := got[i].Similarity - want[i].Similarity; d > 0.01 || d < -0.01 {
-			t.Fatalf("sim %d: %v vs %v", i, got[i].Similarity, want[i].Similarity)
 		}
 	}
 }
@@ -537,7 +450,6 @@ func TestBM25IndexCountedAndEvictable(t *testing.T) {
 	// Another user's load under a tight cap evicts the BM25 index first and
 	// keeps the rest of the first user's set.
 	u2 := env.NewUser("other", "encrypted")
-	env.Exec(`DELETE FROM entities WHERE user_id = $1 AND enc IS NOT TRUE`, u2)
 	h2 := env.HandleFor(u2, "encrypted", env.UK)
 	if err := memory.New(h2).PutMemory(bg, &model.Memory{Content: "x", Source: "s"}); err != nil {
 		t.Fatal(err)

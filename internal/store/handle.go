@@ -31,11 +31,11 @@ type Handle struct {
 	PinnedGen int
 	// ConnID, when set, is stamped on every row this handle writes.
 	ConnID string
-	// Key is this handle's own copy of the user key, nil when the user is
-	// unencrypted or the handle is locked. Never shared between handles.
+	// Key is this handle's own copy of the user key, nil when the user has not
+	// enrolled or the handle is locked. Never shared between handles.
 	Key *keys.UK
-	// EncState is the user's encryption_state: "", "none", "migrating" or
-	// "encrypted". "" is treated as "none".
+	// EncState is the user's encryption_state: "", "none" or "encrypted".
+	// "" is treated as "none".
 	EncState string
 }
 
@@ -51,13 +51,13 @@ func (h *Handle) WithKey(uk *keys.UK, state string) *Handle {
 	return &h2
 }
 
-// Encrypted reports whether the user's rows are (or are being) encrypted.
+// Encrypted reports whether the user has enrolled (state "encrypted").
 func (h *Handle) Encrypted() bool { return h.EncState != "" && h.EncState != "none" }
 
 // Seal encrypts plain bound to this handle's user, table, row and column.
 func (h *Handle) Seal(table, rowID, col string, plain []byte) ([]byte, error) {
 	if h.Key == nil {
-		return nil, model.ErrLocked
+		return nil, h.RequireKey()
 	}
 	return h.Key.Seal(h.UserID, table, rowID, col, plain)
 }
@@ -65,7 +65,7 @@ func (h *Handle) Seal(table, rowID, col string, plain []byte) ([]byte, error) {
 // Open decrypts a Seal output for this handle's user.
 func (h *Handle) Open(table, rowID, col string, ct []byte) ([]byte, error) {
 	if h.Key == nil {
-		return nil, model.ErrLocked
+		return nil, h.RequireKey()
 	}
 	return h.Key.Open(h.UserID, table, rowID, col, ct)
 }

@@ -3,38 +3,9 @@ package accounts
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
-
-func TestSealRoundTrip(t *testing.T) {
-	s, _ := NewSealer(testKeyHex)
-	a, err := s.Seal("sk-hello")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := s.Seal("sk-hello")
-	if a == b || strings.Contains(a, "sk-hello") {
-		t.Fatal("nonce must be random and plaintext hidden")
-	}
-	got, err := s.Open(a)
-	if err != nil || got != "sk-hello" {
-		t.Fatalf("got %q %v", got, err)
-	}
-	if _, err := NewSealer("abcd"); err == nil {
-		t.Fatal("short key accepted")
-	}
-}
-
-func TestSealWrongKeyFails(t *testing.T) {
-	s, _ := NewSealer(testKeyHex)
-	o, _ := NewSealer(strings.Repeat("ab", 32))
-	a, _ := s.Seal("x")
-	if _, err := o.Open(a); err == nil {
-		t.Fatal("wrong key opened")
-	}
-}
 
 func TestSettingsMasked(t *testing.T) {
 	m := Settings{APIKey: "sk-abcdefg3f9a", EmbedAPIKey: "ek-zzzz1234"}.Masked()

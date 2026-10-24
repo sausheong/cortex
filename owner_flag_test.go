@@ -8,10 +8,6 @@ import (
 func TestOwnerProtectionUsesIsOwner(t *testing.T) {
 	c, ownerID := ownerCortex(t, "Flag Owner", "flag@owner.test")
 	ctx := context.Background()
-	// Legacy source text differs from 'owner'; protection must follow the flag.
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET source = 'legacy' WHERE id = ?`, ownerID); err != nil {
-		t.Fatal(err)
-	}
 	if err := c.PutEntity(ctx, &Entity{ID: ownerID, Type: "person", Name: "Flag Owner", Source: "ingest"}); err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +15,7 @@ func TestOwnerProtectionUsesIsOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Source != "legacy" {
+	if got.Source != "owner" {
 		t.Fatalf("owner source overwritten: %q", got.Source)
 	}
 	// Upsert by (name,type) must also not overwrite.
@@ -27,7 +23,7 @@ func TestOwnerProtectionUsesIsOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = c.GetEntity(ctx, ownerID)
-	if got.Source != "legacy" {
+	if got.Source != "owner" {
 		t.Fatalf("owner source overwritten by upsert: %q", got.Source)
 	}
 	// A non-owner entity with source 'owner' text is NOT protected.
@@ -48,9 +44,6 @@ func TestOwnerProtectionUsesIsOwner(t *testing.T) {
 func TestOwnerLocatedViaOwnerEntityIDNotSource(t *testing.T) {
 	c, ownerID := ownerCortex(t, "Locate Me", "loc@owner.test")
 	ctx := context.Background()
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET source = 'other' WHERE id = ?`, ownerID); err != nil {
-		t.Fatal(err)
-	}
 	got, err := c.OwnerEntityID(ctx)
 	if err != nil || got != ownerID {
 		t.Fatalf("OwnerEntityID = %q, %v", got, err)
@@ -79,9 +72,6 @@ func TestNewUserOwnerEntityIsOwner(t *testing.T) {
 func TestProfileEligibleIncludesOwnerByFlag(t *testing.T) {
 	c, ownerID := ownerCortex(t, "Profile Owner", "prof@owner.test")
 	ctx := context.Background()
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE entities SET source = 'other' WHERE id = ?`, ownerID); err != nil {
-		t.Fatal(err)
-	}
 	other := &Entity{Type: "person", Name: "Textual", Source: "owner"}
 	if err := c.PutEntity(ctx, other); err != nil {
 		t.Fatal(err)

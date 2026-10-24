@@ -24,15 +24,15 @@ func TestOpenAppliesMigrations(t *testing.T) {
 		t.Fatalf("Open() error: %v", err)
 	}
 	defer c.Close()
-	if v := schemaVersion(t, c); v != 11 {
-		t.Errorf("version = %d, want 11", v)
+	if v := schemaVersion(t, c); v != 12 {
+		t.Errorf("version = %d, want 12", v)
 	}
 	var n int
 	err = c.h.DB.QueryRowContext(context.Background(),
 		`SELECT count(*) FROM information_schema.columns
 		 WHERE table_schema = current_schema() AND table_name = 'memories' AND column_name = 'tsv'`).Scan(&n)
-	if err != nil || n != 1 {
-		t.Errorf("memories.tsv missing (n=%d err=%v)", n, err)
+	if err != nil || n != 0 {
+		t.Errorf("memories.tsv should be gone (n=%d err=%v)", n, err)
 	}
 }
 
@@ -48,8 +48,8 @@ func TestOpenIdempotent(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer c2.Close()
-	if v := schemaVersion(t, c2); v != 11 {
-		t.Errorf("version = %d, want 11", v)
+	if v := schemaVersion(t, c2); v != 12 {
+		t.Errorf("version = %d, want 12", v)
 	}
 }
 

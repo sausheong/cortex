@@ -6,10 +6,9 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
-
-const testKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 type env struct {
 	st   *Store
@@ -30,12 +29,8 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	sl, err := NewSealer(testKeyHex)
-	if err != nil {
-		t.Fatal(err)
-	}
 	e := &env{root: root, now: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
-	e.st = &Store{DB: db, Sealer: sl, Now: func() time.Time { return e.now }}
+	e.st = &Store{DB: db, Now: func() time.Time { return e.now }}
 	return e
 }
 
@@ -46,6 +41,21 @@ func (e *env) user(t *testing.T, sub string) string {
 		t.Fatal(err)
 	}
 	return u.ID
+}
+
+// encUser creates a user in state "encrypted" and returns its id and key.
+func (e *env) encUser(t *testing.T, sub string) (string, *keys.UK) {
+	t.Helper()
+	id := e.user(t, sub)
+	if _, err := e.st.DB.Exec(`UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	uk, err := keys.NewUK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uk.Zero)
+	return id, uk
 }
 
 func okSettings() Settings {

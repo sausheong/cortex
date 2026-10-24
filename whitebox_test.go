@@ -2,6 +2,8 @@ package cortex
 
 import (
 	"context"
+	"strconv"
+	"strings"
 
 	"github.com/sausheong/cortex/internal/maintain"
 	"github.com/sausheong/cortex/internal/memory"
@@ -42,7 +44,13 @@ func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mo
 
 const reembedLockSQL = memory.ReembedLockSQL
 
-func vectorLiteral(v []float32) string { return memory.VectorLiteral(v) }
+func vectorLiteral(v []float32) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = strconv.FormatFloat(float64(x), 'g', -1, 32)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
 
 // Wrappers for internal/maintain.
 

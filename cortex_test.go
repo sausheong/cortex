@@ -524,6 +524,7 @@ func TestRemember_EmbedsFactAugmentedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	c = modeHandle(t, c)
 	t.Cleanup(func() { c.Close() })
 	ctx := context.Background()
 	c.SetExtractor(&mockExtractor{

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sausheong/cortex/internal/workset"
+
 	"github.com/sausheong/cortex"
 )
 
@@ -122,7 +124,7 @@ func TestGraphDataIsolationAndAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bc := e.root.ForUser(b.ID)
+	bc := e.cx(b.ID)
 	secret := graphEnt(t, bc, "person", "Bobs Secret Contact")
 	bownerID, _ := bc.OwnerEntityID(t.Context())
 	graphRel(t, bc, bownerID, "knows", secret)
@@ -201,6 +203,7 @@ func TestGraphDataFilters(t *testing.T) {
 	}
 	recent := graphMention(t, c, "Met Bobby today", bob)
 	old := graphMention(t, c, "Apollo kickoff long ago", proj)
+	workset.Reset()
 	if _, err := e.st.DB.Exec(`UPDATE memories SET created_at = now() - interval '100 days' WHERE id = $1 AND user_id = $2`, old, id); err != nil {
 		t.Fatal(err)
 	}
@@ -223,6 +226,7 @@ func TestGraphDataFilters(t *testing.T) {
 		t.Fatalf("days=365: %v", names(g))
 	}
 	// A soft-deleted mention no longer counts as a recent mention.
+	workset.Reset()
 	if _, err := e.st.DB.Exec(`UPDATE memories SET deleted_at = now() WHERE id = $1`, recent); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +274,7 @@ func TestGraphSearchIsScopedAndLiteral(t *testing.T) {
 	graphEnt(t, c, "person", "Grace Hopper")
 	graphEnt(t, c, "person", "100% Real")
 	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	graphEnt(t, e.root.ForUser(b.ID), "person", "Gracefully Foreign")
+	graphEnt(t, e.cx(b.ID), "person", "Gracefully Foreign")
 	_, body := e.get("/graph?q=grace")
 	if !strings.Contains(body, "Grace Hopper") || strings.Contains(body, "Foreign") {
 		t.Fatalf("search: %s", body)
@@ -520,7 +524,7 @@ func TestGraphMutationsTreatForeignIDsAsAbsent(t *testing.T) {
 	e, c, _, _ := graphEnv(t)
 	mine := graphEnt(t, c, "person", "Mine")
 	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	bc := e.root.ForUser(b.ID)
+	bc := e.cx(b.ID)
 	theirs := graphEnt(t, bc, "person", "Theirs")
 	csrf := e.csrf()
 
@@ -578,8 +582,8 @@ func TestMemoriesEntityFilter(t *testing.T) {
 		t.Fatalf("entity filter: %s", body)
 	}
 	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	theirs := graphEnt(t, e.root.ForUser(b.ID), "person", "Theirs")
-	graphMention(t, e.root.ForUser(b.ID), "bobs private note", theirs)
+	theirs := graphEnt(t, e.cx(b.ID), "person", "Theirs")
+	graphMention(t, e.cx(b.ID), "bobs private note", theirs)
 	_, body = e.get("/memories?entity=" + theirs)
 	if strings.Contains(body, "bobs private note") || strings.Contains(body, "Theirs") || strings.Contains(body, "about acme") {
 		t.Fatalf("foreign entity filter leaked or matched: %s", body)
