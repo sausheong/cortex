@@ -103,11 +103,12 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 	pool.Start(ctx)
 
 	resolve := func(ctx context.Context, bearer string) (*cortex.Cortex, error) {
-		userID, connID, _, err := st.ResolveBearer(ctx, bearer)
+		userID, connID, uk, err := st.ResolveBearer(ctx, bearer)
 		if err != nil {
 			return nil, err
 		}
-		return st.ResolveUser(ctx, root, userID, connID, nil)
+		defer uk.Zero() // the handle keeps its own clone
+		return st.ResolveUser(ctx, root, userID, connID, uk)
 	}
 	s := server.NewMCPServer("cortex", "1.0.0", server.WithToolCapabilities(false))
 	mcpserver.RegisterToolsFor(s, nil, publicURL, mcpserver.WithBackgroundRemember(

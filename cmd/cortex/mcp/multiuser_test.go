@@ -112,7 +112,7 @@ func (e *muEnv) user(t *testing.T, name, providerURL string) (id, token string) 
 			t.Fatal(err)
 		}
 	}
-	tok, _, err := e.st.CreateAgentToken(t.Context(), u.ID, "test")
+	tok, _, err := e.st.CreateAgentToken(t.Context(), u.ID, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

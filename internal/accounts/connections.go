@@ -26,6 +26,10 @@ type Connection struct {
 	RevokedAt                                              *time.Time
 	// RemovedAt is set when the user hid the connection from their list.
 	RemovedAt *time.Time
+	// ExpiresAt is the agent token's expiry (nil: none). NeedsReconnect marks
+	// a connection whose token carries no key wrap after encryption.
+	ExpiresAt      *time.Time
+	NeedsReconnect bool
 }
 
 // HashToken is the SHA-256 hex digest under which tokens are stored.
@@ -60,6 +64,7 @@ func (st *Store) createConnection(ctx context.Context, ex execer, userID, kind, 
 // first, with the count of memories each wrote.
 func (st *Store) ListConnections(ctx context.Context, userID string) ([]Connection, error) {
 	rows, err := st.DB.QueryContext(ctx, `SELECT c.id, c.user_id, c.kind, c.name, c.client_id, c.created_at, c.last_used, c.revoked_at, c.removed_at,
+		(SELECT max(t.expires_at) FROM agent_tokens t WHERE t.connection_id = c.id), c.needs_reconnect,
 		(SELECT count(*) FROM memories m WHERE m.user_id = c.user_id AND m.written_by_connection_id = c.id AND m.deleted_at IS NULL)
 		FROM connections c WHERE c.user_id = $1 ORDER BY c.created_at DESC, c.id`, userID)
 	if err != nil {
@@ -69,9 +74,13 @@ func (st *Store) ListConnections(ctx context.Context, userID string) ([]Connecti
 	var out []Connection
 	for rows.Next() {
 		var c Connection
-		var lu, rv, rm sql.NullTime
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Kind, &c.Name, &c.ClientID, &c.CreatedAt, &lu, &rv, &rm, &c.Written); err != nil {
+		var lu, rv, rm, ex sql.NullTime
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Kind, &c.Name, &c.ClientID, &c.CreatedAt, &lu, &rv, &rm, &ex, &c.NeedsReconnect, &c.Written); err != nil {
 			return nil, err
+		}
+		if ex.Valid {
+			t := ex.Time
+			c.ExpiresAt = &t
 		}
 		if lu.Valid {
 			t := lu.Time
@@ -111,6 +120,9 @@ func (st *Store) RevokeConnection(ctx context.Context, userID, connID string) er
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE oauth_tokens SET revoked_at = $2 WHERE connection_id = $1 AND revoked_at IS NULL`, connID, now); err != nil {
+		return err
+	}
+	if err := deleteAgentWraps(ctx, tx, userID, connID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -170,14 +182,29 @@ func (st *Store) UnremoveConnection(ctx context.Context, userID, connID string) 
 	return nil
 }
 
+// AgentTokenLifetime is how long an agent token (and its key wrap) stays valid.
+const AgentTokenLifetime = 90 * 24 * time.Hour
+
+const wrapKindAgent = "agent"
+
 // CreateAgentToken creates an agent connection and returns its plaintext
-// token (shown once; only the hash is stored).
-func (st *Store) CreateAgentToken(ctx context.Context, userID, name string) (string, *Connection, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
+// token (shown once; only the hash is stored). For a user who has enrolled
+// encryption (state other than "none") uk is required (model.ErrLocked
+// otherwise); the token then carries a wrap of uk under a key derived from
+// the token and expires after AgentTokenLifetime. A legacy user with a nil uk
+// gets a non-expiring token with no wrap.
+func (st *Store) CreateAgentToken(ctx context.Context, userID, name string, uk *keys.UK) (string, *Connection, error) {
+	state, err := st.encState(ctx, userID)
+	if err != nil {
 		return "", nil, err
 	}
-	plain := "ctx_" + base64.RawURLEncoding.EncodeToString(raw)
+	if state != "none" && uk == nil {
+		return "", nil, model.ErrLocked
+	}
+	plain, err := newAgentTokenString()
+	if err != nil {
+		return "", nil, err
+	}
 	tx, err := st.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", nil, err
@@ -187,9 +214,8 @@ func (st *Store) CreateAgentToken(ctx context.Context, userID, name string) (str
 	if err != nil {
 		return "", nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_tokens (id, connection_id, token_hash) VALUES ($1,$2,$3)`,
-		"t_"+randHex(12), conn.ID, HashToken(plain)); err != nil {
-		return "", nil, fmt.Errorf("accounts: create token: %w", err)
+	if err := st.insertAgentToken(ctx, tx, userID, conn.ID, plain, uk); err != nil {
+		return "", nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return "", nil, err
@@ -197,24 +223,114 @@ func (st *Store) CreateAgentToken(ctx context.Context, userID, name string) (str
 	return plain, conn, nil
 }
 
+func newAgentTokenString() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return "ctx_" + base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// insertAgentToken stores the token hash and, when uk is non-nil, the wrap and
+// the 90-day expiry.
+func (st *Store) insertAgentToken(ctx context.Context, tx *sql.Tx, userID, connID, plain string, uk *keys.UK) error {
+	id := "t_" + randHex(12)
+	var exp *time.Time
+	if uk != nil {
+		e := st.now().Add(AgentTokenLifetime)
+		exp = &e
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_tokens (id, connection_id, token_hash, expires_at) VALUES ($1,$2,$3,$4)`,
+		id, connID, HashToken(plain), exp); err != nil {
+		return fmt.Errorf("accounts: create token: %w", err)
+	}
+	if uk == nil {
+		return nil
+	}
+	wrapped, err := keys.Wrap(keys.WrapKeySecret(wrapKindAgent, plain), userID, wrapKindAgent, id, uk)
+	if err != nil {
+		return err
+	}
+	return st.PutWrapTx(ctx, tx, Wrap{UserID: userID, Kind: wrapKindAgent, RefID: id, Wrapped: wrapped, ExpiresAt: exp})
+}
+
+// RenewAgentToken replaces the connection's token with a fresh one (new
+// 90-day wrap). The old token, its hash and its wrap are deleted in the same
+// transaction, so the old token stops working at once. uk is required for
+// an encrypted user (model.ErrLocked otherwise).
+func (st *Store) RenewAgentToken(ctx context.Context, userID, connID string, uk *keys.UK) (string, error) {
+	if uk == nil {
+		if state, err := st.encState(ctx, userID); err != nil {
+			return "", err
+		} else if state != "none" {
+			return "", model.ErrLocked
+		}
+	}
+	plain, err := newAgentTokenString()
+	if err != nil {
+		return "", err
+	}
+	tx, err := st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var id string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM connections WHERE id = $1 AND user_id = $2 AND kind = 'agent'
+		AND revoked_at IS NULL AND removed_at IS NULL FOR UPDATE`, connID, userID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := deleteAgentWraps(ctx, tx, userID, connID); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_tokens WHERE connection_id = $1`, connID); err != nil {
+		return "", err
+	}
+	if err := st.insertAgentToken(ctx, tx, userID, connID, plain, uk); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE connections SET needs_reconnect = FALSE WHERE id = $1`, connID); err != nil {
+		return "", err
+	}
+	return plain, tx.Commit()
+}
+
+func deleteAgentWraps(ctx context.Context, x execer, userID, connID string) error {
+	_, err := x.ExecContext(ctx, `DELETE FROM user_key_wraps WHERE user_id = $1 AND kind = 'agent'
+		AND ref_id IN (SELECT id FROM agent_tokens WHERE connection_id = $2)`, userID, connID)
+	return err
+}
+
 // ResolveBearer maps an agent token or OAuth access token to (user,
-// connection). Revoked connections, expired tokens and deleted users fail.
+// connection, key). Revoked connections, deleted users and unknown tokens
+// fail with ErrInvalidToken; an expired agent token with model.ErrTokenExpired;
+// an encrypted user whose token holds no usable wrap (or whose connection is
+// flagged needs_reconnect) with model.ErrNeedsReconnect. The returned UK is
+// the caller's to Zero.
 func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connID string, uk *keys.UK, err error) {
 	if token == "" {
 		return "", "", nil, ErrInvalidToken
 	}
 	h := HashToken(token)
 	now := st.now()
-	err = st.DB.QueryRowContext(ctx, `SELECT c.user_id, c.id FROM agent_tokens t
+	var tokenID string
+	var expires sql.NullTime
+	var needs, agent bool
+	err = st.DB.QueryRowContext(ctx, `SELECT c.user_id, c.id, t.id, t.expires_at, c.needs_reconnect FROM agent_tokens t
 		JOIN connections c ON c.id = t.connection_id
 		JOIN users u ON u.id = c.user_id
-		WHERE t.token_hash = $1 AND c.revoked_at IS NULL AND u.deleted_at IS NULL`, h).Scan(&userID, &connID)
+		WHERE t.token_hash = $1 AND c.revoked_at IS NULL AND u.deleted_at IS NULL`, h).Scan(&userID, &connID, &tokenID, &expires, &needs)
+	agent = err == nil
 	if errors.Is(err, sql.ErrNoRows) {
-		err = st.DB.QueryRowContext(ctx, `SELECT c.user_id, c.id FROM oauth_tokens t
+		err = st.DB.QueryRowContext(ctx, `SELECT c.user_id, c.id, c.needs_reconnect FROM oauth_tokens t
 			JOIN connections c ON c.id = t.connection_id
 			JOIN users u ON u.id = c.user_id
 			WHERE t.token_hash = $1 AND t.kind = 'access' AND t.revoked_at IS NULL AND t.expires_at > $2
-			AND c.revoked_at IS NULL AND u.deleted_at IS NULL`, h, now).Scan(&userID, &connID)
+			AND c.revoked_at IS NULL AND u.deleted_at IS NULL`, h, now).Scan(&userID, &connID, &needs)
 		if err == nil {
 			_, _ = st.DB.ExecContext(ctx, `UPDATE oauth_tokens SET last_used_at = $2 WHERE token_hash = $1`, h, now)
 		}
@@ -225,15 +341,38 @@ func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connI
 	if err != nil {
 		return "", "", nil, fmt.Errorf("accounts: resolve token: %w", err)
 	}
-	_, _ = st.DB.ExecContext(ctx, `UPDATE connections SET last_used = $2 WHERE id = $1`, connID, now)
-	// Token wraps arrive with Tasks 6 and 7; until then an enrolled user's
-	// token cannot yield a key.
-	if state, serr := st.encState(ctx, userID); serr != nil {
+	if agent && expires.Valid && !expires.Time.After(now) {
+		_ = st.DeleteWrapIfExpired(ctx, now, userID, wrapKindAgent, tokenID)
+		return "", "", nil, model.ErrTokenExpired
+	}
+	state, serr := st.encState(ctx, userID)
+	if serr != nil {
 		return "", "", nil, serr
-	} else if state != "none" {
+	}
+	if needs && state != "none" {
 		return "", "", nil, model.ErrNeedsReconnect
 	}
-	return userID, connID, nil, nil
+	if state != "none" {
+		if !agent {
+			// OAuth wraps arrive with Task 7.
+			return "", "", nil, model.ErrNeedsReconnect
+		}
+		w, werr := st.GetWrap(ctx, userID, wrapKindAgent, tokenID)
+		if werr != nil {
+			if errors.Is(werr, ErrNoWrap) {
+				return "", "", nil, model.ErrNeedsReconnect
+			}
+			return "", "", nil, werr
+		}
+		if uk, err = keys.Unwrap(keys.WrapKeySecret(wrapKindAgent, token), userID, wrapKindAgent, tokenID, w.Wrapped); err != nil {
+			return "", "", nil, model.ErrNeedsReconnect
+		}
+	}
+	_, _ = st.DB.ExecContext(ctx, `UPDATE connections SET last_used = $2 WHERE id = $1`, connID, now)
+	if uk != nil {
+		_, _ = st.DB.ExecContext(ctx, `UPDATE user_key_wraps SET last_used_at = $3 WHERE user_id = $1 AND kind = 'agent' AND ref_id = $2`, userID, tokenID, now)
+	}
+	return userID, connID, uk, nil
 }
 
 // DeleteAccount cuts access at once: it revokes every connection, deletes

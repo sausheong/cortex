@@ -364,7 +364,7 @@ func TestMemoriesGarbageDateIgnoredWithMessage(t *testing.T) {
 // memories no connection wrote.
 func TestMemoriesSinceAndByNone(t *testing.T) {
 	e, c, id := memEnv(t)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), id, "Agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), id, "Agent", nil)
 	putMem(t, c, "direct early")
 	time.Sleep(20 * time.Millisecond)
 	mark := time.Now().UTC().Truncate(time.Second).Add(time.Second)

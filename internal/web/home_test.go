@@ -109,7 +109,7 @@ func TestFirstRunNavShrinksAndChecklistLinks(t *testing.T) {
 	// Once set up the full nav returns.
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
 	e.write(ua.ID, conn.ID, "likes tea")
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
 	_, body = e.get("/")
@@ -139,7 +139,7 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	// Once everything is set up the checklist disappears.
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
 	e.write(ua.ID, conn.ID, "likes tea")
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
 	_, body = e.get("/")
@@ -161,8 +161,8 @@ func TestHomeNewSinceGroupsAndLinks(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT")
-	_, other, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Claude")
+	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT", nil)
+	_, other, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Claude", nil)
 	// First visit stamps the clock.
 	e.get("/")
 	for _, m := range []string{"one", "two", "three", "four"} {
@@ -203,7 +203,7 @@ func TestHomeNewSinceLinksMatchCounts(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT")
+	_, chat, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ChatGPT", nil)
 	// Written before the visit marker, same calendar day.
 	e.write(ua.ID, chat.ID, "old chat note")
 	if err := e.root.ForUser(ua.ID).PutMemory(t.Context(), &cortex.Memory{Content: "old direct note"}); err != nil {
@@ -246,7 +246,7 @@ func TestSetupIgnoresRemovedConnections(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Gone")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Gone", nil)
 	if st := e.srv.setupState(t.Context(), ua.ID); st == nil || !st.Connect {
 		t.Fatalf("live connection should tick Connect: %+v", st)
 	}
@@ -262,7 +262,7 @@ func TestHomeLastVisitUpdatesAfterViewing(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "Agent", nil)
 	e.get("/")
 	e.write(ua.ID, conn.ID, "fresh note")
 	// A reload inside the visit gap does not count as a new visit.
@@ -285,10 +285,10 @@ func TestHomeAssistantsFlags(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, fresh, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "FreshOne")
-	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne")
-	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne")
-	_, gone, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "GoneOne")
+	_, fresh, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "FreshOne", nil)
+	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne", nil)
+	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne", nil)
+	_, gone, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "GoneOne", nil)
 	if err := e.st.RevokeConnection(t.Context(), ua.ID, gone.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestHomeHealthRows(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
 	e.write(ua.ID, conn.ID, "seed")
 	_, body := e.get("/")
 	// Provider configured and nothing wrong: one line, and no advice to set up
@@ -373,7 +373,7 @@ func TestHomeProfileFromCacheOnly(t *testing.T) {
 	if err := cx.PutMemory(t.Context(), &cortex.Memory{Content: "Alice likes tea", Static: true, EntityIDs: []string{owner}}); err != nil {
 		t.Fatal(err)
 	}
-	e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
 	// Not built yet: plain line, link kept.
 	_, body := e.get("/")
 	if !strings.Contains(body, "builds overnight") || !strings.Contains(body, `href="/graph"`) {
@@ -406,7 +406,7 @@ func TestHomeIsolation(t *testing.T) {
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
-	_, ac, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "AliceBot")
+	_, ac, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "AliceBot", nil)
 	e.write(ua.ID, ac.ID, "alice secret memory")
 	e.get("/")
 	e.newClient()
@@ -447,7 +447,7 @@ func TestHomeStatusNeverContradicts(t *testing.T) {
 	}
 
 	// Connected but never used: honest strip, no set-up line.
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent", nil)
 	_, body = e.get("/")
 	if !strings.Contains(body, "1 assistant connected, not used yet") {
 		t.Errorf("connected-but-unused strip missing: %s", body)
@@ -475,9 +475,9 @@ func TestAssistantStatusAgreesAcrossPages(t *testing.T) {
 	ua := e.userBySub("g-alice")
 	e.setProvider(ua.ID)
 	e.write(ua.ID, "", "seed")
-	_, act, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ActiveOne")
-	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne")
-	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne")
+	_, act, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ActiveOne", nil)
+	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne", nil)
+	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne", nil)
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, act.ID, e.now.Add(-time.Hour))
 	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, idle.ID, e.now.Add(-45*24*time.Hour))
 

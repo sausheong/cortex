@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // connectionInstructions is the custom-instruction text shown on the page.
@@ -48,6 +49,14 @@ type connView struct {
 	// DeleteCount is how many items "Revoke and delete" would remove.
 	DeleteCount int
 	CSRF        string
+	// Agent is true for an agent-token connection (the only kind Renew applies to).
+	Agent bool
+	// Expires is the token expiry shown to the user ("2 Jan 2027"); empty when none.
+	Expires string
+	// Expired is true once the expiry has passed.
+	Expired bool
+	// NeedsReconnect marks a connection that must be reconnected after encryption.
+	NeedsReconnect bool
 }
 
 // connNotice is a one-line status after a rename or remove.
@@ -82,6 +91,7 @@ func ConnectionsMount(mux *http.ServeMux, d Deps) {
 	h := &connHandler{d: d}
 	mux.HandleFunc("GET /connections", d.Auth(h.list))
 	mux.HandleFunc("POST /connections/tokens", d.Auth(h.newToken))
+	mux.HandleFunc("POST /connections/{id}/renew", d.Auth(h.renew))
 	mux.HandleFunc("POST /connections/{id}/revoke", d.Auth(h.revoke))
 	mux.HandleFunc("POST /connections/{id}/rename", d.Auth(h.rename))
 	mux.HandleFunc("POST /connections/{id}/remove", d.Auth(h.remove))
@@ -111,7 +121,12 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 		if q.Get("renamed") == c.ID {
 			v.Notice = &connNotice{Text: "Renamed to " + c.Name + "."}
 		}
-		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil, Status: assistantStatus(c, h.d.Now()), CSRF: u.CSRF}
+		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil, Status: assistantStatus(c, h.d.Now()), CSRF: u.CSRF,
+			Agent: c.Kind == "agent", NeedsReconnect: c.NeedsReconnect}
+		if c.ExpiresAt != nil && c.RevokedAt == nil {
+			cv.Expires = c.ExpiresAt.UTC().Format("2 Jan 2006")
+			cv.Expired = !c.ExpiresAt.After(h.d.Now())
+		}
 		if c.RevokedAt == nil {
 			if cv.DeleteCount, err = cx.CountByConnection(r.Context(), c.ID); err != nil {
 				return v, err
@@ -173,11 +188,39 @@ func (h *connHandler) newToken(w http.ResponseWriter, r *http.Request, u Session
 		})
 		return
 	}
-	tok, _, err := h.d.Accounts.CreateAgentToken(r.Context(), u.UserID, name)
+	tok, _, err := h.d.Accounts.CreateAgentToken(r.Context(), u.UserID, name, u.Key)
 	if err != nil {
 		h.d.Cfg.Logger.Error("create token", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	h.page(w, r, u, func(v *connectionsView) { v.NewToken, v.NewName = tok, name })
+}
+
+func (h *connHandler) renew(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	id := r.PathValue("id")
+	tok, err := h.d.Accounts.RenewAgentToken(r.Context(), u.UserID, id, u.Key)
+	switch {
+	case errors.Is(err, model.ErrLocked):
+		h.pageStatus(w, r, u, http.StatusLocked, func(v *connectionsView) {
+			v.Error = "Unlock cortex with your passkey, then try again. Nothing was changed."
+		})
+		return
+	case errors.Is(err, accounts.ErrNotFound):
+		http.NotFound(w, r)
+		return
+	case err != nil:
+		h.d.Cfg.Logger.Error("renew token", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	name := ""
+	if conns, err := h.d.Accounts.ListConnections(r.Context(), u.UserID); err == nil {
+		for _, c := range conns {
+			if c.ID == id {
+				name = c.Name
+			}
+		}
 	}
 	h.page(w, r, u, func(v *connectionsView) { v.NewToken, v.NewName = tok, name })
 }

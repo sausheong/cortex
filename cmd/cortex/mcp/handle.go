@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 type handleKey struct{}
@@ -36,6 +37,14 @@ func (h handles) get(ctx context.Context) (*cortex.Cortex, *mcp.CallToolResult) 
 		if v.err != nil {
 			if errors.Is(v.err, accounts.ErrNoProvider) {
 				return nil, mcp.NewToolResultError("set up your AI provider at " + strings.TrimRight(h.publicURL, "/") + "/settings")
+			}
+			switch {
+			case errors.Is(v.err, model.ErrNeedsReconnect):
+				return nil, mcp.NewToolResultError(model.ErrNeedsReconnect.Error())
+			case errors.Is(v.err, model.ErrTokenExpired):
+				return nil, mcp.NewToolResultError("this assistant token has expired; renew it in Connections")
+			case errors.Is(v.err, model.ErrLocked):
+				return nil, mcp.NewToolResultError("cortex is locked; unlock it with your passkey in the browser, then try again")
 			}
 			return nil, mcp.NewToolResultError("internal error")
 		}

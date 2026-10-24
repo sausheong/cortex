@@ -328,7 +328,7 @@ func deleteAccount(t *testing.T, e *env, memories int) {
 
 func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 	e, _, id := memEnv(t)
-	tok, _, err := e.st.CreateAgentToken(t.Context(), id, "tunnel")
+	tok, _, err := e.st.CreateAgentToken(t.Context(), id, "tunnel", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 func TestAccountDeleteThenSigninRestores(t *testing.T) {
 	e, c, id := memEnv(t)
 	putMem(t, c, "still here")
-	tok, _, _ := e.st.CreateAgentToken(t.Context(), id, "tunnel")
+	tok, _, _ := e.st.CreateAgentToken(t.Context(), id, "tunnel", nil)
 	deleteAccount(t, e, 1)
 	e.newClient()
 	e.idp.ids["c"] = alice()

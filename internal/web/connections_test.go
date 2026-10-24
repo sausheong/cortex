@@ -32,7 +32,7 @@ func TestConnectionsListsOwnOnly(t *testing.T) {
 	if _, err := e.st.CreateConnection(t.Context(), ua.ID, "oauth", "AliceAssistant", "https://a.test/c"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent"); err != nil {
+	if _, _, err := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.st.CreateConnection(t.Context(), ub.ID, "oauth", "BobAssistant", "https://b.test/c"); err != nil {
@@ -55,7 +55,7 @@ func TestRevokeAndRemoveSoftDeletes(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	tok, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1")
+	tok, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestRevokeForeignConnectionIs404(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(Identity{Sub: "g-bob", Email: "bob@x.test", Name: "Bob", EmailVerified: true}, "")
 	ub := e.userBySub("g-bob")
-	btok, bconn, err := e.st.CreateAgentToken(t.Context(), ub.ID, "bobagent")
+	btok, bconn, err := e.st.CreateAgentToken(t.Context(), ub.ID, "bobagent", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestRevokeKeepLeavesWrittenData(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1")
+	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent1", nil)
 	m := &cortex.Memory{Content: "kept"}
 	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), m); err != nil {
 		t.Fatal(err)
@@ -221,7 +221,7 @@ func TestRenameConnection(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "old-name")
+	_, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "old-name", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestConnectionRenameRemoveIsolation(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "alice-agent", nil)
 	if err := e.st.RevokeConnection(t.Context(), ua.ID, conn.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestRemoveConnection(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "gone-agent")
+	tok, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "gone-agent", nil)
 	if err := e.root.ForUser(ua.ID).WithConnection(conn.ID).PutMemory(t.Context(), &cortex.Memory{Content: "kept memory"}); err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestRemovedConnectionWithoutMemoriesLeavesFilter(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	ua := e.userBySub("g-alice")
-	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "empty-agent")
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "empty-agent", nil)
 	_ = e.st.RevokeConnection(t.Context(), ua.ID, conn.ID)
 	if err := e.st.RemoveConnection(t.Context(), ua.ID, conn.ID); err != nil {
 		t.Fatal(err)
@@ -373,5 +373,34 @@ func TestConnectionsLeadsWithConnectAssistant(t *testing.T) {
 	}
 	if _, home := e.get("/"); strings.Contains(home, "You are set up.") {
 		t.Error("set-up line shown before setup is done")
+	}
+}
+
+func TestConnectionsPageShowsRenewAndExpiry(t *testing.T) {
+	e, _, secret, uk := encryptedSession(t)
+	defer uk.Zero()
+	e.setCookie(unlockCookie, secret)
+	ua := e.userBySub("g-alice")
+	_, conn, err := e.st.CreateAgentToken(t.Context(), ua.ID, "laptop-agent", uk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body := e.get("/connections")
+	want := e.now.Add(90 * 24 * time.Hour).UTC().Format("2 Jan 2006")
+	if !strings.Contains(body, "Expires "+want) || !strings.Contains(body, "/connections/"+conn.ID+"/renew") || !strings.Contains(body, ">Renew<") {
+		t.Fatalf("renew/expiry missing (want %q): %s", want, body)
+	}
+	csrf := e.connCSRF()
+	resp, page := e.post("/connections/"+conn.ID+"/renew", url.Values{"csrf": {csrf}})
+	if resp.StatusCode != 200 || !strings.Contains(page, "ctx_") {
+		t.Fatalf("renew: %d %.300s", resp.StatusCode, page)
+	}
+	// Flagged connection offers Reconnect.
+	if _, err := e.st.DB.Exec(`UPDATE connections SET needs_reconnect = TRUE WHERE id = $1`, conn.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, body = e.get("/connections")
+	if !strings.Contains(body, ">Reconnect<") {
+		t.Fatalf("reconnect missing: %s", body)
 	}
 }

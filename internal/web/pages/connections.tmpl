@@ -3,7 +3,8 @@
   <div class="conn-row">
     <strong class="conn-name">{{.Name}}</strong>
     {{template "status" .Status}}
-    <p class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{end}}{{if .LastUsed}} &middot; {{end}}{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</p>
+    <p class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{end}}{{if .LastUsed}} &middot; {{end}}{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written{{if .Expires}} &middot; {{if .Expired}}Expired {{else}}Expires {{end}}{{.Expires}}{{end}}</p>
+    {{if .NeedsReconnect}}<p class="note">cortex is now encrypted. {{if .Agent}}Reconnect to issue a new key.{{else}}Remove this connector in your assistant and add it again.{{end}}</p>{{end}}
   </div>
   <div class="conn-actions">
   <details class="rename">
@@ -14,6 +15,10 @@
       <button class="btn-secondary" data-pending="Saving&hellip;">Save name</button>
     </form>
   </details>
+  {{if and .Agent (not .Revoked)}}<form method="post" action="/connections/{{.ID}}/renew">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn-secondary" data-pending="Working&hellip;">{{if .NeedsReconnect}}Reconnect{{else}}Renew{{end}}</button>
+  </form>{{end}}
   {{if .Revoked}}<form method="post" action="/connections/{{.ID}}/remove">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button class="btn-secondary" aria-describedby="rm-{{.ID}}">Remove from list</button>
@@ -64,7 +69,7 @@
 {{if .WasRestored}}<p class="notice" role="status">Restored what it wrote. The connection stays revoked.</p>{{end}}
 {{if .NewToken}}
 <section class="notice new-token" id="new-token" role="alert" tabindex="-1" aria-labelledby="new-token-h">
-  <h2 id="new-token-h">Key created for {{.NewName}}</h2>
+  <h2 id="new-token-h">Key ready for {{.NewName}}</h2>
   <p>Copy it now. It is shown only once.</p>
   <p><code id="new-token-value">{{.NewToken}}</code></p>
   <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy key">Copy key</button></p>

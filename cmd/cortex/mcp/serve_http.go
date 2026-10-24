@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/model"
 	"io"
 	"net/http"
 	"os"
@@ -96,7 +97,8 @@ func NewHTTPHandler(s *server.MCPServer, resolve Resolver, publicURL string, fai
 		case errors.Is(err, accounts.ErrInvalidToken):
 			deny(w, r)
 			return
-		case errors.Is(err, accounts.ErrNoProvider):
+		case errors.Is(err, accounts.ErrNoProvider),
+			errors.Is(err, model.ErrNeedsReconnect), errors.Is(err, model.ErrTokenExpired), errors.Is(err, model.ErrLocked):
 			cx = nil
 		default:
 			http.Error(w, "internal error", http.StatusInternalServerError)

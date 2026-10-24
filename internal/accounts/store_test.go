@@ -111,7 +111,7 @@ func TestAgentTokenResolves(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "a")
-	tok, conn, err := e.st.CreateAgentToken(ctx, u, "laptop")
+	tok, conn, err := e.st.CreateAgentToken(ctx, u, "laptop", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestRevokedTokenFails(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "a")
-	tok, conn, _ := e.st.CreateAgentToken(ctx, u, "x")
+	tok, conn, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
 	if err := e.st.RevokeConnection(ctx, u, conn.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestRevokedTokenFails(t *testing.T) {
 func TestTokensStoredHashed(t *testing.T) {
 	e := newEnv(t)
 	u := e.user(t, "a")
-	tok, _, _ := e.st.CreateAgentToken(context.Background(), u, "x")
+	tok, _, _ := e.st.CreateAgentToken(context.Background(), u, "x", nil)
 	var id, conn, hash string
 	if err := e.st.DB.QueryRow(`SELECT id, connection_id, token_hash FROM agent_tokens`).Scan(&id, &conn, &hash); err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestRevokeForeignConnectionNotFound(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	a, b := e.user(t, "a"), e.user(t, "b")
-	_, conn, _ := e.st.CreateAgentToken(ctx, b, "x")
+	_, conn, _ := e.st.CreateAgentToken(ctx, b, "x", nil)
 	e1 := e.st.RevokeConnection(ctx, a, conn.ID)
 	e2 := e.st.RevokeConnection(ctx, a, "c_absent")
 	if !errors.Is(e1, ErrNotFound) || !errors.Is(e2, ErrNotFound) || e1.Error() != e2.Error() {
@@ -206,7 +206,7 @@ func TestDeletedAccountTokensRejected(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "a")
-	agent, _, _ := e.st.CreateAgentToken(ctx, u, "x")
+	agent, _, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
 	c, _ := e.st.CreateConnection(ctx, u, "oauth", "Claude", "client1")
 	addOAuthToken(t, e, u, c.ID, "acc", "access", time.Hour)
 	e.st.DB.Exec(`INSERT INTO sessions (id_hash, user_id, csrf, expires_at) VALUES ('s1',$1,'c',$2)`, u, e.now.Add(time.Hour))
@@ -399,7 +399,7 @@ func TestUserDeleteCascadesAllTables(t *testing.T) {
 	ctx := context.Background()
 	u := e.user(t, "a")
 	e.st.PutSettings(ctx, u, okSettings())
-	_, conn, _ := e.st.CreateAgentToken(ctx, u, "x")
+	_, conn, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
 	oc, _ := e.st.CreateConnection(ctx, u, "oauth", "C", "cid")
 	exec := func(q string, args ...any) {
 		t.Helper()
@@ -499,7 +499,7 @@ func TestResolveBearerEncryptedNeedsReconnect(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "encb")
-	tok, _, err := e.st.CreateAgentToken(ctx, u, "agent")
+	tok, _, err := e.st.CreateAgentToken(ctx, u, "agent", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
