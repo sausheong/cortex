@@ -123,6 +123,11 @@ details.rename>summary::-webkit-details-marker{display:none}
 .how-to{margin:0 0 var(--s3);padding-left:var(--s5)}.how-to li+li{margin-top:var(--s1)}
 .setup-done{margin:var(--s2) 0 0}
 .copy-status{margin-left:var(--s3)}
+.copy-row{display:flex;flex-wrap:wrap;align-items:stretch;gap:var(--s3);margin:0 0 var(--s4)}
+.copy-row .mcp-url{flex:1 1 16rem;min-width:0;display:flex;align-items:center}
+.copy-row .btn{flex:0 0 auto}
+.copy-row .copy-status{flex:1 0 100%;margin:0}.copy-row .copy-status:empty{display:none}
+@media (max-width:560px){.copy-row .btn{flex:1 0 100%}}
 .memlist{list-style:none;padding:0}.memlist li{border-top:1px solid var(--line)}
 .change{padding:12px 0;border-top:1px solid var(--line)}
 .change ul{margin:4px 0 8px}
@@ -221,7 +226,7 @@ legend{padding:0;margin:0 0 var(--s2);font-size:var(--text-lg);font-weight:var(-
 .skip{position:absolute;left:var(--s4);top:-60px;z-index:2;padding:var(--s2) var(--s3);background:var(--bg);border:1px solid var(--line-strong);border-radius:6px;color:var(--fg)}
 .skip:focus{top:var(--s2)}
 main:focus{outline:none}
-.facts{margin:0 0 var(--s5);max-width:var(--measure)}
+.facts{margin:0 0 var(--s5);max-width:none}
 .facts>div{display:flex;justify-content:space-between;gap:var(--s4);padding:var(--s2) 0;border-top:1px solid var(--line)}
 .facts>div:last-child{border-bottom:1px solid var(--line)}
 .facts dt{color:var(--muted)}.facts dd{margin:0;font-weight:var(--w-label)}
@@ -249,9 +254,9 @@ main h1{font-size:1.5rem}
 @media (max-width:560px){.top nav{flex:1 1 100%;gap:0 var(--s2);flex-wrap:wrap}.top nav a{padding:0}.top nav .link{padding:0;white-space:nowrap}.top nav a{white-space:nowrap}}
 
 /* Graph: a map of the neighbourhood plus the same entities as a list. Flat, hairline-divided, shape-coded. */
-/* Heading and lede keep the 42rem column on every page; only a map, panel or list beneath breaks out. */
-.breakout{--wide:64rem;position:relative;left:50%;width:min(var(--wide),calc(100vw - 2 * var(--s4)));transform:translateX(-50%)}
-@media (max-width:48rem){.breakout{left:0;width:100%;transform:none}}
+/* Heading and lede keep the 42rem column on every page; only a map, panel or list beneath breaks out, to the right, so every page keeps one left edge. */
+.breakout{--wide:64rem;width:min(var(--wide),calc(50vw + 21rem - 2 * var(--s4)))}
+@media (max-width:48rem){.breakout{width:100%}}
 .graph-search label{margin:0 0 var(--s1)}
 .graph-search-row{display:grid;justify-content:start;grid-template-columns:minmax(0,28rem) auto;gap:var(--s3);align-items:end}
 .graph-search-row input{margin-top:0;min-height:44px}

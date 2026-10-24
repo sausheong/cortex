@@ -76,8 +76,7 @@
 <section class="section connect-assistant" aria-labelledby="h-connect">
   <h2 id="h-connect">Connect an assistant</h2>
   <p>Add this address to ChatGPT or Claude as a custom connector. They ask you to approve access, and it appears below once connected.</p>
-  <p><code class="mcp-url" id="mcp-url">{{.MCPURL}}</code></p>
-  <p><button class="btn js-only" type="button" data-copy="mcp-url" data-copy-label="Copy address">Copy address</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
+  <div class="copy-row"><code class="mcp-url" id="mcp-url">{{.MCPURL}}</code><button class="btn js-only" type="button" data-copy="mcp-url" data-copy-label="Copy address">Copy address</button><span class="copy-status note" role="status" aria-live="polite"></span></div>
   <ol class="how-to">
     <li><strong>ChatGPT:</strong> open Settings, then Connectors, and add a custom connector with this address.</li>
     <li><strong>Claude:</strong> open Settings, then Connectors, and add a custom connector with this address.</li>
