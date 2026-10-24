@@ -108,6 +108,7 @@ time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums
 .conn-actions{display:flex;flex-wrap:wrap;align-items:flex-start;gap:var(--s2) var(--s3);margin-top:var(--s3)}
 .conn-actions form{margin:0}
 details.rename>summary{list-style:none;display:flex;width:fit-content;align-items:center;box-sizing:border-box;min-height:44px;padding:8px 4px;border:0;border-radius:6px;color:var(--muted);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+details.rename>summary{margin-left:calc(var(--s1) * -1)}
 details.rename>summary:hover,details.rename[open]>summary{color:var(--fg)}
 details.rename>summary::-webkit-details-marker{display:none}
 .rename-panel{margin-top:8px;padding:12px 16px;border:1px solid var(--line);border-radius:8px;display:flex;flex-wrap:wrap;align-items:end;gap:var(--s2)}
@@ -268,7 +269,7 @@ main h1{font-size:1.5rem}
 .graph-filter-form{max-width:var(--measure)}
 .typeopts{display:flex;flex-wrap:wrap;gap:0 var(--s5)}
 label.check{display:inline-flex;align-items:center;gap:var(--s2);min-height:44px;margin:0;font-size:var(--text-base);font-weight:var(--w-body);color:var(--fg)}
-label.check input{margin:0}
+label.check input{margin:0;width:20px;height:20px}
 .graph-filter-form legend{font-size:var(--text-base)}
 .graph-selects{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5)}
 .graph-selects label{flex:0 1 14rem;margin:var(--s3) 0 0}
@@ -302,7 +303,7 @@ label.check input{margin:0}
 .legend li{display:inline-flex;align-items:center;gap:var(--s2);min-height:28px}
 .graph-panel h2{margin:0 0 var(--s1);overflow-wrap:anywhere}
 details.fold{border-top:1px solid var(--line);margin-top:var(--s3)}
-details.fold>summary{display:flex;align-items:center;min-height:44px;font-weight:var(--w-strong);cursor:pointer}
+details.fold>summary{display:flex;align-items:center;min-height:44px;color:var(--accent);cursor:pointer}
 details.fold[open]>summary{margin-bottom:var(--s1)}
 .panel-type{display:flex;align-items:center;gap:var(--s2);margin:0 0 var(--s3);color:var(--muted);font-size:var(--text-sm);font-weight:var(--w-label)}
 .rels,.mentions{margin:0;padding:0;list-style:none}
@@ -391,3 +392,5 @@ details.more .home-bullets{margin-top:var(--s1)}
 .conn-actions form:has(>[aria-describedby]){display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s3)}
 .conn-actions form:not(.revoke-panel):not(.rename-panel)>.note{margin:0;min-width:0;overflow-wrap:anywhere}
 .act a,.actions a{display:inline-flex;align-items:center;min-height:44px}
+
+@media (max-width:560px){.vault-filter label{flex-basis:100%}}

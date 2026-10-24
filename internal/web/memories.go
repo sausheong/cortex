@@ -746,7 +746,11 @@ func (s *server) accountGet(w http.ResponseWriter, r *http.Request, u SessionUse
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, r, http.StatusOK, "account", accountView{Usage: us, MB: strconv.FormatFloat(float64(us.Bytes)/(1<<20), 'f', 2, 64)})
+	mb := "Under 0.01 MB"
+	if us.Bytes >= (1<<20)/100 {
+		mb = strconv.FormatFloat(float64(us.Bytes)/(1<<20), 'f', 2, 64) + " MB"
+	}
+	s.render(w, r, http.StatusOK, "account", accountView{Usage: us, MB: mb})
 }
 
 func (s *server) accountDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {

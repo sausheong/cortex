@@ -27,7 +27,7 @@
     <p class="note group-help">The model that reads new memories and picks out the people, places and facts in them.</p>
     <label>Provider
       <select name="provider"{{if eq .ErrField "provider"}} aria-invalid="true"{{end}}>
-        <option value="openai-compatible" {{if eq .S.Provider "openai-compatible"}}selected{{end}}>OpenAI-compatible (OpenAI, OpenRouter, local servers)</option>
+        <option value="openai-compatible" {{if eq .S.Provider "openai-compatible"}}selected{{end}}>OpenAI or compatible</option>
         <option value="anthropic" {{if eq .S.Provider "anthropic"}}selected{{end}}>Anthropic</option>
       </select></label>
     <label>API address (Base URL) <input name="base_url" value="{{.S.BaseURL}}" placeholder="https://api.openai.com/v1" aria-describedby="err-base h-base"{{if eq .ErrField "base_url"}} aria-invalid="true"{{end}}></label>
