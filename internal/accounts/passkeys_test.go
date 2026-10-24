@@ -3,6 +3,7 @@ package accounts
 import (
 	"context"
 	"errors"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 	"time"
@@ -650,5 +651,56 @@ func TestMigrateBootstrapSkipsEnrolledOwner(t *testing.T) {
 	}
 	if n := p.count(t, `SELECT count(*) FROM cortex_meta WHERE key = 'bootstrap_migrated'`); n != 0 {
 		t.Fatal("marker set for an enrolled owner")
+	}
+}
+
+func TestBootstrapDoesNotRecreateTunnelTokenAfterEncryption(t *testing.T) {
+	p := newPK(t)
+	ctx := context.Background()
+	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
+		t.Fatal(err)
+	}
+	p.user = cortex.BootstrapUserID
+	res, _, _ := p.enrollAndConfirm(t)
+	defer res.UK.Zero()
+	if _, err := p.st.DB.ExecContext(ctx, `DELETE FROM cortex_meta WHERE key = 'bootstrap_migrated'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
+		t.Fatal(err)
+	}
+	if n := p.count(t, `SELECT count(*) FROM agent_tokens`); n != 0 {
+		t.Fatalf("%d tunnel tokens recreated after encryption", n)
+	}
+}
+
+func TestStaticTokenRejectedForEncryptedUser(t *testing.T) {
+	p := newPK(t)
+	ctx := context.Background()
+	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
+		t.Fatal(err)
+	}
+	p.st.SetStaticToken("tunnel-token")
+	p.user = cortex.BootstrapUserID
+	res, _, _ := p.enrollAndConfirm(t)
+	defer res.UK.Zero()
+	if _, _, _, err := p.st.ResolveBearer(ctx, "tunnel-token"); !errors.Is(err, model.ErrStaticTokenDisabled) {
+		t.Fatalf("got %v, want ErrStaticTokenDisabled", err)
+	}
+	if _, _, _, err := p.st.ResolveBearer(ctx, "some-other-token"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("unrelated token: got %v", err)
+	}
+}
+
+func TestStaticTokenStillWorksForLegacyUser(t *testing.T) {
+	p := newPK(t)
+	ctx := context.Background()
+	if err := MigrateBootstrap(ctx, p.st, bootEnv()); err != nil {
+		t.Fatal(err)
+	}
+	p.st.SetStaticToken("tunnel-token")
+	uid, _, uk, err := p.st.ResolveBearer(ctx, "tunnel-token")
+	if err != nil || uid != cortex.BootstrapUserID || uk != nil {
+		t.Fatalf("uid=%q uk=%v err=%v", uid, uk, err)
 	}
 }

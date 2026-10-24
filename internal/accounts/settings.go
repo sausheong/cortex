@@ -153,6 +153,21 @@ type Store struct {
 	// Passkey configuration; set once at startup by ConfigurePasskeys.
 	wa       *webauthn.WebAuthn
 	enrollOn bool
+
+	// staticHash is HashToken(CORTEX_AUTH_TOKEN) when one is configured; it
+	// lets ResolveBearer say why a retired static token no longer works.
+	staticHash string
+}
+
+// SetStaticToken records the operator's static CORTEX_AUTH_TOKEN so that
+// presenting it after its owner encrypted yields model.ErrStaticTokenDisabled
+// rather than a bare invalid-token answer. Call once at startup.
+func (st *Store) SetStaticToken(tok string) {
+	if tok == "" {
+		st.staticHash = ""
+		return
+	}
+	st.staticHash = HashToken(tok)
 }
 
 func (st *Store) now() time.Time {

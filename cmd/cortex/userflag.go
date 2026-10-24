@@ -65,6 +65,37 @@ func accountStore(db *sql.DB, env map[string]string) (*accounts.Store, error) {
 	return &accounts.Store{DB: db, Sealer: sealer, AllowPrivate: env["CORTEX_ALLOW_PRIVATE_PROVIDERS"] == "1"}, nil
 }
 
+// errEncryptedUser is what admin commands that read content say for an
+// encrypted (or migrating) user. cortex holds no key for them on the CLI.
+var errEncryptedUser = errors.New("this user is encrypted; cortex cannot read their content without their key")
+
+// refuseEncrypted returns errEncryptedUser when the user's encryption_state is
+// not 'none'. An unknown user passes (the caller reports it).
+func refuseEncrypted(ctx context.Context, db *sql.DB, userID string) error {
+	var state string
+	err := db.QueryRowContext(ctx, `SELECT encryption_state FROM users WHERE id = $1`, userID).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if state != "none" {
+		return errEncryptedUser
+	}
+	return nil
+}
+
+// refuseEncryptedDSN is refuseEncrypted over a short-lived connection.
+func refuseEncryptedDSN(ctx context.Context, dsn, userID string) error {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return refuseEncrypted(ctx, db, userID)
+}
+
 // openUserCortex opens the database and returns a handle for the --user
 // reference built from that user's own provider settings (never the
 // operator's environment keys).
@@ -80,6 +111,11 @@ func openUserCortex(ctx context.Context, dsn, ref string, env map[string]string)
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	if err := refuseEncrypted(ctx, db, u.ID); err != nil {
+		db.Close()
 		root.Close()
 		return nil, err
 	}

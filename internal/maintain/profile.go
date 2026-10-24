@@ -181,7 +181,7 @@ func (c Ops) distillBucketErr(ctx context.Context, name, instruction string, mem
 	out, err := llmutil.RetryLLM(ctx, func() (string, error) { return c.Cfg.LLM.Summarize(ctx, texts) })
 	if err != nil {
 		if c.Cfg.Logf != nil {
-			c.Cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
+			c.Cfg.Logf("cortex: profile distill: %v; falling back to raw", err)
 		}
 		return raw, false, err
 	}

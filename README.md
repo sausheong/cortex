@@ -443,9 +443,11 @@ anthropicllm.NewLLM("sk-ant-...", anthropicllm.WithModel("claude-haiku-4-5"))
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | embedding model |
 | `EMBEDDING_DIMS` | `512` | vector size, fixed once the database is initialised |
 | `CORTEX_TRANSPORT`, `CORTEX_ADDR` | `stdio`, `127.0.0.1:8080` | `cortex mcp` transport and address |
-| `CORTEX_AUTH_TOKEN` | | bearer token for HTTP MCP |
+| `CORTEX_AUTH_TOKEN` | | bearer token for HTTP MCP; applies only to unenrolled users (once the owner enrolls a passkey the static token stops working and agents use tokens minted in Connections) |
 | `CORTEX_SECRET_KEY` | | encrypts per-user provider keys (`serve`, `--user`) |
 | `CORTEX_ENCRYPTION_ENROLL` | `1` | passkey enrollment and the owner encryption migration (`serve`); `0` turns it off. Backups and dumps made before a user migrates still hold plaintext; see [docs/ops/deploy.md](docs/ops/deploy.md) |
+
+`CORTEX_AUTH_TOKEN` and `CORTEX_PROVIDER_API_KEY` apply only to unenrolled users. For an encrypted user, `cortex users list` shows metadata only, and commands that read content (`recall`, `export`, `lint`, `maintain`, `reconcile`, `relate`, `decay`, `expire`, `normalize`, `profile`, `import-sqlite`) refuse with "this user is encrypted; cortex cannot read their content without their key".
 
 The provider variables configure single-user CLI and MCP use. On the multi-user service each user's settings hold their provider; see [docs/ops/deploy.md](docs/ops/deploy.md) for the service's variables.
 

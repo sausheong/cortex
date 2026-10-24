@@ -133,11 +133,13 @@ Global options:
 Commands:
   serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
   migrate [--timeout 30m]        Apply database migrations and report the versions
-  users list                     List users (ID, email, created, usage)
+  users list                     List users (ID, email, created, status, usage); metadata only, never content.
+                                 Commands that read content refuse encrypted users
   users set-provider --user <id|verified-email> [--provider openai-compatible|anthropic] [--base-url URL]
                      [--chat-model M] [--embed-model M] [--embed-dims N] [--embed-base-url URL] [--skip-test]
                                  Set a user's AI provider settings. API key from stdin (line 1; line 2 = embed key)
-                                 or CORTEX_PROVIDER_API_KEY / CORTEX_PROVIDER_EMBED_API_KEY; never argv
+                                 or CORTEX_PROVIDER_API_KEY / CORTEX_PROVIDER_EMBED_API_KEY; never argv.
+                                 CORTEX_PROVIDER_API_KEY and CORTEX_AUTH_TOKEN apply only to unenrolled users
   init                           Initialize the Postgres schema and set the owner
   remember <text>                Remember text
   recall <query> [--min-confidence <0-1>]
@@ -184,6 +186,12 @@ Commands:
 func openCortex() *cortex.Cortex {
 	if userRef != "" {
 		return openUserCortexOrExit(userRef)
+	}
+	// The env-built handle acts as the bootstrap user; refuse once that owner
+	// is encrypted (cortex has no key for them here).
+	if err := refuseEncryptedDSN(context.Background(), requireDSN(), cortex.BootstrapUserID); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 	provider := os.Getenv("LLM_PROVIDER") // "openai" (default) or "anthropic"
 	modelName := os.Getenv("LLM_MODEL")

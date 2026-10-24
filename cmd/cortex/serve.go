@@ -71,6 +71,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		return nil, fmt.Errorf("cortex serve: open database: %w", err)
 	}
 	st := &accounts.Store{DB: db, Sealer: sealer, AllowPrivate: env["CORTEX_ALLOW_PRIVATE_PROVIDERS"] == "1"}
+	st.SetStaticToken(env["CORTEX_AUTH_TOKEN"])
 	cleanup := func() { db.Close(); root.Close() }
 
 	if err := accounts.MigrateBootstrap(ctx, st, env); err != nil {

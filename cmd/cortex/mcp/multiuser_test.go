@@ -18,6 +18,7 @@ import (
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/extractor/deterministic"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
@@ -437,5 +438,30 @@ func TestLegacyHTTPRequiresToken(t *testing.T) {
 	buildHTTPMux(s, "tok").ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`)))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("/mcp without token: %d, want 401", rec.Code)
+	}
+}
+
+func TestStaticTokenRejectedForEncryptedUserHTTP(t *testing.T) {
+	e := newMUEnv(t)
+	e.st.SetStaticToken("tunnel-secret")
+	if _, err := e.st.DB.ExecContext(t.Context(), `UPDATE users SET encryption_state='encrypted' WHERE id=$1`, cortex.BootstrapUserID); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/mcp", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer tunnel-secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+		t.Fatalf("status %d ct %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	var body struct{ Error string }
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error != model.ErrStaticTokenDisabled.Error() {
+		t.Fatalf("error text %q", body.Error)
 	}
 }

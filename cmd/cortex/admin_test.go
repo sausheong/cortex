@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -190,5 +191,77 @@ func TestMigrateCommandReportsVersions(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "[1 2 3 4 5 6 7 8 9 10 11]") || !strings.Contains(out, "elapsed:") {
 		t.Fatalf("output: %q", out)
+	}
+}
+
+// TestAdminCommandsRefuseEncryptedUser re-executes the test binary as the CLI
+// for every content-reading command, against an encrypted owner and an
+// encrypted --user, and expects the fixed message and exit 1.
+func TestAdminCommandsRefuseEncryptedUser(t *testing.T) {
+	if args := os.Getenv("CORTEX_TEST_CLI_ARGS"); args != "" {
+		os.Args = append([]string{"cortex"}, strings.Split(args, "|")...)
+		main()
+		return
+	}
+	root, dsn := adminRoot(t)
+	ctx := t.Context()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	u, err := root.CreateUser(ctx, "enc1", "enc@x.test", "Enc", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE users SET encryption_state='encrypted' WHERE id IN ($1,$2)`, u.ID, cortex.BootstrapUserID); err != nil {
+		t.Fatal(err)
+	}
+	want := "this user is encrypted; cortex cannot read their content without their key"
+	cmds := [][]string{{"recall", "q"}, {"export", "--dry-run"}, {"lint"}, {"maintain", "--user", u.ID}, {"reconcile"},
+		{"relate"}, {"decay", "--dry-run"}, {"expire", "--dry-run"}, {"normalize", "--dry-run"}, {"profile"},
+		{"import-sqlite", "x.db"}, {"entity", "list"}, {"recall", "--user", u.ID, "q"}, {"profile", "--user", u.ID}}
+	for _, c := range cmds {
+		t.Run(strings.Join(c, "_"), func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestAdminCommandsRefuseEncryptedUser$")
+			cmd.Env = append(os.Environ(), "CORTEX_TEST_CLI_ARGS="+strings.Join(c, "|"),
+				"CORTEX_DATABASE_URL="+dsn, "CORTEX_SECRET_KEY="+strings.Repeat("ab", 32), "OPENAI_API_KEY=")
+			out, err := cmd.CombinedOutput()
+			ee, ok := err.(*exec.ExitError)
+			if !ok || ee.ExitCode() != 1 {
+				t.Fatalf("want exit 1, got %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), want) {
+				t.Fatalf("missing message:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestUsersCommandShowsOnlyMetadata(t *testing.T) {
+	root, dsn := adminRoot(t)
+	ctx := t.Context()
+	u, err := root.CreateUser(ctx, "enc2", "enc2@x.test", "Enc Two", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `UPDATE users SET encryption_state='encrypted' WHERE id=$1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := listUsers(ctx, root, &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, u.ID) || !strings.Contains(out, "enc2@x.test") {
+		t.Fatalf("metadata missing:\n%s", out)
+	}
+	if strings.Contains(out, "this user is encrypted") {
+		t.Fatalf("list must not refuse:\n%s", out)
 	}
 }

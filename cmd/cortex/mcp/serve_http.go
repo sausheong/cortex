@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"errors"
@@ -96,6 +97,12 @@ func NewHTTPHandler(s *server.MCPServer, resolve Resolver, publicURL string, fai
 		case err == nil:
 		case errors.Is(err, accounts.ErrInvalidToken):
 			deny(w, r)
+			return
+		case errors.Is(err, model.ErrStaticTokenDisabled):
+			w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+meta+`"`)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": model.ErrStaticTokenDisabled.Error()})
 			return
 		case errors.Is(err, accounts.ErrNoProvider),
 			errors.Is(err, model.ErrNeedsReconnect), errors.Is(err, model.ErrTokenExpired), errors.Is(err, model.ErrLocked):

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/workset"
@@ -368,6 +369,13 @@ func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connI
 		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
+		// The retired static owner token: its seeded row is gone once the
+		// bootstrap user enrolled, so say why instead of "invalid".
+		if st.staticHash != "" && h == st.staticHash {
+			if state, serr := st.encState(ctx, cortex.BootstrapUserID); serr == nil && state != "none" {
+				return "", "", nil, model.ErrStaticTokenDisabled
+			}
+		}
 		return "", "", nil, ErrInvalidToken
 	}
 	if err != nil {

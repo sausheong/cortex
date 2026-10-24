@@ -140,7 +140,7 @@ func (c Ops) AddAliasQuiet(ctx context.Context, entityID, kind, value, source st
 		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
 		 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 		c.UserID, entityID, kind, strings.TrimSpace(value), norm, source); err != nil {
-		c.Logf("cortex: record alias %q: %v", value, err)
+		c.Logf("cortex: record alias for entity %s: %v", entityID, err)
 	}
 }
 
@@ -352,7 +352,7 @@ func (c Ops) Resolve(ctx context.Context, mention, typ string, attrs map[string]
 	}
 	choice, err := dis.DisambiguateEntity(ctx, model.EntityMention{Name: mention, Type: typ, Context: rc.Content}, ents)
 	if err != nil {
-		c.Logf("cortex: disambiguate %q: %v", mention, err)
+		c.Logf("cortex: disambiguate: %v", err)
 		return res, nil
 	}
 	if choice.ID == "" || choice.Confidence < llmMinConfidence {
