@@ -162,7 +162,8 @@ h2.day{margin:0 0 var(--s2);font-size:var(--text-base);font-weight:var(--w-stron
 .memlist .empty{padding:var(--s5) 0}
 .memlist.batches li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s2) var(--s4);padding:var(--s3) 0}
 .seltoolbar{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);padding:var(--s2) 0;margin-top:var(--s3);background:var(--bg);border-bottom:1px solid var(--line)}
-.js .seltoolbar:not(.has-sel){display:none}
+.js .seltoolbar:not(.has-sel) .selon,.js .seltoolbar:not(.has-sel) .selcount{display:none}
+.selmore{margin-left:auto}
 .js .js-hide{display:none}
 .selcount{font-weight:var(--w-strong)}
 .pager{margin:var(--s4) 0 0}
@@ -242,7 +243,6 @@ main h1{font-size:1.5rem}
 .conn-row{grid-template-columns:1fr}
 .pager a{display:inline-flex;align-items:center;min-height:44px}
 }
-.selall{margin:var(--s3) 0 0}
 .selact{display:inline-flex;align-items:center;min-height:44px;color:var(--accent)}
 .selact[hidden]{display:none}
 
