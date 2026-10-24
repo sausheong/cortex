@@ -18,6 +18,8 @@ const (
 // memory's last_decay_at (or created_at if never decayed) and the anchor is
 // advanced to now on each applied pass, so the operation composes: running it
 // on any cadence converges to the same confidence for a given memory age.
+// A memory recall has surfaced (see WithTrackAccess) decays from its last
+// access instead, so memories in use fade slower than ones nobody asks for.
 // Pruning is soft (expired_at only, invalid_at left NULL) — the memory is
 // system-retired, not marked false; it stays reachable via as_of /
 // include_invalid. Dry-run computes the report without writing anything.
@@ -31,7 +33,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 	report := DecayReport{DryRun: cfg.dryRun}
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, content, confidence, created_at, last_decay_at
+		`SELECT id, content, confidence, created_at, last_decay_at, last_accessed_at
 		 FROM memories
 		 WHERE user_id = ? AND deleted_at IS NULL AND `+currentlyValidClause("")+` AND NOT static`,
 		c.userID,
@@ -51,14 +53,19 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 		var id, content string
 		var conf float64
 		var createdAt time.Time
-		var lastDecay sql.NullTime
-		if err := rows.Scan(&id, &content, &conf, &createdAt, &lastDecay); err != nil {
+		var lastDecay, lastAccess sql.NullTime
+		if err := rows.Scan(&id, &content, &conf, &createdAt, &lastDecay, &lastAccess); err != nil {
 			rows.Close()
 			return DecayReport{}, fmt.Errorf("cortex: decay scan row: %w", err)
 		}
 		anchor := createdAt
 		if lastDecay.Valid {
 			anchor = lastDecay.Time
+		}
+		// Use restarts the clock: a memory recall surfaced since the last
+		// pass decays only from that access.
+		if lastAccess.Valid && lastAccess.Time.After(anchor) {
+			anchor = lastAccess.Time
 		}
 		cands = append(cands, candidate{id: id, content: content, conf: conf, anchor: anchor})
 	}

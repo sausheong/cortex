@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -111,28 +112,31 @@ func queryNgrams(query string) []string {
 }
 
 // neighbourhood returns every entity within hops of the seeds, with its
-// distance. The owner is not walked through unless it is itself a seed: it
-// touches nearly everything, so expanding it would boost the whole graph.
-func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int) (map[string]int, error) {
+// distance, over the relationships that hold under mode (now by default).
+// The owner is not walked through unless it is itself a seed: it touches
+// nearly everything, so expanding it would boost the whole graph.
+func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mode temporalMode) (map[string]int, error) {
 	dist := map[string]int{}
 	if len(seeds) == 0 {
 		return dist, nil
 	}
 	ownerID, _ := c.OwnerEntityID(ctx)
+	validity, vargs := edgeValidityClause("r", mode.includeInvalid, mode.asOf)
+	args := append([]any{seeds, c.userID}, vargs...)
+	args = append(args, hops, ownerID, c.userID)
 	rows, err := c.db.QueryContext(ctx,
 		`WITH RECURSIVE walk(id, depth) AS (
 		   SELECT unnest(?::text[]), 0
 		   UNION
 		   SELECT CASE WHEN r.source_id = w.id THEN r.target_id ELSE r.source_id END, w.depth + 1
 		   FROM walk w
-		   JOIN relationships r ON r.user_id = ? AND r.deleted_at IS NULL AND `+currentEdgeClause("r")+`
+		   JOIN relationships r ON r.user_id = ? AND r.deleted_at IS NULL AND `+validity+`
 		    AND (r.source_id = w.id OR r.target_id = w.id)
 		   WHERE w.depth < ? AND (w.depth = 0 OR w.id <> ?)
 		 )
 		 SELECT w.id, min(w.depth) FROM walk w
 		 JOIN entities e ON e.id = w.id AND e.user_id = ? AND e.deleted_at IS NULL
-		 GROUP BY w.id`,
-		seeds, c.userID, hops, ownerID, c.userID)
+		 GROUP BY w.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: neighbourhood: %w", err)
 	}
@@ -148,19 +152,13 @@ func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int) (m
 	return dist, rows.Err()
 }
 
-// currentEdgeClause is the predicate for a relationship that holds now. It
-// is a hook for edge validity windows; every live edge holds until then.
-func currentEdgeClause(alias string) string {
-	return "TRUE"
-}
-
 // graphContext is what one Recall knows about the entities its query names.
 type graphContext struct {
 	seeds []string
 	dist  map[string]int
 }
 
-func (c *Cortex) buildGraphContext(ctx context.Context, query string) graphContext {
+func (c *Cortex) buildGraphContext(ctx context.Context, query string, mode temporalMode) graphContext {
 	seeds, err := c.querySeeds(ctx, query)
 	if err != nil {
 		c.logf("cortex: recall graph seeds: %v", err)
@@ -169,7 +167,7 @@ func (c *Cortex) buildGraphContext(ctx context.Context, query string) graphConte
 	if len(seeds) == 0 {
 		return graphContext{}
 	}
-	dist, err := c.neighbourhood(ctx, seeds, seedHops)
+	dist, err := c.neighbourhood(ctx, seeds, seedHops, mode)
 	if err != nil {
 		c.logf("cortex: recall graph neighbourhood: %v", err)
 		return graphContext{seeds: seeds}
@@ -242,4 +240,67 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 		}
 	}
 	return items, results
+}
+
+// popularityCap bounds how much access history can lift a memory's score,
+// so frequently-recalled memories cannot crowd out better matches.
+const popularityCap = 0.15
+
+// popularity is the score multiplier for a memory recalled n times before:
+// 1 + 0.05·log2(1+n), capped at 1 + popularityCap.
+func popularity(n int) float64 {
+	if n <= 0 {
+		return 1
+	}
+	return 1 + math.Min(popularityCap, 0.05*math.Log2(1+float64(n)))
+}
+
+// accessCounts loads access_count for the memory keys ("mem:<id>") among
+// items, keyed by key.
+func (c *Cortex) accessCounts(ctx context.Context, items []rankedItem) map[string]int {
+	var ids []string
+	for _, it := range items {
+		if id, ok := strings.CutPrefix(it.id, "mem:"); ok {
+			ids = append(ids, id)
+		}
+	}
+	out := map[string]int{}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, access_count FROM memories WHERE user_id = ? AND id = ANY(?) AND access_count > 0`, c.userID, ids)
+	if err != nil {
+		c.logf("cortex: recall access counts: %v", err)
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return out
+		}
+		out["mem:"+id] = n
+	}
+	return out
+}
+
+// markAccessed records that recall returned these results: each memory's
+// access_count goes up by one and last_accessed_at moves to now.
+func (c *Cortex) markAccessed(ctx context.Context, results []Result) {
+	var ids []string
+	for _, r := range results {
+		if r.Type == "memory" {
+			ids = append(ids, r.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if _, err := c.db.ExecContext(ctx,
+		`UPDATE memories SET access_count = access_count + 1, last_accessed_at = now()
+		 WHERE user_id = ? AND id = ANY(?)`, c.userID, ids); err != nil {
+		c.logf("cortex: record recall access: %v", err)
+	}
 }

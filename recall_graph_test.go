@@ -111,7 +111,7 @@ func TestNeighbourhood_DoesNotWalkThroughOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := c.neighbourhood(ctx, []string{a.ID}, 2)
+	got, err := c.neighbourhood(ctx, []string{a.ID}, 2, temporalMode{})
 	if err != nil {
 		t.Fatal(err)
 	}

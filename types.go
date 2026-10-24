@@ -31,6 +31,11 @@ type Relationship struct {
 	// repeat sighting increments it instead of inserting a duplicate row.
 	EvidenceCount int       `json:"evidence_count"`
 	LastSeenAt    time.Time `json:"last_seen_at"`
+	// ValidAt is when the relationship began (nil = unknown, treated as
+	// always); InvalidAt when it ended (nil = still holds). A closed edge
+	// stays in the graph for history and as-of reads.
+	ValidAt   *time.Time `json:"valid_at,omitempty"`
+	InvalidAt *time.Time `json:"invalid_at,omitempty"`
 }
 
 type Chunk struct {
@@ -355,6 +360,7 @@ type recallConfig struct {
 	includeInvalid bool       // true → no validity filter (include retired memories)
 	rerank         bool       // true → post-fusion MMR diversity rerank (default off; see WithRerank)
 	noGraph        bool       // true → skip graph seeds and proximity boost (see WithGraph)
+	trackAccess    bool       // true → count returned memories as accessed (see WithTrackAccess)
 }
 
 // RerankLambda is the MMR tradeoff: relevance weight vs. diversity weight.
@@ -408,19 +414,50 @@ func WithGraph(on bool) RecallOption {
 	return func(c *recallConfig) { c.noGraph = !on }
 }
 
+// WithTrackAccess records the memories this recall returns as accessed
+// (access_count, last_accessed_at). Use it where results reach an agent or a
+// person, not for benchmarks: access lifts ranking slightly and restarts a
+// memory's decay clock.
+func WithTrackAccess() RecallOption {
+	return func(c *recallConfig) { c.trackAccess = true }
+}
+
 type RelFilter func(*relFilterConfig)
 type relFilterConfig struct {
-	relType string
+	relType        string
+	asOf           *time.Time
+	includeInvalid bool
 }
 
 func RelTypeFilter(t string) RelFilter {
 	return func(c *relFilterConfig) { c.relType = t }
 }
 
+// RelAsOf returns the relationships as they held at t instead of now.
+func RelAsOf(t time.Time) RelFilter {
+	return func(c *relFilterConfig) { c.asOf = &t }
+}
+
+// RelIncludeInvalid returns ended relationships as well as current ones.
+func RelIncludeInvalid() RelFilter {
+	return func(c *relFilterConfig) { c.includeInvalid = true }
+}
+
 type TraverseOption func(*traverseConfig)
 type traverseConfig struct {
-	depth     int
-	edgeTypes []string
+	depth      int
+	edgeTypes  []string
+	relFilters []RelFilter
+}
+
+// WithTraverseAsOf walks the relationships as they held at t.
+func WithTraverseAsOf(t time.Time) TraverseOption {
+	return func(c *traverseConfig) { c.relFilters = append(c.relFilters, RelAsOf(t)) }
+}
+
+// WithTraverseIncludeInvalid walks ended relationships as well.
+func WithTraverseIncludeInvalid() TraverseOption {
+	return func(c *traverseConfig) { c.relFilters = append(c.relFilters, RelIncludeInvalid()) }
 }
 
 func WithDepth(d int) TraverseOption {

@@ -162,7 +162,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Graph-aware recall: seed from the entities the query names.
 	var graph graphContext
 	if !cfg.noGraph {
-		graph = c.buildGraphContext(ctx, query)
+		graph = c.buildGraphContext(ctx, query, mode)
 		if items, results := c.recallSeedMemories(ctx, graph, cfg.limit, mode); len(items) > 0 {
 			lists = append(lists, items)
 			for k, v := range results {
@@ -192,13 +192,19 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// last. A defensive negative (only reachable via direct struct misuse) is
 	// floored to 0.
 	// The graph proximity boost multiplies in too: a result linked to an
-	// entity the query names (or one near it) ranks higher.
+	// entity the query names (or one near it) ranks higher. So does a small,
+	// capped lift for memories recall has surfaced before.
+	accessed := c.accessCounts(ctx, merged)
 	weightedScore := func(rawScore float64, r Result) float64 {
 		conf := r.Confidence
 		if conf < 0 {
 			conf = 0
 		}
-		return rawScore * conf * graph.boost(r.EntityIDs)
+		key := "mem:" + r.ID
+		if r.Type != "memory" {
+			key = ""
+		}
+		return rawScore * conf * graph.boost(r.EntityIDs) * popularity(accessed[key])
 	}
 
 	final := make([]Result, 0, len(merged))
@@ -270,6 +276,9 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		final = final[:cfg.limit]
 	}
 
+	if cfg.trackAccess {
+		c.markAccessed(ctx, final)
+	}
 	return final, nil
 }
 
@@ -489,7 +498,7 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
 	// Seed from the entities the sub-query names, then list each seed and
 	// its neighbours, nearest first, summarised with their relationships.
-	g := c.buildGraphContext(ctx, query)
+	g := c.buildGraphContext(ctx, query, temporalMode{})
 	if len(g.seeds) == 0 {
 		return nil, nil
 	}

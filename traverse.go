@@ -49,7 +49,7 @@ func (c *Cortex) Traverse(ctx context.Context, startID string, opts ...TraverseO
 		var nextFrontier []string
 
 		for _, entityID := range frontier {
-			rels, err := c.GetRelationships(ctx, entityID)
+			rels, err := c.GetRelationships(ctx, entityID, cfg.relFilters...)
 			if err != nil {
 				return nil, fmt.Errorf("cortex: traverse relationships: %w", err)
 			}

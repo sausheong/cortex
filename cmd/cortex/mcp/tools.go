@@ -72,7 +72,7 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			} else {
 				out.Profile = contextProfile{Static: []string{}, Dynamic: []string{}}
 			}
-			rr, err := cx.RecallWithStrength(ctx, question, cortex.WithLimit(8))
+			rr, err := cx.RecallWithStrength(ctx, question, cortex.WithLimit(8), cortex.WithTrackAccess())
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -159,7 +159,7 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			var opts []cortex.RecallOption
+			opts := []cortex.RecallOption{cortex.WithTrackAccess()}
 			if limit := req.GetInt("limit", 0); limit > 0 {
 				opts = append(opts, cortex.WithLimit(limit))
 			}
