@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/vecmath"
@@ -315,7 +316,7 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 		return "", model.NotFound("cortex: compaction source not found")
 	}
 
-	batchID, err := newBatch(ctx, tx, c.h.UserID, "compaction")
+	batchID, err := graph.NewBatch(ctx, tx, c.h.UserID, "compaction")
 	if err != nil {
 		return "", err
 	}

@@ -168,3 +168,12 @@ Root testdata/ was referenced by no Go test, script or doc, so it was moved to e
 - Only `TestRebind`, `TestMigrationNamesAreIntegers` and `TestMigration007FoldsDuplicateRelationships` moved to `internal/store`. The other migration tests (`TestMigration002*`) need the root API (`Open`, `SearchMemoryVector`) or share a fixture with such a test, so they stay in root and use whitebox wrappers `migrate`/`migrateUpTo` in `whitebox_test.go`.
 - `WithGeneration` also copied the handle by value; it now deep-copies the `Handle` like `ForUser` and `WithConnection`.
 - `Cortex.AppliedMigrations` forwards to `Handle.AppliedMigrations`; the 13 tenancy methods are forwarded from `api_tenancy.go`.
+
+## Stage 5 notes
+
+- `internal/graph` imports only `llmutil`, `model`, `ontology`, `store`, `tenancy` and `vecmath`. Identifiers were qualified with a throwaway go/ast program, and the root forwarders in `api_entities.go`, `api_relationships.go`, `api_softdelete.go` and `api_graphquality.go` were generated from the method signatures (docs preserved). Root also forwards `DetectAliasKind`, `NameSimilarity`, `FormatDisambiguation`, `ParseEntityChoice`, `RenderNormalizeMarkdown` and `DisambiguatePrompt`.
+- Exported for later root code: `Resolve`, `IngestEntity`, `SoftDeleteEntityTx`, `AddAliasQuiet`, `NewBatch`, `EdgeValidityClause`, `ResolveContext` (fields `Content`, `OwnerSpeaks`). The internal 4-argument `softDeleteEntity(ctx, id, by, kind)` became `SoftDeleteEntityKind` because the public 3-argument `SoftDeleteEntity` already owns the plain name.
+- Root `contains` calls became `slices.Contains`.
+- Tests moved: `TestNameSimilarity`, `TestDetectAliasKindAndNormalize` and `TestNormalizeType` (now using `ontology.NormalizeType`). No new whitebox wrappers were needed since no root test calls the moved unexported methods.
+- `Ops` is only ever a per-call value; no struct field or goroutine holds one.
+- apidiff: only the known `RelationshipVerbs` element type difference plus the alias-to-internal reports.

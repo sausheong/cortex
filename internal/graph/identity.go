@@ -1,4 +1,4 @@
-package cortex
+package graph
 
 import (
 	"context"
@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
@@ -28,13 +30,13 @@ func DetectAliasKind(value string) string {
 	v := strings.TrimSpace(value)
 	switch {
 	case emailRe.MatchString(v):
-		return AliasEmail
+		return model.AliasEmail
 	case strings.HasPrefix(v, "@") && len(v) > 1 && !strings.ContainsAny(v, " \t"):
-		return AliasHandle
+		return model.AliasHandle
 	case isPhoneLike(v):
-		return AliasPhone
+		return model.AliasPhone
 	default:
-		return AliasName
+		return model.AliasName
 	}
 }
 
@@ -58,7 +60,7 @@ func isPhoneLike(v string) bool {
 func normalizeAlias(kind, value string) string {
 	v := strings.TrimSpace(value)
 	switch kind {
-	case AliasPhone:
+	case model.AliasPhone:
 		var b strings.Builder
 		for i, r := range v {
 			if unicode.IsDigit(r) || (r == '+' && i == 0) {
@@ -66,7 +68,7 @@ func normalizeAlias(kind, value string) string {
 			}
 		}
 		return b.String()
-	case AliasHandle:
+	case model.AliasHandle:
 		return strings.ToLower(strings.TrimPrefix(v, "@"))
 	default:
 		return strings.ToLower(spaceRe.ReplaceAllString(v, " "))
@@ -77,8 +79,8 @@ func normalizeAlias(kind, value string) string {
 // Alias* constants; empty means detect it with DetectAliasKind. Adding an
 // alias the entity already has is a no-op; one that belongs to another live
 // entity fails with ErrAliasTaken.
-func (c *Cortex) AddAlias(ctx context.Context, entityID, kind, value string) error {
-	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, entityID); err != nil {
+func (c Ops) AddAlias(ctx context.Context, entityID, kind, value string) error {
+	if err := store.RequireEntity(ctx, c.DB, c.UserID, entityID); err != nil {
 		return err
 	}
 	if kind == "" {
@@ -89,51 +91,51 @@ func (c *Cortex) AddAlias(ctx context.Context, entityID, kind, value string) err
 		return fmt.Errorf("cortex: empty alias")
 	}
 	var owner string
-	err := c.h.DB.QueryRowContext(ctx,
+	err := c.DB.QueryRowContext(ctx,
 		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
 		 VALUES (?, ?, ?, ?, ?, 'user')
 		 ON CONFLICT (user_id, kind, value_norm) DO UPDATE SET
 		   entity_id = CASE WHEN EXISTS (SELECT 1 FROM entities e WHERE e.id = entity_aliases.entity_id AND e.deleted_at IS NULL)
 		                    THEN entity_aliases.entity_id ELSE EXCLUDED.entity_id END
 		 RETURNING entity_id`,
-		c.h.UserID, entityID, kind, strings.TrimSpace(value), norm,
+		c.UserID, entityID, kind, strings.TrimSpace(value), norm,
 	).Scan(&owner)
 	if err != nil {
 		return fmt.Errorf("cortex: add alias: %w", err)
 	}
 	if owner != entityID {
-		return ErrAliasTaken
+		return model.ErrAliasTaken
 	}
 	return nil
 }
 
-// addAliasQuiet records an alias learned during ingest. It never moves an
+// AddAliasQuiet records an alias learned during ingest. It never moves an
 // alias that already exists and never fails the ingest over one.
-func (c *Cortex) addAliasQuiet(ctx context.Context, entityID, kind, value, source string) {
+func (c Ops) AddAliasQuiet(ctx context.Context, entityID, kind, value, source string) {
 	norm := normalizeAlias(kind, value)
 	if norm == "" {
 		return
 	}
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := c.DB.ExecContext(ctx,
 		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
 		 VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		c.h.UserID, entityID, kind, strings.TrimSpace(value), norm, source); err != nil {
-		c.h.Logf("cortex: record alias %q: %v", value, err)
+		c.UserID, entityID, kind, strings.TrimSpace(value), norm, source); err != nil {
+		c.Logf("cortex: record alias %q: %v", value, err)
 	}
 }
 
 // Aliases returns the identifiers recorded for an entity.
-func (c *Cortex) Aliases(ctx context.Context, entityID string) ([]Alias, error) {
-	rows, err := c.h.DB.QueryContext(ctx,
+func (c Ops) Aliases(ctx context.Context, entityID string) ([]model.Alias, error) {
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT entity_id, kind, value, COALESCE(source, ''), created_at FROM entity_aliases
-		 WHERE user_id = ? AND entity_id = ? ORDER BY kind, value_norm`, c.h.UserID, entityID)
+		 WHERE user_id = ? AND entity_id = ? ORDER BY kind, value_norm`, c.UserID, entityID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list aliases: %w", err)
 	}
 	defer rows.Close()
-	var out []Alias
+	var out []model.Alias
 	for rows.Next() {
-		var a Alias
+		var a model.Alias
 		if err := rows.Scan(&a.EntityID, &a.Kind, &a.Value, &a.Source, &a.CreatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan alias: %w", err)
 		}
@@ -143,13 +145,13 @@ func (c *Cortex) Aliases(ctx context.Context, entityID string) ([]Alias, error) 
 }
 
 // RemoveAlias deletes an alias. kind empty means detect it from value.
-func (c *Cortex) RemoveAlias(ctx context.Context, kind, value string) error {
+func (c Ops) RemoveAlias(ctx context.Context, kind, value string) error {
 	if kind == "" {
 		kind = DetectAliasKind(value)
 	}
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := c.DB.ExecContext(ctx,
 		`DELETE FROM entity_aliases WHERE user_id = ? AND kind = ? AND value_norm = ?`,
-		c.h.UserID, kind, normalizeAlias(kind, value)); err != nil {
+		c.UserID, kind, normalizeAlias(kind, value)); err != nil {
 		return fmt.Errorf("cortex: remove alias: %w", err)
 	}
 	return nil
@@ -179,27 +181,27 @@ var (
 
 // isSelfMention reports whether key (a normalised name) refers to the owner
 // given who is speaking.
-func isSelfMention(key string, rc *resolveContext) bool {
-	return userMentions[key] || (rc.ownerSpeaks && firstPerson[key])
+func isSelfMention(key string, rc *ResolveContext) bool {
+	return userMentions[key] || (rc.OwnerSpeaks && firstPerson[key])
 }
 
 // ResolveEntity resolves a mention to the stored entity it most likely names,
 // without creating anything or consulting an LLM. typ narrows name matching
 // to one (normalised) type; empty matches any type. Identifier aliases
 // (email, phone, handle) match regardless of type.
-func (c *Cortex) ResolveEntity(ctx context.Context, mention, typ string) (*Resolution, error) {
-	rc := &resolveContext{}
+func (c Ops) ResolveEntity(ctx context.Context, mention, typ string) (*model.Resolution, error) {
+	rc := &ResolveContext{}
 	if typ != "" {
-		typ, _ = CanonicalEntityType(typ)
+		typ, _ = ontology.CanonicalEntityType(typ)
 	}
-	return c.resolve(ctx, mention, typ, nil, rc, false)
+	return c.Resolve(ctx, mention, typ, nil, rc, false)
 }
 
-// resolveContext carries what one Remember call knows while it resolves its
+// ResolveContext carries what one Remember call knows while it resolves its
 // entities: the source text, entities resolved so far, and the owner.
-type resolveContext struct {
-	content     string
-	ownerSpeaks bool // the text is in the owner's voice
+type ResolveContext struct {
+	Content     string
+	OwnerSpeaks bool // the text is in the owner's voice
 	resolved    []string
 	ownerID     string
 	ownerNames  map[string]bool
@@ -207,28 +209,28 @@ type resolveContext struct {
 }
 
 // owner loads the owner entity and the names it goes by, once per context.
-func (c *Cortex) owner(ctx context.Context, rc *resolveContext) (string, map[string]bool) {
+func (c Ops) owner(ctx context.Context, rc *ResolveContext) (string, map[string]bool) {
 	if rc.ownerReady {
 		return rc.ownerID, rc.ownerNames
 	}
 	rc.ownerReady = true
 	rc.ownerNames = map[string]bool{}
-	id, err := tenancy.New(c.h).OwnerEntityID(ctx)
+	id, err := tenancy.New(c.Handle).OwnerEntityID(ctx)
 	if err != nil {
 		return "", rc.ownerNames
 	}
 	var entName, userName, email sql.NullString
-	if err := c.h.DB.QueryRowContext(ctx,
+	if err := c.DB.QueryRowContext(ctx,
 		`SELECT e.name, u.name, u.email FROM users u JOIN entities e ON e.id = u.owner_entity_id
-		 WHERE u.id = ? AND e.deleted_at IS NULL`, c.h.UserID).Scan(&entName, &userName, &email); err != nil {
+		 WHERE u.id = ? AND e.deleted_at IS NULL`, c.UserID).Scan(&entName, &userName, &email); err != nil {
 		return "", rc.ownerNames
 	}
 	for _, n := range []string{entName.String, userName.String} {
-		if k := normalizeAlias(AliasName, n); k != "" {
+		if k := normalizeAlias(model.AliasName, n); k != "" {
 			rc.ownerNames[k] = true
 		}
 	}
-	if k := normalizeAlias(AliasEmail, email.String); k != "" {
+	if k := normalizeAlias(model.AliasEmail, email.String); k != "" {
 		rc.ownerNames[k] = true
 	}
 	rc.ownerID = id
@@ -238,25 +240,25 @@ func (c *Cortex) owner(ctx context.Context, rc *resolveContext) (string, map[str
 // resolve runs the resolution cascade: identifier and name aliases, the
 // owner, an exact name, then fuzzy name similarity with a proximity prior,
 // and — when allowed and inconclusive — an EntityDisambiguator.
-func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[string]any, rc *resolveContext, useLLM bool) (*Resolution, error) {
+func (c Ops) Resolve(ctx context.Context, mention, typ string, attrs map[string]any, rc *ResolveContext, useLLM bool) (*model.Resolution, error) {
 	mention = strings.TrimSpace(mention)
 	if mention == "" {
-		return &Resolution{}, nil
+		return &model.Resolution{}, nil
 	}
 
 	// 1. Aliases: identifiers in the mention or its attributes, then names.
 	if e, err := c.matchAlias(ctx, mention, typ, attrs); err != nil || e != nil {
-		return &Resolution{Entity: e, Method: ResolvedByAlias, Score: 1}, err
+		return &model.Resolution{Entity: e, Method: model.ResolvedByAlias, Score: 1}, err
 	}
 
 	// 2. The owner, by self-reference or by one of the owner's names.
 	if typ == "" || typ == "person" {
 		ownerID, names := c.owner(ctx, rc)
-		key := normalizeAlias(AliasName, mention)
+		key := normalizeAlias(model.AliasName, mention)
 		if ownerID != "" && (isSelfMention(key, rc) || names[key]) {
 			e, err := c.GetEntity(ctx, ownerID)
 			if err == nil {
-				return &Resolution{Entity: e, Method: ResolvedByOwner, Score: 1}, nil
+				return &model.Resolution{Entity: e, Method: model.ResolvedByOwner, Score: 1}, nil
 			}
 		}
 	}
@@ -265,7 +267,7 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	if typ != "" {
 		e, err := c.findSameEntity(ctx, mention, typ)
 		if err != nil || e != nil {
-			return &Resolution{Entity: e, Method: ResolvedByExact, Score: 1}, err
+			return &model.Resolution{Entity: e, Method: model.ResolvedByExact, Score: 1}, err
 		}
 	}
 
@@ -273,9 +275,9 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	// near what this extraction has already resolved.
 	cands, err := c.fuzzyCandidates(ctx, mention, typ, rc)
 	if err != nil || len(cands) == 0 {
-		return &Resolution{}, err
+		return &model.Resolution{}, err
 	}
-	res := &Resolution{Candidates: cands}
+	res := &model.Resolution{Candidates: cands}
 	best := cands[0]
 	runnerUp := 0.0
 	if len(cands) > 1 {
@@ -283,27 +285,27 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	}
 	if best.Score >= fuzzyAutoLink && best.Score-runnerUp >= fuzzyMargin {
 		e := best.Entity
-		res.Entity, res.Method, res.Score = &e, ResolvedByFuzzy, best.Score
+		res.Entity, res.Method, res.Score = &e, model.ResolvedByFuzzy, best.Score
 		return res, nil
 	}
 	if !useLLM || best.Score < fuzzyAsk {
 		return res, nil
 	}
-	dis, ok := c.h.Cfg.LLM.(EntityDisambiguator)
-	if c.h.Cfg.LLM == nil || !ok {
+	dis, ok := c.Cfg.LLM.(model.EntityDisambiguator)
+	if c.Cfg.LLM == nil || !ok {
 		return res, nil
 	}
 	top := cands
 	if len(top) > disambiguateTopK {
 		top = top[:disambiguateTopK]
 	}
-	ents := make([]Entity, len(top))
+	ents := make([]model.Entity, len(top))
 	for i, s := range top {
 		ents[i] = s.Entity
 	}
-	choice, err := dis.DisambiguateEntity(ctx, EntityMention{Name: mention, Type: typ, Context: rc.content}, ents)
+	choice, err := dis.DisambiguateEntity(ctx, model.EntityMention{Name: mention, Type: typ, Context: rc.Content}, ents)
 	if err != nil {
-		c.h.Logf("cortex: disambiguate %q: %v", mention, err)
+		c.Logf("cortex: disambiguate %q: %v", mention, err)
 		return res, nil
 	}
 	if choice.ID == "" || choice.Confidence < llmMinConfidence {
@@ -312,7 +314,7 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	for _, s := range top {
 		if s.Entity.ID == choice.ID {
 			e := s.Entity
-			res.Entity, res.Method, res.Score = &e, ResolvedByLLM, choice.Confidence
+			res.Entity, res.Method, res.Score = &e, model.ResolvedByLLM, choice.Confidence
 			return res, nil
 		}
 	}
@@ -322,16 +324,16 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 // identifierAttrKeys are extracted-entity attribute keys that carry an
 // identifier worth matching and remembering as an alias.
 var identifierAttrKeys = map[string]string{
-	"email": AliasEmail, "email_address": AliasEmail,
-	"phone": AliasPhone, "phone_number": AliasPhone, "mobile": AliasPhone,
-	"handle": AliasHandle, "username": AliasHandle,
+	"email": model.AliasEmail, "email_address": model.AliasEmail,
+	"phone": model.AliasPhone, "phone_number": model.AliasPhone, "mobile": model.AliasPhone,
+	"handle": model.AliasHandle, "username": model.AliasHandle,
 }
 
 // identifiers lists the (kind, value) identifiers in a mention and its
 // attributes.
 func identifiers(mention string, attrs map[string]any) [][2]string {
 	var out [][2]string
-	if k := DetectAliasKind(mention); k != AliasName {
+	if k := DetectAliasKind(mention); k != model.AliasName {
 		out = append(out, [2]string{k, mention})
 	}
 	for key, kind := range identifierAttrKeys {
@@ -346,14 +348,14 @@ func identifiers(mention string, attrs map[string]any) [][2]string {
 // match any type; a name alias must be of the same kind as typ when typ is
 // given. An alias naming several live entities is ambiguous and matches
 // nothing.
-func (c *Cortex) matchAlias(ctx context.Context, mention, typ string, attrs map[string]any) (*Entity, error) {
+func (c Ops) matchAlias(ctx context.Context, mention, typ string, attrs map[string]any) (*model.Entity, error) {
 	conds := []string{"(a.kind = 'name' AND a.value_norm = ?)"}
-	args := []any{c.h.UserID, normalizeAlias(AliasName, mention)}
+	args := []any{c.UserID, normalizeAlias(model.AliasName, mention)}
 	for _, id := range identifiers(mention, attrs) {
 		conds = append(conds, "(a.kind = ? AND a.value_norm = ?)")
 		args = append(args, id[0], normalizeAlias(id[0], id[1]))
 	}
-	rows, err := c.h.DB.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT a.entity_id, a.kind, e.type FROM entity_aliases a
 		 JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
 		 WHERE a.user_id = ? AND (`+strings.Join(conds, " OR ")+`)`, args...)
@@ -367,7 +369,7 @@ func (c *Cortex) matchAlias(ctx context.Context, mention, typ string, attrs map[
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan alias match: %w", err)
 		}
-		if kind != AliasName || kindMatches(t, typ) {
+		if kind != model.AliasName || kindMatches(t, typ) {
 			ids[id] = true
 		}
 	}
@@ -387,7 +389,7 @@ func (c *Cortex) matchAlias(ctx context.Context, mention, typ string, attrs map[
 // fuzzyCandidates scores stored entities whose names share a word with the
 // mention, best first. Scores are name similarity plus proximityBoost for an
 // entity one hop from the owner or from an entity this extraction resolved.
-func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *resolveContext) ([]ScoredEntity, error) {
+func (c Ops) fuzzyCandidates(ctx context.Context, mention, typ string, rc *ResolveContext) ([]model.ScoredEntity, error) {
 	var likes []string
 	for _, w := range strings.Fields(strings.ToLower(mention)) {
 		w = strings.Trim(w, ".,;:!?()[]{}\"'")
@@ -398,16 +400,16 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 	if len(likes) == 0 {
 		return nil, nil
 	}
-	rows, err := c.h.DB.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT id, type, name, confidence FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) LIKE ANY(?)
-		 LIMIT `+fmt.Sprint(fuzzyCandidates), c.h.UserID, likes)
+		 LIMIT `+fmt.Sprint(fuzzyCandidates), c.UserID, likes)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
 	}
-	var out []ScoredEntity
+	var out []model.ScoredEntity
 	for rows.Next() {
-		var e Entity
+		var e model.Entity
 		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &e.Confidence); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan candidate: %w", err)
@@ -416,7 +418,7 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 			continue
 		}
 		if s := NameSimilarity(mention, e.Name); s > 0 {
-			out = append(out, ScoredEntity{Entity: e, Score: s})
+			out = append(out, model.ScoredEntity{Entity: e, Score: s})
 		}
 	}
 	rows.Close()
@@ -443,16 +445,16 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 }
 
 // neighbours returns the entities one live relationship away from any of ids.
-func (c *Cortex) neighbours(ctx context.Context, ids []string) (map[string]bool, error) {
+func (c Ops) neighbours(ctx context.Context, ids []string) (map[string]bool, error) {
 	near := map[string]bool{}
 	if len(ids) == 0 {
 		return near, nil
 	}
-	rows, err := c.h.DB.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT CASE WHEN source_id = ANY(?) THEN target_id ELSE source_id END
 		 FROM relationships
 		 WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ANY(?) OR target_id = ANY(?))`,
-		ids, c.h.UserID, ids, ids)
+		ids, c.UserID, ids, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -546,7 +548,7 @@ Return ONLY valid JSON, no markdown:
 
 // FormatDisambiguation renders a mention and its candidates as the user
 // message for DisambiguatePrompt.
-func FormatDisambiguation(m EntityMention, candidates []Entity) string {
+func FormatDisambiguation(m model.EntityMention, candidates []model.Entity) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Mention: %q (type: %s)\n\nText:\n%s\n\nCandidates:\n", m.Name, m.Type, m.Context)
 	for _, e := range candidates {
@@ -557,7 +559,7 @@ func FormatDisambiguation(m EntityMention, candidates []Entity) string {
 
 // ParseEntityChoice parses a reply to DisambiguatePrompt, tolerating a
 // markdown code fence.
-func ParseEntityChoice(raw string) (EntityChoice, error) {
+func ParseEntityChoice(raw string) (model.EntityChoice, error) {
 	raw = strings.TrimSpace(raw)
 	if strings.HasPrefix(raw, "```") {
 		lines := strings.Split(raw, "\n")
@@ -565,9 +567,9 @@ func ParseEntityChoice(raw string) (EntityChoice, error) {
 			raw = strings.Join(lines[1:len(lines)-1], "\n")
 		}
 	}
-	var ch EntityChoice
+	var ch model.EntityChoice
 	if err := json.Unmarshal([]byte(raw), &ch); err != nil {
-		return EntityChoice{}, fmt.Errorf("cortex: parse entity choice: %w", err)
+		return model.EntityChoice{}, fmt.Errorf("cortex: parse entity choice: %w", err)
 	}
 	return ch, nil
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
@@ -125,7 +126,7 @@ func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mo
 		return dist, nil
 	}
 	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
-	validity, vargs := edgeValidityClause("r", mode.IncludeInvalid, mode.AsOf)
+	validity, vargs := graph.EdgeValidityClause("r", mode.IncludeInvalid, mode.AsOf)
 	args := append([]any{seeds, c.h.UserID}, vargs...)
 	args = append(args, hops, ownerID, c.h.UserID)
 	rows, err := c.h.DB.QueryContext(ctx,

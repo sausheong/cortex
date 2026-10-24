@@ -1,4 +1,4 @@
-package cortex
+package graph
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 	"github.com/sausheong/cortex/internal/tenancy"
 )
 
@@ -22,28 +23,28 @@ import (
 //     folding any edge that becomes identical to a live one.
 //
 // RestoreBatch with the report's BatchID undoes the whole run.
-func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (NormalizeReport, error) {
+func (c Ops) NormalizeGraph(ctx context.Context, opts ...model.NormalizeOption) (model.NormalizeReport, error) {
 	cfg := &model.NormalizeConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
-	report := NormalizeReport{DryRun: cfg.DryRun, UnmappedVerbs: map[string]int{}}
+	report := model.NormalizeReport{DryRun: cfg.DryRun, UnmappedVerbs: map[string]int{}}
 
-	tx, err := c.h.DB.BeginTx(ctx, nil)
+	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return report, fmt.Errorf("cortex: begin normalize: %w", err)
 	}
 	defer tx.Rollback()
-	batchID, err := newBatch(ctx, tx, c.h.UserID, "normalize")
+	batchID, err := NewBatch(ctx, tx, c.UserID, "normalize")
 	if err != nil {
 		return report, err
 	}
 	mo := mergeOpts{batchID: batchID, by: "normalize", sameKind: true}
 
-	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
+	ownerID, _ := tenancy.New(c.Handle).OwnerEntityID(ctx)
 	ownerNames := map[string]bool{}
 	if ownerID != "" {
-		_, ownerNames = c.owner(ctx, &resolveContext{})
+		_, ownerNames = c.owner(ctx, &ResolveContext{})
 	}
 
 	// 1. Retype entities.
@@ -56,7 +57,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 	rows, err := tx.QueryContext(ctx,
 		`SELECT e.id, e.name, e.type, COALESCE(e.attributes, 'null'::jsonb)::text,
 		        (SELECT count(*) FROM memory_entities me WHERE me.user_id = e.user_id AND me.entity_id = e.id)
-		 FROM entities e WHERE e.user_id = ? AND e.deleted_at IS NULL ORDER BY e.created_at, e.id`, c.h.UserID)
+		 FROM entities e WHERE e.user_id = ? AND e.deleted_at IS NULL ORDER BY e.created_at, e.id`, c.UserID)
 	if err != nil {
 		return report, fmt.Errorf("cortex: normalize scan entities: %w", err)
 	}
@@ -86,9 +87,9 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 	groups := map[string][]*ent{}
 	var keys []string
 	for _, e := range ents {
-		canonical, known := CanonicalEntityType(e.typ)
+		canonical, known := ontology.CanonicalEntityType(e.typ)
 		if !known {
-			if label := NormalizeType(e.typ); label != "" && label != TypeConcept {
+			if label := ontology.NormalizeType(e.typ); label != "" && label != ontology.TypeConcept {
 				if e.attrs == nil {
 					e.attrs = map[string]any{}
 				}
@@ -100,7 +101,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		}
 		e.typ = canonical
 		k := canonical + "\x00" + strings.ToLower(strings.TrimSpace(e.name))
-		if canonical == TypePerson && ownerLive && ownerNames[normalizeAlias(AliasName, e.name)] {
+		if canonical == ontology.TypePerson && ownerLive && ownerNames[normalizeAlias(model.AliasName, e.name)] {
 			k = "owner"
 		}
 		if _, ok := groups[k]; !ok {
@@ -114,12 +115,12 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 	// system once is one thing. With several specific groups it stays apart.
 	specific := map[string][]string{} // lower name -> non-concept group keys
 	for _, k := range keys {
-		if typ, name, ok := strings.Cut(k, "\x00"); ok && typ != TypeConcept {
+		if typ, name, ok := strings.Cut(k, "\x00"); ok && typ != ontology.TypeConcept {
 			specific[name] = append(specific[name], k)
 		}
 	}
 	for _, k := range keys {
-		if typ, name, ok := strings.Cut(k, "\x00"); ok && typ == TypeConcept && len(specific[name]) == 1 {
+		if typ, name, ok := strings.Cut(k, "\x00"); ok && typ == ontology.TypeConcept && len(specific[name]) == 1 {
 			target := specific[name][0]
 			groups[target] = append(groups[target], groups[k]...)
 			groups[k] = nil
@@ -143,30 +144,30 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		keep := g[0]
 		// The group's type is its specific one when a concept was folded in.
 		for _, e := range g {
-			if e.typ != TypeConcept {
+			if e.typ != ontology.TypeConcept {
 				keep.typ = e.typ
 				break
 			}
 		}
 		for _, drop := range g[1:] {
-			if _, err := mergeEntitiesTx(ctx, tx, c.h.UserID, keep.id, drop.id, mo); err != nil {
+			if _, err := mergeEntitiesTx(ctx, tx, c.UserID, keep.id, drop.id, mo); err != nil {
 				return report, fmt.Errorf("cortex: normalize merge %q into %q: %w", drop.name, keep.name, err)
 			}
-			report.Merged = append(report.Merged, MergedEntity{KeepID: keep.id, DropID: drop.id, Name: keep.name, DropName: drop.name, Type: keep.typ})
+			report.Merged = append(report.Merged, model.MergedEntity{KeepID: keep.id, DropID: drop.id, Name: keep.name, DropName: drop.name, Type: keep.typ})
 		}
 		if keep.typ != keep.orig {
-			report.Retyped = append(report.Retyped, RetypedEntity{ID: keep.id, Name: keep.name, From: keep.orig, To: keep.typ})
+			report.Retyped = append(report.Retyped, model.RetypedEntity{ID: keep.id, Name: keep.name, From: keep.orig, To: keep.typ})
 		}
 		if keep.typ == keep.orig && !keep.labelled {
 			continue
 		}
-		if err := recordChanges(ctx, tx, mo, c.h.UserID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keep.id, c.h.UserID); err != nil {
+		if err := recordChanges(ctx, tx, mo, c.UserID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keep.id, c.UserID); err != nil {
 			return report, err
 		}
 		// Re-read attributes: the merges above may have added provenance.
 		var attrs string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COALESCE(attributes, 'null'::jsonb)::text FROM entities WHERE id = ? AND user_id = ?`, keep.id, c.h.UserID).Scan(&attrs); err != nil {
+			`SELECT COALESCE(attributes, 'null'::jsonb)::text FROM entities WHERE id = ? AND user_id = ?`, keep.id, c.UserID).Scan(&attrs); err != nil {
 			return report, fmt.Errorf("cortex: normalize reload %q: %w", keep.name, err)
 		}
 		var current map[string]any
@@ -185,7 +186,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE entities SET type = ?, attributes = ?::jsonb WHERE id = ? AND user_id = ?`,
-			keep.typ, string(attrsJSON), keep.id, c.h.UserID); err != nil {
+			keep.typ, string(attrsJSON), keep.id, c.UserID); err != nil {
 			return report, fmt.Errorf("cortex: normalize retype %q: %w", keep.name, err)
 		}
 	}
@@ -201,7 +202,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		 FROM relationships r
 		 JOIN entities s ON s.id = r.source_id
 		 JOIN entities t ON t.id = r.target_id
-		 WHERE r.user_id = ? AND r.deleted_at IS NULL ORDER BY r.created_at, r.id`, c.h.UserID)
+		 WHERE r.user_id = ? AND r.deleted_at IS NULL ORDER BY r.created_at, r.id`, c.UserID)
 	if err != nil {
 		return report, fmt.Errorf("cortex: normalize scan relationships: %w", err)
 	}
@@ -221,7 +222,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		return report, fmt.Errorf("cortex: normalize scan relationships: %w", err)
 	}
 	for _, r := range rels {
-		verb, swap, label := CanonicalRelation(r.typ, r.srcType, r.tgtType)
+		verb, swap, label := ontology.CanonicalRelation(r.typ, r.srcType, r.tgtType)
 		src, tgt := r.src, r.tgt
 		if swap {
 			src, tgt = tgt, src
@@ -229,7 +230,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		if verb == r.typ && !swap {
 			continue
 		}
-		if verb == RelRelatedTo && label != "" {
+		if verb == ontology.RelRelatedTo && label != "" {
 			report.UnmappedVerbs[label]++
 		}
 		attrs := r.attrs
@@ -246,19 +247,19 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		err := tx.QueryRowContext(ctx,
 			`SELECT id FROM relationships WHERE user_id = ? AND deleted_at IS NULL
 			   AND source_id = ? AND target_id = ? AND type = ? AND id <> ?`,
-			c.h.UserID, src, tgt, verb, r.id).Scan(&twin)
+			c.UserID, src, tgt, verb, r.id).Scan(&twin)
 		if err == nil {
-			if err := recordChanges(ctx, tx, mo, c.h.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", twin, c.h.UserID); err != nil {
+			if err := recordChanges(ctx, tx, mo, c.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", twin, c.UserID); err != nil {
 				return report, err
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE relationships SET evidence_count = evidence_count + ? WHERE id = ? AND user_id = ?`,
-				r.evidence, twin, c.h.UserID); err != nil {
+				r.evidence, twin, c.UserID); err != nil {
 				return report, fmt.Errorf("cortex: normalize fold relationship: %w", err)
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE relationships SET deleted_at = now(), deleted_by = 'normalize', delete_batch_id = ? WHERE id = ? AND user_id = ?`,
-				batchID, r.id, c.h.UserID); err != nil {
+				batchID, r.id, c.UserID); err != nil {
 				return report, fmt.Errorf("cortex: normalize drop folded relationship: %w", err)
 			}
 			report.RelationshipsFolded++
@@ -268,12 +269,12 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		if err != nil {
 			return report, fmt.Errorf("cortex: marshal relationship attributes: %w", err)
 		}
-		if err := recordChanges(ctx, tx, mo, c.h.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", r.id, c.h.UserID); err != nil {
+		if err := recordChanges(ctx, tx, mo, c.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", r.id, c.UserID); err != nil {
 			return report, err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE relationships SET type = ?, source_id = ?, target_id = ?, attributes = ?::jsonb WHERE id = ? AND user_id = ?`,
-			verb, src, tgt, string(attrsJSON), r.id, c.h.UserID); err != nil {
+			verb, src, tgt, string(attrsJSON), r.id, c.UserID); err != nil {
 			return report, fmt.Errorf("cortex: normalize retype relationship: %w", err)
 		}
 		report.RelationshipsRetyped++
@@ -293,7 +294,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 }
 
 // RenderNormalizeMarkdown renders a NormalizeReport for the CLI.
-func RenderNormalizeMarkdown(r NormalizeReport) string {
+func RenderNormalizeMarkdown(r model.NormalizeReport) string {
 	var b strings.Builder
 	if r.DryRun {
 		b.WriteString("# Graph normalisation (dry run — nothing written)\n\n")

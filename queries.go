@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/tenancy"
@@ -149,7 +150,7 @@ func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]
 		maxHops = maxPathHops
 	}
 	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
-	validity, vargs := edgeValidityClause("r", false, nil)
+	validity, vargs := graph.EdgeValidityClause("r", false, nil)
 	const next = `CASE WHEN r.source_id = w.node THEN r.target_id ELSE r.source_id END`
 	args := []any{fromID, fromID, c.h.UserID}
 	args = append(args, vargs...)
@@ -385,7 +386,7 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 // an identifier used as its name is kept as an alias. The verb is mapped
 // onto the curated vocabulary as in Remember.
 func (c *Cortex) Link(ctx context.Context, r LinkRequest) (*NamedEdge, error) {
-	rc := &resolveContext{}
+	rc := &graph.ResolveContext{}
 	src, err := c.linkEnd(ctx, r.Source, r.SourceType, r.Provenance, rc)
 	if err != nil {
 		return nil, err
@@ -414,7 +415,7 @@ func (c *Cortex) Link(ctx context.Context, r LinkRequest) (*NamedEdge, error) {
 }
 
 // linkEnd finds or creates one end of a Link.
-func (c *Cortex) linkEnd(ctx context.Context, ref, typ, provenance string, rc *resolveContext) (*Entity, error) {
+func (c *Cortex) linkEnd(ctx context.Context, ref, typ, provenance string, rc *graph.ResolveContext) (*Entity, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("cortex: empty entity reference")
@@ -426,7 +427,7 @@ func (c *Cortex) linkEnd(ctx context.Context, ref, typ, provenance string, rc *r
 	if typ != "" {
 		canonical, _ = CanonicalEntityType(typ)
 	}
-	res, err := c.resolve(ctx, ref, canonical, nil, rc, false)
+	res, err := graph.New(c.h).Resolve(ctx, ref, canonical, nil, rc, false)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +442,7 @@ func (c *Cortex) linkEnd(ctx context.Context, ref, typ, provenance string, rc *r
 		return nil, err
 	}
 	if kind := DetectAliasKind(ref); kind != AliasName {
-		c.addAliasQuiet(ctx, e.ID, kind, ref, "link")
+		graph.New(c.h).AddAliasQuiet(ctx, e.ID, kind, ref, "link")
 	}
 	return e, nil
 }

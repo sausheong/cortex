@@ -1,4 +1,4 @@
-package cortex
+package graph
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 )
 
-// ingestEntity stores an extracted entity, reusing the stored entity it
+// IngestEntity stores an extracted entity, reusing the stored entity it
 // refers to rather than creating a near-duplicate. The type is mapped onto
 // the curated set first (CanonicalEntityType); an unknown label becomes
 // concept with the label kept in the "type_label" attribute. Resolution runs the
@@ -20,9 +21,9 @@ import (
 // confidence keeps the higher value, e.ID is set to the stored entity, and a
 // differing extracted name is remembered as an alias. Identifiers found in
 // the attributes (email, phone, handle) are recorded as aliases either way.
-func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext) error {
-	canonical, known := CanonicalEntityType(e.Type)
-	if label := NormalizeType(e.Type); !known && label != "" {
+func (c Ops) IngestEntity(ctx context.Context, e *model.Entity, rc *ResolveContext) error {
+	canonical, known := ontology.CanonicalEntityType(e.Type)
+	if label := ontology.NormalizeType(e.Type); !known && label != "" {
 		if e.Attributes == nil {
 			e.Attributes = map[string]any{}
 		}
@@ -32,7 +33,7 @@ func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext
 	}
 	e.Type = canonical
 	extracted := e.Name
-	res, err := c.resolve(ctx, e.Name, e.Type, e.Attributes, rc, true)
+	res, err := c.Resolve(ctx, e.Name, e.Type, e.Attributes, rc, true)
 	if err != nil {
 		return err
 	}
@@ -44,14 +45,14 @@ func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext
 		if err := c.absorbIntoEntity(ctx, res.Entity, e); err != nil {
 			return err
 		}
-		if res.Method != ResolvedByExact && normalizeAlias(AliasName, extracted) != normalizeAlias(AliasName, e.Name) &&
-			!userMentions[normalizeAlias(AliasName, extracted)] && !firstPerson[normalizeAlias(AliasName, extracted)] &&
-			DetectAliasKind(extracted) == AliasName {
-			c.addAliasQuiet(ctx, e.ID, AliasName, extracted, "ingest")
+		if res.Method != model.ResolvedByExact && normalizeAlias(model.AliasName, extracted) != normalizeAlias(model.AliasName, e.Name) &&
+			!userMentions[normalizeAlias(model.AliasName, extracted)] && !firstPerson[normalizeAlias(model.AliasName, extracted)] &&
+			DetectAliasKind(extracted) == model.AliasName {
+			c.AddAliasQuiet(ctx, e.ID, model.AliasName, extracted, "ingest")
 		}
 	}
 	for _, id := range identifiers(extracted, e.Attributes) {
-		c.addAliasQuiet(ctx, e.ID, id[0], id[1], "ingest")
+		c.AddAliasQuiet(ctx, e.ID, id[0], id[1], "ingest")
 	}
 	rc.resolved = append(rc.resolved, e.ID)
 	return nil
@@ -60,12 +61,12 @@ func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext
 // findSameEntity returns the live entity named name (ignoring case) whose
 // type is of the same kind as typ (see kindMatches), preferring an exact
 // name, or nil.
-func (c *Cortex) findSameEntity(ctx context.Context, name, typ string) (*Entity, error) {
-	rows, err := c.h.DB.QueryContext(ctx,
+func (c Ops) findSameEntity(ctx context.Context, name, typ string) (*model.Entity, error) {
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT id, type FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) = lower(?)
 		 ORDER BY (name = ?) DESC, created_at, id`,
-		c.h.UserID, name, name)
+		c.UserID, name, name)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find entity: %w", err)
 	}
@@ -99,19 +100,19 @@ func kindMatches(stored, typ string) bool {
 	if typ == "" {
 		return true
 	}
-	st := NormalizeType(stored)
+	st := ontology.NormalizeType(stored)
 	if st == typ {
 		return true
 	}
-	sc, _ := CanonicalEntityType(st)
-	tc, _ := CanonicalEntityType(typ)
-	return sc == tc || sc == TypeConcept || tc == TypeConcept
+	sc, _ := ontology.CanonicalEntityType(st)
+	tc, _ := ontology.CanonicalEntityType(typ)
+	return sc == tc || sc == ontology.TypeConcept || tc == ontology.TypeConcept
 }
 
 // absorbIntoEntity folds an extracted entity into the stored one it matched:
 // missing attribute keys are added, confidence keeps the higher value, and
 // a non-owner source is refreshed. e.ID and e.Name take the stored values.
-func (c *Cortex) absorbIntoEntity(ctx context.Context, stored, e *Entity) error {
+func (c Ops) absorbIntoEntity(ctx context.Context, stored, e *model.Entity) error {
 	attrs := stored.Attributes
 	if attrs == nil {
 		attrs = map[string]any{}
@@ -130,11 +131,11 @@ func (c *Cortex) absorbIntoEntity(ctx context.Context, stored, e *Entity) error 
 		conf = stored.Confidence
 	}
 	now := time.Now().UTC()
-	if _, err := c.h.DB.ExecContext(ctx,
+	if _, err := c.DB.ExecContext(ctx,
 		`UPDATE entities SET attributes = ?::jsonb, confidence = ?, updated_at = ?,
 		   source = CASE WHEN source = 'owner' OR ? = '' THEN source ELSE ? END
 		 WHERE id = ? AND user_id = ?`,
-		string(attrsJSON), conf, now, e.Source, e.Source, stored.ID, c.h.UserID,
+		string(attrsJSON), conf, now, e.Source, e.Source, stored.ID, c.UserID,
 	); err != nil {
 		return fmt.Errorf("cortex: update entity: %w", err)
 	}

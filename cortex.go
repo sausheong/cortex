@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/ontology"
@@ -41,17 +43,17 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// for resolving relationships and memory links.
 	nameToID := make(map[string]string)
 	var entityIDs []string // distinct, in extraction order
-	rc := &resolveContext{content: llmutil.TruncateRunes(content, 2000), ownerSpeaks: ownerVoice(cfg.Speaker, cfg.Source)}
+	rc := &graph.ResolveContext{Content: llmutil.TruncateRunes(content, 2000), OwnerSpeaks: ownerVoice(cfg.Speaker, cfg.Source)}
 	for i := range extraction.Entities {
 		e := &extraction.Entities[i]
 		if cfg.Source != "" && e.Source == "" {
 			e.Source = cfg.Source
 		}
 		extracted := e.Name
-		if err := c.ingestEntity(ctx, e, rc); err != nil {
+		if err := graph.New(c.h).IngestEntity(ctx, e, rc); err != nil {
 			return fmt.Errorf("cortex: store entity %q: %w", extracted, err)
 		}
-		if !contains(entityIDs, e.ID) {
+		if !slices.Contains(entityIDs, e.ID) {
 			entityIDs = append(entityIDs, e.ID)
 		}
 		nameToID[nameKey(extracted)] = e.ID
@@ -184,7 +186,7 @@ func nameKey(name string) string { return ontology.NormKey(name) }
 func memoryEntityIDs(about []string, nameToID map[string]string, all []string) []string {
 	var ids []string
 	for _, name := range about {
-		if id, ok := nameToID[nameKey(name)]; ok && !contains(ids, id) {
+		if id, ok := nameToID[nameKey(name)]; ok && !slices.Contains(ids, id) {
 			ids = append(ids, id)
 		}
 	}
@@ -202,7 +204,7 @@ func memoryEntityIDs(about []string, nameToID map[string]string, all []string) [
 // recalled.
 func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 	if f.EntityID != "" {
-		_, err := c.softDeleteEntity(ctx, f.EntityID, "user", "forget")
+		_, err := graph.New(c.h).SoftDeleteEntityKind(ctx, f.EntityID, "user", "forget")
 		return err
 	}
 	if f.Source == "" {
@@ -234,12 +236,12 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	batchID, err := newBatch(ctx, tx, c.h.UserID, "forget")
+	batchID, err := graph.NewBatch(ctx, tx, c.h.UserID, "forget")
 	if err != nil {
 		return err
 	}
 	for _, id := range ids {
-		if err := c.softDeleteEntityTx(ctx, tx, batchID, "user", id); err != nil {
+		if err := graph.New(c.h).SoftDeleteEntityTx(ctx, tx, batchID, "user", id); err != nil {
 			return err
 		}
 	}

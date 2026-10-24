@@ -1,10 +1,11 @@
-package cortex
+package graph
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 )
 
 // contains reports whether ss contains s.
@@ -21,14 +22,14 @@ func contains(ss []string, s string) bool {
 // graph. It respects the configured depth (default 1) and optional edge type
 // filters. Returns a Graph containing all visited entities and traversed
 // relationships. Cycles are avoided via a visited set.
-func (c *Cortex) Traverse(ctx context.Context, startID string, opts ...TraverseOption) (*Graph, error) {
+func (c Ops) Traverse(ctx context.Context, startID string, opts ...model.TraverseOption) (*model.Graph, error) {
 	cfg := &model.TraverseConfig{Depth: 1}
 	for _, o := range opts {
 		o(cfg)
 	}
 	edgeTypes := make([]string, len(cfg.EdgeTypes))
 	for i, t := range cfg.EdgeTypes {
-		edgeTypes[i] = NormalizeType(t)
+		edgeTypes[i] = ontology.NormalizeType(t)
 	}
 
 	// Get the start entity.
@@ -37,9 +38,9 @@ func (c *Cortex) Traverse(ctx context.Context, startID string, opts ...TraverseO
 		return nil, fmt.Errorf("cortex: traverse start entity: %w", err)
 	}
 
-	graph := &Graph{
-		Entities:      []Entity{*start},
-		Relationships: []Relationship{},
+	graph := &model.Graph{
+		Entities:      []model.Entity{*start},
+		Relationships: []model.Relationship{},
 	}
 
 	visited := map[string]bool{startID: true}
