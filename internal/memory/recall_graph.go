@@ -143,14 +143,14 @@ func (c Ops) Neighbourhood(ctx context.Context, seeds []string, hops int, mode m
 		 JOIN entities e ON e.id = w.id AND e.user_id = ? AND e.deleted_at IS NULL
 		 GROUP BY w.id`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("cortex: Neighbourhood: %w", err)
+		return nil, fmt.Errorf("cortex: neighbourhood: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id string
 		var d int
 		if err := rows.Scan(&id, &d); err != nil {
-			return nil, fmt.Errorf("cortex: scan Neighbourhood: %w", err)
+			return nil, fmt.Errorf("cortex: scan neighbourhood: %w", err)
 		}
 		dist[id] = d
 	}
@@ -174,7 +174,7 @@ func (c Ops) buildGraphContext(ctx context.Context, query string, mode model.Tem
 	}
 	dist, err := c.Neighbourhood(ctx, seeds, seedHops, mode)
 	if err != nil {
-		c.Logf("cortex: recall graph Neighbourhood: %v", err)
+		c.Logf("cortex: recall graph neighbourhood: %v", err)
 		return graphContext{seeds: seeds}
 	}
 	return graphContext{seeds: seeds, dist: dist}

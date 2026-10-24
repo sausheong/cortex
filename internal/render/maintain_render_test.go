@@ -33,8 +33,8 @@ func TestRenderMaintainMarkdown_IncludesProfile(t *testing.T) {
 		Profile: &model.ProfileReport{Scanned: 2, Rebuilt: 2},
 	}
 	md := RenderMaintainMarkdown(r)
-	if !strings.Contains(md, "## model.Profile") {
-		t.Errorf("expected model.Profile section in:\n%s", md)
+	if !strings.Contains(md, "## Profile") {
+		t.Errorf("expected Profile section in:\n%s", md)
 	}
 	if !strings.Contains(md, "Rebuilt: 2") {
 		t.Errorf("expected profile detail in:\n%s", md)
@@ -43,8 +43,8 @@ func TestRenderMaintainMarkdown_IncludesProfile(t *testing.T) {
 
 func TestRenderMaintainMarkdown_ProfileSkipped(t *testing.T) {
 	md := RenderMaintainMarkdown(model.MaintainReport{})
-	if !strings.Contains(md, "## model.Profile") || !strings.Contains(md, "_skipped_") {
-		t.Errorf("expected skipped model.Profile section in:\n%s", md)
+	if !strings.Contains(md, "## Profile") || !strings.Contains(md, "_skipped_") {
+		t.Errorf("expected skipped Profile section in:\n%s", md)
 	}
 }
 

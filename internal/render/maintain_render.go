@@ -46,7 +46,7 @@ func RenderMaintainMarkdown(r model.MaintainReport) string {
 		b.WriteString("_skipped_\n")
 	}
 
-	b.WriteString("\n## model.Profile\n\n")
+	b.WriteString("\n## Profile\n\n")
 	if r.Profile != nil {
 		b.WriteString(RenderProfileReportMarkdown(*r.Profile))
 	} else {

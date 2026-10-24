@@ -202,3 +202,11 @@ Root testdata/ was referenced by no Go test, script or doc, so it was moved to e
 - The only goroutines are the `ExtractParts` workers, joined before return; no `Ops` is stored in a struct.
 - apidiff: only the known alias-to-internal reports and the `RelationshipVerbs` element type.
 - Moving root tests to `cortex_test` (team_test, example_test) is left to stage 9.
+
+## Stage 9 notes
+
+- Root now holds `doc.go`, `cortex.go` (type, `Open`, `Close`, `UserID`, `ForUser`, `WithConnection`, `ConnectionID`), `tooling.go`, `aliases.go`, `consts.go`, `options.go`, `api_*.go` and tests. `store.go` and `user.go` were folded into `cortex.go`; `ontology.go` and `embedfail.go` became `api_ontology.go` and `api_embed.go`; setters moved to `api_setters.go`; sync-state SQL moved to `internal/store/syncstate.go` (`Handle.GetSyncState`/`SetSyncState`) with forwarders in `api_sync.go`. The unused `isNoRows` helper was dropped.
+- Fixed two regressions from earlier gopls renames that rewrote string literals: the markdown headings `## Profile` and `# Profile Report` (had become `model.Profile`) and the error texts `cortex: neighbourhood:` (had become `Neighbourhood`). A literal-by-literal comparison of all non-test string literals against 880d057 now differs only in nothing.
+- API check: a go/types dump of every exported object, method set and signature in root, extractor, llm, connector and vault differs from the baseline only by the accepted unexported-parameter option types (`*config` to `*model.Config` etc.), the unexported `relSpec` element type of `RelationshipVerbs`, and the `Cortex` struct internals. `go doc` text for aliased types differs by design.
+- Moving `team_test` and `example_test` to `cortex_test` was already the case; other tests stay `package cortex`.
+- Pre-existing gofmt findings in untouched files (cmd/cortex/reconcile.go, eval/metrics_test.go, internal/testutil/seed.go, internal/web/confirm.go, internal/web/oauth/oauth_test.go, vault/layout_test.go, vault/render_test.go) and staticcheck notes in internal/model tests were left alone.

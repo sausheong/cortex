@@ -43,7 +43,7 @@ func writeBullets(b *strings.Builder, lines []string) {
 // summary).
 func RenderProfileReportMarkdown(r model.ProfileReport) string {
 	var b strings.Builder
-	b.WriteString("# model.Profile Report\n\n")
+	b.WriteString("# Profile Report\n\n")
 	fmt.Fprintf(&b, "Scanned: %d\n", r.Scanned)
 	fmt.Fprintf(&b, "Rebuilt: %d\n", r.Rebuilt)
 	fmt.Fprintf(&b, "Skipped: %d\n", len(r.Skipped))
