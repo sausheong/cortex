@@ -206,3 +206,35 @@ func TestRemember_ReusesEntityAcrossCaseAndKeepsAttributes(t *testing.T) {
 		t.Fatalf("memories on reused entity: %v %v", mems, err)
 	}
 }
+
+func TestPutEntity_ReadModifyWriteKeepsLegacyRow(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	legacy := &Entity{Name: "Sau Sheong", Type: "person"}
+	if err := c.PutEntity(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.db.ExecContext(ctx, `UPDATE entities SET type = 'Person' WHERE id = ?`, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := &Entity{Name: "Sau Sheong", Type: "person"} // the lower-case twin
+	if err := c.PutEntity(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	e, err := c.GetEntity(ctx, legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Attributes = map[string]any{"tracked": true}
+	if err := c.PutEntity(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := c.GetEntity(ctx, legacy.ID)
+	twin, _ := c.GetEntity(ctx, other.ID)
+	if got.Attributes["tracked"] != true || got.Type != "Person" {
+		t.Errorf("legacy row = %+v, want attributes written in place with its type kept", got)
+	}
+	if twin.Attributes["tracked"] != nil {
+		t.Errorf("write landed on the twin row: %+v", twin)
+	}
+}

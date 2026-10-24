@@ -11,10 +11,14 @@ import (
 	"time"
 )
 
-// PutEntity upserts an entity by (name, type). If an entity with the same
-// name and type already exists, its attributes, source, and updated_at are
-// updated and the existing ID is set on the passed entity. Otherwise a new
-// entity is inserted with a generated ULID.
+// PutEntity upserts an entity by (name, type), with the type normalised by
+// NormalizeType. If an entity with the same name and type already exists,
+// its attributes, source, and updated_at are updated and the existing ID is
+// set on the passed entity. Otherwise a new entity is inserted with a
+// generated ULID. When e.ID names a live entity (as after GetEntity), that
+// row is updated in place instead, keeping its stored type spelling if it
+// normalises to the same type, so a read-modify-write never forks a row
+// whose type predates normalisation.
 func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	e.Confidence = coerceConfidence(e.Confidence)
 	e.Type = NormalizeType(e.Type)
@@ -25,6 +29,34 @@ func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	}
 
 	now := time.Now().UTC()
+
+	if e.ID != "" {
+		var storedType string
+		err := c.db.QueryRowContext(ctx,
+			`SELECT type FROM entities WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, e.ID, c.userID).Scan(&storedType)
+		switch {
+		case err == nil:
+			if NormalizeType(storedType) == e.Type {
+				e.Type = storedType
+			}
+			if err := c.db.QueryRowContext(ctx,
+				`UPDATE entities SET type = ?, name = ?, attributes = ?::jsonb,
+				   source = CASE WHEN source = 'owner' THEN source ELSE ? END,
+				   confidence = ?, updated_at = ?,
+				   written_by_connection_id = COALESCE(?, written_by_connection_id)
+				 WHERE id = ? AND user_id = ?
+				 RETURNING created_at`,
+				e.Type, e.Name, string(attrsJSON), e.Source, e.Confidence, now, c.nullConn(), e.ID, c.userID,
+			).Scan(&e.CreatedAt); err != nil {
+				return fmt.Errorf("cortex: update entity: %w", err)
+			}
+			e.UpdatedAt = now
+			e.WrittenBy = c.connID
+			return nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("cortex: load entity: %w", err)
+		}
+	}
 
 	// Single atomic upsert: concurrent writers with the same (name, type)
 	// converge on one row.
