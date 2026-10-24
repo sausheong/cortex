@@ -94,7 +94,7 @@ func (c Ops) AddAlias(ctx context.Context, entityID, kind, value string) error {
 	err := c.DB.QueryRowContext(ctx,
 		`INSERT INTO entity_aliases (user_id, entity_id, kind, value, value_norm, source)
 		 VALUES (?, ?, ?, ?, ?, 'user')
-		 ON CONFLICT (user_id, kind, value_norm) DO UPDATE SET
+		 ON CONFLICT (user_id, kind, value_norm) WHERE enc IS NOT TRUE DO UPDATE SET
 		   entity_id = CASE WHEN EXISTS (SELECT 1 FROM entities e WHERE e.id = entity_aliases.entity_id AND e.deleted_at IS NULL)
 		                    THEN entity_aliases.entity_id ELSE EXCLUDED.entity_id END
 		 RETURNING entity_id`,

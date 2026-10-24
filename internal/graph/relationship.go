@@ -48,7 +48,7 @@ func (c Ops) PutRelationship(ctx context.Context, r *model.Relationship) error {
 	err = tx.QueryRowContext(ctx,
 		`INSERT INTO relationships (id, user_id, source_id, target_id, type, attributes, source, confidence, created_at, last_seen_at, valid_at, invalid_at, written_by_connection_id)
 		 VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (user_id, source_id, target_id, type) WHERE deleted_at IS NULL DO UPDATE SET
+		 ON CONFLICT (user_id, source_id, target_id, type) WHERE deleted_at IS NULL AND enc IS NOT TRUE DO UPDATE SET
 		   evidence_count = relationships.evidence_count + 1,
 		   last_seen_at = EXCLUDED.last_seen_at,
 		   confidence = GREATEST(relationships.confidence, EXCLUDED.confidence),

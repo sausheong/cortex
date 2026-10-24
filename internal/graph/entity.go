@@ -67,7 +67,7 @@ func (c Ops) PutEntity(ctx context.Context, e *model.Entity) error {
 	err = c.DB.QueryRowContext(ctx,
 		`INSERT INTO entities (id, user_id, type, name, attributes, source, confidence, created_at, updated_at, written_by_connection_id)
 		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
-		 ON CONFLICT (user_id, name, type) WHERE deleted_at IS NULL DO UPDATE SET
+		 ON CONFLICT (user_id, name, type) WHERE deleted_at IS NULL AND enc IS NOT TRUE DO UPDATE SET
 		   attributes = EXCLUDED.attributes,
 		   source = CASE WHEN entities.source = 'owner' THEN entities.source ELSE EXCLUDED.source END,
 		   confidence = EXCLUDED.confidence,
