@@ -1,7 +1,8 @@
 // Package testhook lets test code outside package cortex reach the unexported
 // store handle of a *cortex.Cortex without widening the public API. Package
 // cortex installs both hooks from an init function; tests reach them through
-// internal/testutil (H and Wrap).
+// internal/testutil (H and Wrap). The package exists solely for tests and must
+// not be used by production code.
 package testhook
 
 import "github.com/sausheong/cortex/internal/store"

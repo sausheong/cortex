@@ -491,7 +491,9 @@ Retrieval quality is measured with `cortex-eval` (`generate` an eval set from a 
 
 ### Repository layout
 
-The root package `cortex` is the public API only. `Cortex`, its methods, options, errors and constants live there as thin forwarders. Domain types are type aliases (for example `type Memory = model.Memory`), so existing imports keep compiling. All implementation sits under `internal/`.
+The root package `cortex` is the public API only. It holds `doc.go`, `cortex.go` (the `Cortex` type, `Open` and handle methods), `options.go`, `types.go` (type aliases, constants, sentinel errors), three grouped method files (`api_memory.go`, `api_graph.go`, `api_maintenance.go`) and `example_test.go` (godoc examples). Methods are thin forwarders; domain types are type aliases (for example `type Memory = model.Memory`), so existing imports keep compiling. All implementation sits under `internal/`.
+
+Tests live in two places. `test/integration` holds the black-box suite (package `integration_test`, shared helpers in `helpers_test.go`); it reaches the store handle through `internal/testutil.H`. White-box tests sit next to the code in the `internal/*` packages.
 
 | Path | Role |
 |------|------|
@@ -505,6 +507,8 @@ The root package `cortex` is the public API only. `Cortex`, its methods, options
 | `internal/maintain` | Reconcile, relate, decay, expire, profiles, lint |
 | `internal/ingest` | Ingestion pipeline |
 | `internal/render` | Rendering of entity cards and profiles |
+| `internal/testutil`, `internal/testhook`, `internal/pgtest` | Test-only helpers (handle access, per-test schemas) |
+| `test/integration` | Black-box integration tests |
 | `internal/accounts`, `internal/jobs`, `internal/web` | Hosted multi-user service |
 | `cmd/cortex`, `cmd/cortex-eval` | CLI, MCP server and eval tool |
 | `extractor/`, `llm/`, `connector/`, `vault/` | Public extension packages |
