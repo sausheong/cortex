@@ -5,6 +5,7 @@
 <h1>Memories</h1>
 <p class="lede">{{.TotalFmt}} {{if eq .Total 1}}memory{{else}}memories{{end}}{{if .HasMore}} match{{if eq .Total 1}}es{{end}} your filter{{else}} stored{{end}}.</p>
 {{template "setup" $}}
+{{if .DocsParked}}<p class="note" role="status">Waiting for your next visit to finish processing. {{.DocsParked}} {{if eq .DocsParked 1}}item is{{else}}items are{{end}} saved and will be processed the next time you unlock.</p>{{end}}
 {{if .DocsProcessing}}<p class="note" role="status">Processing {{.DocsProcessing}} {{if eq .DocsProcessing 1}}document{{else}}documents{{end}} in the background. The text becomes searchable when it finishes, within a few minutes.</p>{{end}}
 {{if .DocsFailed}}<p class="note" role="status">{{.DocsFailed}} {{if eq .DocsFailed 1}}document{{else}}documents{{end}} could not be processed after several tries, so some of {{if eq .DocsFailed 1}}it{{else}}them{{end}} may not be saved. Send {{if eq .DocsFailed 1}}it{{else}}them{{end}} again to retry.</p>{{end}}
 {{if .Undo}}

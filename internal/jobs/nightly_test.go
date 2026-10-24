@@ -345,3 +345,32 @@ func TestNightlyPurgesExpiredSessionWraps(t *testing.T) {
 		t.Fatal("live wrap deleted")
 	}
 }
+
+func TestNightlyDoesNotDecryptAndStillPurges(t *testing.T) {
+	e := newEnv(t)
+	uid, _ := e.encUser(t, "np")
+	var calls sync.Map
+	m := &cortex.Memory{Content: "old fact"}
+	if err := e.root.ForUser(uid).PutMemory(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	e.mustExec(t, `UPDATE memories SET deleted_at = now() - interval '31 days' WHERE user_id=$1`, uid)
+	e.mustExec(t, `INSERT INTO sessions (id_hash, user_id, csrf, expires_at) VALUES ('s1',$1,'c', now()-interval '1 hour')`, uid)
+	e.mustExec(t, `INSERT INTO user_key_wraps (user_id, kind, ref_id, wrapped_uk, expires_at) VALUES ($1,'session','s1','x', now()-interval '1 minute')`, uid)
+	rep, err := Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: e.resolver(&calls, nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callsOf(&calls, uid) != 0 || rep.Failed != 0 || rep.Maintained != 0 {
+		t.Fatalf("nightly touched an encrypted user: calls=%d rep=%+v", callsOf(&calls, uid), rep)
+	}
+	if e.count(t, `SELECT count(*) FROM memories WHERE id=$1`, m.ID) != 0 {
+		t.Fatal("old soft-deleted row not purged")
+	}
+	if e.count(t, `SELECT count(*) FROM sessions WHERE id_hash='s1'`)+e.count(t, `SELECT count(*) FROM user_key_wraps WHERE ref_id='s1'`) != 0 {
+		t.Fatal("expired session or wrap kept")
+	}
+	if e.count(t, `SELECT count(*) FROM users WHERE id=$1 AND last_maintenance_error IS NOT NULL`, uid) != 0 {
+		t.Fatal("encrypted user recorded a nightly failure")
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 )
 
 // PurgeWindow is how long soft-deleted rows and deleted accounts are kept.
@@ -28,6 +29,7 @@ type NightlyOptions struct {
 	Now func() time.Time
 
 	beforeMaintain func(ctx context.Context, userID string, cx *cortex.Cortex) // test hook
+	onClone        func(clone *keys.UK)                                        // test hook
 }
 
 // NightlyReport counts what a run did.
@@ -62,7 +64,7 @@ func Nightly(ctx context.Context, root *cortex.Cortex, st *accounts.Store, o Nig
 			rep.Skipped++
 			continue
 		}
-		switch err := maintainUser(ctx, root, st, u.ID, &o); {
+		switch err := maintainUser(ctx, root, st, u.ID, &o, nil); {
 		case err == nil:
 			rep.Maintained++
 		case errors.Is(err, errSkipped):
@@ -89,7 +91,7 @@ const (
 // MaintainUser runs phase 1 for one user (the --user admin path). A user
 // without valid settings or a deleted user returns an error.
 func MaintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID string, o NightlyOptions) error {
-	err := maintainUser(ctx, root, st, userID, &o)
+	err := maintainUser(ctx, root, st, userID, &o, nil)
 	if errors.Is(err, errSkipped) {
 		return errors.New("user is deleted or has no valid provider settings")
 	}
@@ -98,12 +100,23 @@ func MaintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 
 // maintainUser maintains one user and records the outcome in
 // users.last_maintenance_error / last_maintenance_at. Fixed texts only.
-func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID string, o *NightlyOptions) error {
+//
+// uk is the user's key, held only by maintenance during use (MaintainOnUse).
+// Without it an encrypted user is skipped: the server-wide nightly never
+// decrypts anything.
+func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID string, o *NightlyOptions, uk *keys.UK) error {
 	var deleted bool
-	if err := st.DB.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM users WHERE id = $1`, userID).Scan(&deleted); err != nil {
+	var state string
+	if err := st.DB.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL, encryption_state FROM users WHERE id = $1`, userID).Scan(&deleted, &state); err != nil {
 		return err
 	}
 	if deleted {
+		return errSkipped
+	}
+	encUser := state != "none"
+	if encUser && uk == nil {
+		// Key-free: only numeric usage counters (no content, no key).
+		_, _ = root.ForUser(userID).RefreshUsage(ctx)
 		return errSkipped
 	}
 	if ok, err := st.HasSettings(ctx, userID); err == nil && !ok {
@@ -112,8 +125,14 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 	resolve := o.Resolve
 	if resolve == nil {
 		resolve = func(ctx context.Context, id string) (*cortex.Cortex, error) {
-			return st.ResolveUser(ctx, root, id, "", nil)
+			return st.ResolveUser(ctx, root, id, "", uk)
 		}
+	}
+	errText := func(err error) string {
+		if encUser {
+			return "maintenance failed"
+		}
+		return "maintenance failed: " + accounts.ProviderError(err).Error()
 	}
 	record := func(msg string) {
 		var m any
@@ -131,13 +150,19 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 		record("provider settings could not be loaded")
 		return errors.New("provider settings could not be loaded")
 	}
+	if encUser {
+		if !cx.Encrypted() {
+			cx = cx.WithKey(uk, state)
+		}
+		defer cx.Release() // the handle's own clone; uk stays the caller's
+	}
 	if o.beforeMaintain != nil {
 		o.beforeMaintain(ctx, userID, cx)
 	}
-	o.maybeEnqueueReembed(ctx, st, userID)
+	o.maybeEnqueueReembed(ctx, st, userID, uk)
 	rep, err := cx.Maintain(ctx, o.MaintainOpts...)
 	if err != nil {
-		msg := "maintenance failed: " + accounts.ProviderError(err).Error()
+		msg := errText(err)
 		record(msg)
 		return errors.New(msg)
 	}
@@ -174,15 +199,15 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 // maybeEnqueueReembed retries a failed or never-started re-embed: when the
 // desired embedder settings differ from the active ones and no reembed job
 // is queued or running, it enqueues one.
-func (o *NightlyOptions) maybeEnqueueReembed(ctx context.Context, st *accounts.Store, userID string) {
+func (o *NightlyOptions) maybeEnqueueReembed(ctx context.Context, st *accounts.Store, userID string, uk *keys.UK) {
 	if o.Enqueue == nil {
 		return
 	}
-	want, err := st.GetSettings(ctx, userID, nil) // a locked encrypted user is skipped
+	want, err := st.GetSettings(ctx, userID, uk) // nil key: a locked encrypted user is skipped
 	if err != nil {
 		return
 	}
-	act, err := st.GetActiveEmbed(ctx, userID, nil)
+	act, err := st.GetActiveEmbed(ctx, userID, uk)
 	if err != nil {
 		return
 	}

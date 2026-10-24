@@ -18,6 +18,7 @@ import (
 	mcpserver "github.com/sausheong/cortex/cmd/cortex/mcp"
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/jobs"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/web"
 	"github.com/sausheong/cortex/internal/web/oauth"
 
@@ -76,6 +77,9 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		return nil, fmt.Errorf("cortex serve: bootstrap: %w", err)
 	}
 
+	// keyAttachTTL is how long a keyed request lets the pool hold a key clone.
+	const keyAttachTTL = 15 * time.Minute
+
 	var pool *jobs.Pool
 	pool = jobs.NewPool(2, func(ctx context.Context, j jobs.Job) error {
 		if id, ok := strings.CutPrefix(j.Kind, jobs.CompactKindPrefix); ok {
@@ -85,7 +89,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		case jobs.RememberKind:
 			return jobs.RememberJobKey(ctx, root, st, j.UserID, j.Payload, j.Key)
 		case "index":
-			return jobs.IndexJob(ctx, root, st, j.UserID)
+			return jobs.IndexJobKey(ctx, root, st, j.UserID, j.Key)
 		case "reembed":
 			set, err := st.GetSettings(ctx, j.UserID, j.Key)
 			if err != nil {
@@ -111,12 +115,25 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 	}).WithDB(db)
 	pool.Start(ctx)
 
+	// A keyed request (web or MCP) lets background work run for that user:
+	// it attaches a clone of the key to the pool (resuming parked jobs) and
+	// starts maintenance when it is stale. Both clone uk before returning, so
+	// the request may zero its copy.
+	onKeyed := func(userID string, uk *keys.UK) {
+		if uk == nil {
+			return
+		}
+		pool.AttachKey(userID, uk, keyAttachTTL)
+		jobs.MaintainOnUse(root, st, uk, userID, jobs.NightlyOptions{Enqueue: pool.Enqueue})
+	}
+
 	resolve := func(ctx context.Context, bearer string) (*cortex.Cortex, error) {
 		userID, connID, uk, err := st.ResolveBearer(ctx, bearer)
 		if err != nil {
 			return nil, err
 		}
 		defer uk.Zero() // the handle keeps its own clone
+		onKeyed(userID, uk)
 		return st.ResolveUser(ctx, root, userID, connID, uk)
 	}
 	s := server.NewMCPServer("cortex", "1.0.0", server.WithToolCapabilities(false))
@@ -138,7 +155,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 			// Off until the owner migration ships; see the encryption plan.
 			EncryptionEnroll: envBool(env["CORTEX_ENCRYPTION_ENROLL"]),
 		},
-		Root: root, Store: st, MCP: mcpHandler, Enqueue: pool.Enqueue,
+		Root: root, Store: st, MCP: mcpHandler, Enqueue: pool.Enqueue, OnKeyed: onKeyed,
 	})
 
 	return &serveApp{Handler: h, Close: func() { pool.Stop(); cleanup() }}, nil
@@ -152,6 +169,8 @@ type handlerDeps struct {
 	Store   *accounts.Store
 	MCP     http.Handler
 	Enqueue func(ctx context.Context, userID, kind string) (string, error)
+	// OnKeyed runs on every key-bearing web request (see web.Options.OnKeyed).
+	OnKeyed func(userID string, uk *keys.UK)
 	Now     func() time.Time
 }
 
@@ -160,7 +179,7 @@ type handlerDeps struct {
 // single place routes are wired so a test can exercise the real thing.
 func buildHandler(d handlerDeps) http.Handler {
 	return web.NewServer(d.Cfg, d.Root, d.Store, web.Options{
-		MCP: d.MCP, Enqueue: d.Enqueue, Now: d.Now,
+		MCP: d.MCP, Enqueue: d.Enqueue, OnKeyed: d.OnKeyed, Now: d.Now,
 		Mounts: []func(*http.ServeMux, web.Deps){
 			web.ConnectionsMount,
 			web.CompactionMount(d.Enqueue),

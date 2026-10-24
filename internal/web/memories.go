@@ -102,9 +102,12 @@ type memoriesView struct {
 	// DocsProcessing counts large documents still being processed in the
 	// background; DocsFailed counts ones that gave up in the last three days.
 	DocsProcessing, DocsFailed int
-	Restored                   int // memories restored by the last Undo
-	WasRestored                bool
-	HasMore                    bool // a filter is active, so the filter row shows it
+	// DocsParked counts an encrypted user's queued jobs that wait for a
+	// key-bearing visit (shown instead of the processing note).
+	DocsParked  int
+	Restored    int // memories restored by the last Undo
+	WasRestored bool
+	HasMore     bool // a filter is active, so the filter row shows it
 	// SelectPage pre-ticks every row (the no-JS "Select all on this page").
 	SelectPage bool
 	SelCount   int    // rows on this page
@@ -305,6 +308,20 @@ func (s *server) backgroundDocs(ctx context.Context, userID string) (processing,
 	return processing, failed
 }
 
+// parkedJobs counts an encrypted user's queued jobs: with no key attached they
+// wait, untouched, for the next visit that carries one.
+func (s *server) parkedJobs(ctx context.Context, userID string) int {
+	var n int
+	err := s.st.DB.QueryRowContext(ctx,
+		`SELECT count(*) FROM jobs j JOIN users u ON u.id = j.user_id
+		  WHERE j.user_id = $1 AND j.status = 'queued' AND u.encryption_state <> 'none'`, userID).Scan(&n)
+	if err != nil {
+		s.cfg.Logger.Error("parked jobs", "err", err)
+		return 0
+	}
+	return n
+}
+
 func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, field, msg string) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -395,6 +412,11 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	}
 	v.Total, v.Conns = total, conns
 	v.DocsProcessing, v.DocsFailed = s.backgroundDocs(ctx, u.UserID)
+	// The page needs an unlocked session, whose request attaches the key and
+	// resumes parked jobs; one still queued here has not been picked up yet.
+	if v.DocsParked = s.parkedJobs(ctx, u.UserID); v.DocsParked > 0 {
+		v.DocsProcessing = 0
+	}
 	if v.Entity != "" {
 		if e, err := cx.GetEntity(ctx, v.Entity); err == nil {
 			v.EntityName = e.Name

@@ -89,6 +89,9 @@ type homeHealth struct {
 }
 
 type homeView struct {
+	// Migration is the status line of an owner encryption migration in
+	// progress; empty otherwise.
+	Migration  string
 	Strip      []string
 	Profile    homeProfile
 	New        homeNew
@@ -143,6 +146,7 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer u.Key.Zero()
+	s.keyed(u)
 	ctx := r.Context()
 	now := s.now()
 	prev := s.homeVisitStamp(w, r, u.UserID, now, r.Method == http.MethodGet)
@@ -154,6 +158,7 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	v.New = s.homeNew(ctx, cx, conns, connErr, prev, now)
 	v.Assistants = s.homeAssistants(ctx, cx, conns, connErr, now)
 	v.Health = s.homeHealth(ctx, cx, u.UserID, u.Key, now)
+	v.Migration = s.homeMigration(ctx, u.UserID)
 	v.Strip = homeStrip(v)
 	s.render(w, r, http.StatusOK, "home", v)
 }
@@ -459,4 +464,28 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 		}
 	}
 	return h
+}
+
+// homeMigration is the progress line while the owner's content is being
+// encrypted (state "migrating"): the stored job progress, or the parked text
+// when the job waits for a key-bearing visit.
+func (s *server) homeMigration(ctx context.Context, userID string) string {
+	var state string
+	if err := s.st.DB.QueryRowContext(ctx, `SELECT encryption_state FROM users WHERE id = $1`, userID).Scan(&state); err != nil || state != "migrating" {
+		return ""
+	}
+	var status string
+	var done, total int
+	err := s.st.DB.QueryRowContext(ctx,
+		`SELECT status, progress_done, progress_total FROM jobs WHERE user_id = $1 AND kind = 'encmigrate' AND status IN ('queued','running')
+		  ORDER BY created_at DESC LIMIT 1`, userID).Scan(&status, &done, &total)
+	switch {
+	case err != nil:
+		return "Encrypting your memory. It continues the next time you visit."
+	case status == "queued":
+		return "Encrypting your memory is waiting for your next visit to finish."
+	case total > 0:
+		return fmt.Sprintf("Encrypting your memory: %s of %s", fmtInt(done), fmtInt(total))
+	}
+	return "Encrypting your memory."
 }

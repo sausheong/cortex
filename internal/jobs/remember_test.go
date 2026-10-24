@@ -150,3 +150,53 @@ func TestRememberJobGivesUpAfterMaxAttempts(t *testing.T) {
 }
 
 func sleep10() { time.Sleep(10 * time.Millisecond) }
+
+func TestParkedRememberJobResumesOnNextKeyedRequest(t *testing.T) {
+	e := newEnv(t)
+	e.st.AllowPrivate = true
+	uid, uk := e.encUser(t, "park")
+	if _, err := e.st.PutSettings(t.Context(), uid, accounts.Settings{BaseURL: rememberProvider(t, nil), APIKey: "sk-test", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, uk); err != nil {
+		t.Fatal(err)
+	}
+	pool := NewPool(1, func(ctx context.Context, j Job) error {
+		return RememberJobKey(ctx, e.root, e.st, j.UserID, j.Payload, j.Key)
+	}).WithDB(e.db)
+	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: "Maria Lopez leads the billing team at Acme Corp."}, uk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulated restart: nothing attached, the job parks.
+	pool.Start(t.Context())
+	time.Sleep(400 * time.Millisecond)
+	if n := e.count(t, `SELECT count(*) FROM jobs WHERE id=$1 AND status='queued' AND attempts=0 AND error=''`, id); n != 1 {
+		t.Fatal("parked job must stay queued with no error and no attempt")
+	}
+	// The next keyed request attaches a key and the job completes.
+	pool.AttachKey(uid, uk, time.Minute)
+	waitStatus(t, e, id, "done")
+	if n := e.count(t, `SELECT count(*) FROM memories WHERE user_id=$1`, uid); n == 0 {
+		t.Fatal("no memory stored by the resumed job")
+	}
+	if n := e.count(t, `SELECT attempts FROM jobs WHERE id=$1`, id); n != 0 {
+		t.Fatalf("attempts = %d", n)
+	}
+	pool.Stop()
+	// Stop detached and zeroed the attached key; the caller's key is intact.
+	if pool.key(uid) != nil || uk.Bytes() == nil {
+		t.Fatal("attached key survived Stop or caller key was zeroed")
+	}
+}
+
+func TestAttachedKeyExpiresAtTTL(t *testing.T) {
+	e := newEnv(t)
+	uid, uk := e.encUser(t, "ttl")
+	pool := NewPool(1, func(context.Context, Job) error { return nil }).WithDB(e.db)
+	pool.AttachKey(uid, uk, 60*time.Millisecond)
+	if pool.key(uid) == nil {
+		t.Fatal("key not attached")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if pool.key(uid) != nil {
+		t.Fatal("key still attached after ttl")
+	}
+}

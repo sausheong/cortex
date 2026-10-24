@@ -18,6 +18,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/web/pages"
 )
 
@@ -29,6 +30,10 @@ type Options struct {
 	// Enqueue schedules a background job ("reembed", "index", ...). Nil makes
 	// a settings change that needs a re-embed fail with a clear error.
 	Enqueue func(ctx context.Context, userID, kind string) (jobID string, err error)
+	// OnKeyed, when set, is called on every request that carries a user key
+	// (an unlocked session). It must clone uk if it keeps it: the request's
+	// copy is zeroed when the handler returns.
+	OnKeyed func(userID string, uk *keys.UK)
 	// MCP, when set, is served at /mcp.
 	MCP http.Handler
 	// Mounts register further routes; they use only Deps.
@@ -218,12 +223,20 @@ func unlockCookieFor(value string, maxAge int) *http.Cookie {
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode}
 }
 
+// keyed tells the hook that this request carries a key.
+func (s *server) keyed(u SessionUser) {
+	if s.opts.OnKeyed != nil && u.Key != nil {
+		s.opts.OnKeyed(u.UserID, u.Key)
+	}
+}
+
 // auth requires a live session; POSTs also need the session's CSRF token.
 func (s *server) auth(next func(w http.ResponseWriter, r *http.Request, u SessionUser)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u, ok := s.lookup(r, true)
 		if ok {
 			defer u.Key.Zero()
+			s.keyed(u)
 		}
 		if !ok {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {

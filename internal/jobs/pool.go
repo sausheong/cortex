@@ -47,6 +47,11 @@ type Pool struct {
 	// job whose payload is sealed and has no key stays queued (parked).
 	keyFor func(userID string) *keys.UK
 
+	// attached holds the per-user key copies of keyed requests (AttachKey).
+	// Each is the pool's own clone, zeroed at its ttl or when replaced.
+	keysMu   sync.Mutex
+	attached map[string]*attachedKey
+
 	queue  chan Job
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -73,6 +78,110 @@ func (p *Pool) WithDB(db *sql.DB) *Pool {
 func (p *Pool) WithKeyFunc(f func(userID string) *keys.UK) *Pool {
 	p.keyFor = f
 	return p
+}
+
+type attachedKey struct {
+	uk    *keys.UK
+	timer *time.Timer
+}
+
+// AttachKey lets background jobs of an encrypted user run: it keeps a clone of
+// uk for at most ttl (the caller keeps and zeroes its own copy), then resumes
+// the user's parked jobs. Attaching again replaces the clone and restarts the
+// ttl. The clone is zeroed when the ttl fires, on Detach and on Stop.
+func (p *Pool) AttachKey(userID string, uk *keys.UK, ttl time.Duration) {
+	if uk == nil || ttl <= 0 {
+		return
+	}
+	c := uk.Clone()
+	if c == nil {
+		return
+	}
+	e := &attachedKey{uk: c}
+	// The timer closure holds the entry, never the caller's key.
+	e.timer = time.AfterFunc(ttl, func() { p.detach(userID, e) })
+	p.keysMu.Lock()
+	if p.attached == nil {
+		p.attached = map[string]*attachedKey{}
+	}
+	old := p.attached[userID]
+	p.attached[userID] = e
+	p.keysMu.Unlock()
+	if old != nil {
+		old.timer.Stop()
+		old.uk.Zero()
+	}
+	p.Resume(userID)
+}
+
+func (p *Pool) detach(userID string, e *attachedKey) {
+	p.keysMu.Lock()
+	if p.attached[userID] == e {
+		delete(p.attached, userID)
+	}
+	p.keysMu.Unlock()
+	e.timer.Stop()
+	e.uk.Zero()
+}
+
+// Detach zeroes and forgets the key attached for userID.
+func (p *Pool) Detach(userID string) {
+	p.keysMu.Lock()
+	e := p.attached[userID]
+	delete(p.attached, userID)
+	p.keysMu.Unlock()
+	if e != nil {
+		e.timer.Stop()
+		e.uk.Zero()
+	}
+}
+
+// key returns a clone of the user's key for a job (the caller zeroes it), or
+// nil when none is attached.
+func (p *Pool) key(userID string) *keys.UK {
+	p.keysMu.Lock()
+	e := p.attached[userID]
+	var c *keys.UK
+	if e != nil {
+		c = e.uk.Clone()
+	}
+	p.keysMu.Unlock()
+	if c != nil {
+		return c
+	}
+	if p.keyFor != nil {
+		return p.keyFor(userID)
+	}
+	return nil
+}
+
+// Resume wakes the user's queued jobs that are due, including ones parked for
+// want of a key (a keyed request just attached one).
+func (p *Pool) Resume(userID string) {
+	if p.db == nil {
+		return
+	}
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := p.db.QueryContext(c,
+		`SELECT id, kind FROM jobs WHERE user_id = $1 AND status = 'queued' AND run_after <= now() ORDER BY created_at LIMIT 100`, userID)
+	if err != nil {
+		return
+	}
+	var pending []Job
+	for rows.Next() {
+		j := Job{UserID: userID}
+		if rows.Scan(&j.ID, &j.Kind) == nil {
+			pending = append(pending, j)
+		}
+	}
+	rows.Close()
+	for _, j := range pending {
+		select {
+		case p.queue <- j:
+		default:
+		}
+	}
 }
 
 func newJobID() string {
@@ -215,17 +324,29 @@ func (p *Pool) sweepBatch(ctx context.Context) []Job {
 		return nil
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id, user_id, kind FROM jobs WHERE status='queued' AND run_after <= now()
-		ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED`)
+	rows, err := tx.QueryContext(ctx, `SELECT j.id, j.user_id, j.kind, u.encryption_state FROM jobs j JOIN users u ON u.id = j.user_id
+		WHERE j.status='queued' AND j.run_after <= now()
+		ORDER BY j.created_at LIMIT 100 FOR UPDATE OF j SKIP LOCKED`)
 	if err != nil {
 		return nil
 	}
 	var pending []Job
 	for rows.Next() {
 		var j Job
-		if rows.Scan(&j.ID, &j.UserID, &j.Kind) == nil {
-			pending = append(pending, j)
+		var state string
+		if rows.Scan(&j.ID, &j.UserID, &j.Kind, &state) != nil {
+			continue
 		}
+		// Parked: an encrypted user's job waits, untouched (still queued,
+		// no error, no attempt), until a keyed request attaches a key.
+		if state != "none" {
+			if k := p.key(j.UserID); k == nil {
+				continue
+			} else {
+				k.Zero()
+			}
+		}
+		pending = append(pending, j)
 	}
 	rows.Close()
 	_ = tx.Commit()
@@ -242,6 +363,14 @@ func (p *Pool) Stop() {
 		cancel()
 	}
 	p.wg.Wait()
+	p.keysMu.Lock()
+	all := p.attached
+	p.attached = nil
+	p.keysMu.Unlock()
+	for _, e := range all {
+		e.timer.Stop()
+		e.uk.Zero()
+	}
 }
 
 func (p *Pool) worker(ctx context.Context) {
@@ -323,27 +452,23 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 			}
 			return
 		}
-		if enc {
-			var uk *keys.UK
-			if p.keyFor != nil {
-				uk = p.keyFor(j.UserID)
-			}
+		// An encrypted user's job runs only under a key; without one it is
+		// parked: left queued, no error, attempts untouched.
+		if encUser || enc {
+			uk := p.key(j.UserID)
 			if uk == nil {
 				return // parked
 			}
 			defer uk.Zero()
-			b, err := uk.Open(j.UserID, "jobs", j.ID, "payload", ct)
-			if err != nil {
-				p.setStatus(j, "failed", jobErrText(true, err))
-				return
+			if enc {
+				b, err := uk.Open(j.UserID, "jobs", j.ID, "payload", ct)
+				if err != nil {
+					p.setStatus(j, "failed", jobErrText(true, err))
+					return
+				}
+				j.Payload = string(b)
 			}
-			j.Payload = string(b)
 			j.Key = uk
-		} else if encUser && p.keyFor != nil {
-			if uk := p.keyFor(j.UserID); uk != nil {
-				defer uk.Zero()
-				j.Key = uk
-			}
 		}
 		// Claim atomically: a job may be in the channel and swept twice, and
 		// a retry waits out its backoff even if a stale copy is still queued.

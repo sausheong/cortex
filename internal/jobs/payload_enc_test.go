@@ -165,12 +165,9 @@ func TestJobsErrorAndMaintenanceErrorFreeOfContent(t *testing.T) {
 		}
 	}
 	// Maintenance.
-	_, err = Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: func(ctx context.Context, u string) (*cortex.Cortex, error) {
+	<-maintainOnUse(e.root, e.st, uk, uid, NightlyOptions{Resolve: func(ctx context.Context, u string) (*cortex.Cortex, error) {
 		return nil, errors.New("SEEDSECRET resolve failure")
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	var me *string
 	e.db.QueryRow(`SELECT last_maintenance_error FROM users WHERE id = $1`, uid).Scan(&me)
 	if me == nil || strings.Contains(*me, "SEEDSECRET") {
