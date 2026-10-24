@@ -34,6 +34,9 @@ type Options struct {
 	// (an unlocked session). It must clone uk if it keeps it: the request's
 	// copy is zeroed when the handler returns.
 	OnKeyed func(userID string, uk *keys.UK)
+	// OnLogout, when set, is called after a session is ended by logout so the
+	// caller can drop any key it holds for the user.
+	OnLogout func(userID string)
 	// MCP, when set, is served at /mcp.
 	MCP http.Handler
 	// Mounts register further routes; they use only Deps.
@@ -296,6 +299,9 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	http.SetCookie(w, unlockCookieFor("", -1))
+	if s.opts.OnLogout != nil {
+		s.opts.OnLogout(u.UserID)
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

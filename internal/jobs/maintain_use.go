@@ -91,6 +91,15 @@ func runMaintainClone(ctx context.Context, root *cortex.Cortex, st *accounts.Sto
 	}
 	defer unlock(conn, userID)
 
+	// Another process may have finished a run between the cheap check and
+	// the lock; do not rerun right after it.
+	var stale bool
+	if err := st.DB.QueryRowContext(ctx,
+		`SELECT last_maintenance_at IS NULL OR last_maintenance_at < $2 FROM users WHERE id = $1`,
+		userID, o.now().Add(-maintainStale)).Scan(&stale); err != nil || !stale {
+		return
+	}
+
 	if o.onClone != nil {
 		o.onClone(clone)
 	}

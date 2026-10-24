@@ -314,7 +314,7 @@ func (s *server) parkedJobs(ctx context.Context, userID string) int {
 	var n int
 	err := s.st.DB.QueryRowContext(ctx,
 		`SELECT count(*) FROM jobs j JOIN users u ON u.id = j.user_id
-		  WHERE j.user_id = $1 AND j.status = 'queued' AND u.encryption_state <> 'none'`, userID).Scan(&n)
+		  WHERE j.user_id = $1 AND j.status = 'queued' AND j.run_after <= now() AND u.encryption_state <> 'none'`, userID).Scan(&n)
 	if err != nil {
 		s.cfg.Logger.Error("parked jobs", "err", err)
 		return 0

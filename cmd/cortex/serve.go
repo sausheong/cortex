@@ -155,7 +155,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 			// Off until the owner migration ships; see the encryption plan.
 			EncryptionEnroll: envBool(env["CORTEX_ENCRYPTION_ENROLL"]),
 		},
-		Root: root, Store: st, MCP: mcpHandler, Enqueue: pool.Enqueue, OnKeyed: onKeyed,
+		Root: root, Store: st, MCP: mcpHandler, Enqueue: pool.Enqueue, OnKeyed: onKeyed, OnLogout: pool.Detach,
 	})
 
 	return &serveApp{Handler: h, Close: func() { pool.Stop(); cleanup() }}, nil
@@ -171,7 +171,9 @@ type handlerDeps struct {
 	Enqueue func(ctx context.Context, userID, kind string) (string, error)
 	// OnKeyed runs on every key-bearing web request (see web.Options.OnKeyed).
 	OnKeyed func(userID string, uk *keys.UK)
-	Now     func() time.Time
+	// OnLogout drops the pool's key for the user.
+	OnLogout func(userID string)
+	Now      func() time.Time
 }
 
 // buildHandler assembles every route served by `cortex serve`: the web UI,
@@ -179,7 +181,7 @@ type handlerDeps struct {
 // single place routes are wired so a test can exercise the real thing.
 func buildHandler(d handlerDeps) http.Handler {
 	return web.NewServer(d.Cfg, d.Root, d.Store, web.Options{
-		MCP: d.MCP, Enqueue: d.Enqueue, OnKeyed: d.OnKeyed, Now: d.Now,
+		MCP: d.MCP, Enqueue: d.Enqueue, OnKeyed: d.OnKeyed, OnLogout: d.OnLogout, Now: d.Now,
 		Mounts: []func(*http.ServeMux, web.Deps){
 			web.ConnectionsMount,
 			web.CompactionMount(d.Enqueue),
