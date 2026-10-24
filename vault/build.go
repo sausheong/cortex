@@ -86,12 +86,24 @@ func Build(ctx context.Context, c *cortex.Cortex, exportedAt time.Time) (*Set, e
 	entityMemories := make(map[string][]cortex.Memory, len(entities))
 	entitySources := make(map[string][]string, len(entities))
 	allSources := map[string]struct{}{}
-	for _, e := range entities {
-		memories, err := c.GetMemoriesByEntity(ctx, e.ID)
-		if err != nil {
-			set.Errors = append(set.Errors, fmt.Errorf("memories for %s: %w", e.ID, err))
-			continue
+	// Bulk loads: one query each instead of one (or more) per entity.
+	allMemories, err := c.MemoriesByEntityAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list memories: %w", err)
+	}
+	allRels, err := c.AllRelationships(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vault: list relationships: %w", err)
+	}
+	entityRels := make(map[string][]cortex.Relationship, len(entities))
+	for _, r := range allRels {
+		entityRels[r.SourceID] = append(entityRels[r.SourceID], r)
+		if r.TargetID != r.SourceID {
+			entityRels[r.TargetID] = append(entityRels[r.TargetID], r)
 		}
+	}
+	for _, e := range entities {
+		memories := allMemories[e.ID]
 		entityMemories[e.ID] = memories
 		sourceSet := map[string]struct{}{}
 		if e.Source != "" {
@@ -111,16 +123,8 @@ func Build(ctx context.Context, c *cortex.Cortex, exportedAt time.Time) (*Set, e
 	var indexUpdated time.Time
 	for _, e := range entities {
 		meta := pageByID[e.ID]
-		memories, ok := entityMemories[e.ID]
-		if !ok {
-			// memories lookup failed in the first pass and was already recorded.
-			continue
-		}
-		rels, err := c.GetRelationships(ctx, e.ID)
-		if err != nil {
-			set.Errors = append(set.Errors, fmt.Errorf("rels for %s: %w", e.ID, err))
-			continue
-		}
+		memories := entityMemories[e.ID]
+		rels := entityRels[e.ID]
 
 		var outRels, inRels []resolvedRel
 		for _, r := range rels {
