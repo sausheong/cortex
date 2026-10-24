@@ -6,8 +6,11 @@ import (
 	"github.com/sausheong/cortex"
 )
 
-// extractionPrompt instructs the LLM to return structured extraction data.
-const extractionPrompt = `Analyze the following text and extract structured knowledge.
+// extractionPrompt instructs the LLM to return structured extraction data,
+// using the curated entity types and relationship verbs.
+var extractionPrompt = extractionPromptHead + cortex.VocabularyPrompt() + extractionPromptTail
+
+const extractionPromptHead = `Analyze the following text and extract structured knowledge.
 Return a JSON object with the following fields:
 - "entities": array of objects with "name", "type", optional "attributes", and "confidence"
 - "relationships": array of objects with "source" (entity name), "target" (entity name), "type", optional "attributes", and "confidence"
@@ -33,9 +36,11 @@ When unsure, use false.
 - "forget_after": string (date) — set ONLY for memories that stop being relevant after a known point: appointments, deadlines, "today"/"tomorrow"/"this week", anything time-bound. Resolve relative phrases against today's date and return an absolute date (e.g. today is 2026-06-27, "tomorrow" -> "2026-06-28"). Omit for durable facts. A memory with forget_after should NOT be marked static.
 
 Extract all people, organizations, places, concepts, and other notable entities.
-Identify relationships between entities (e.g., works_at, knows, located_in).
-Create memories for key facts and statements.
+Identify relationships between them. Create memories for key facts and statements.
 
+`
+
+const extractionPromptTail = `
 Return ONLY valid JSON, no markdown formatting.`
 
 // Extractor delegates entity extraction to an LLM.

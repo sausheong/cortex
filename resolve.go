@@ -2,15 +2,15 @@ package cortex
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 )
 
 // ingestEntity stores an extracted entity, reusing the stored entity it
-// refers to rather than creating a near-duplicate. Resolution runs the
+// refers to rather than creating a near-duplicate. The type is mapped onto
+// the curated set first (CanonicalEntityType); an unknown label becomes
+// concept with the label kept in the "type_label" attribute. Resolution runs the
 // cascade in resolve: aliases, the owner, the same name ignoring case, fuzzy
 // similarity, then an EntityDisambiguator when one is configured. On a match
 // the extracted attributes fill in keys the stored entity lacks (stored
@@ -19,7 +19,16 @@ import (
 // differing extracted name is remembered as an alias. Identifiers found in
 // the attributes (email, phone, handle) are recorded as aliases either way.
 func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext) error {
-	e.Type = NormalizeType(e.Type)
+	canonical, known := CanonicalEntityType(e.Type)
+	if label := NormalizeType(e.Type); !known && label != "" {
+		if e.Attributes == nil {
+			e.Attributes = map[string]any{}
+		}
+		if _, ok := e.Attributes["type_label"]; !ok {
+			e.Attributes["type_label"] = label
+		}
+	}
+	e.Type = canonical
 	extracted := e.Name
 	res, err := c.resolve(ctx, e.Name, e.Type, e.Attributes, rc, true)
 	if err != nil {
@@ -34,7 +43,8 @@ func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext
 			return err
 		}
 		if res.Method != ResolvedByExact && normalizeAlias(AliasName, extracted) != normalizeAlias(AliasName, e.Name) &&
-			!selfMentions[normalizeAlias(AliasName, extracted)] && DetectAliasKind(extracted) == AliasName {
+			!userMentions[normalizeAlias(AliasName, extracted)] && !firstPerson[normalizeAlias(AliasName, extracted)] &&
+			DetectAliasKind(extracted) == AliasName {
 			c.addAliasQuiet(ctx, e.ID, AliasName, extracted, "ingest")
 		}
 	}
@@ -46,23 +56,52 @@ func (c *Cortex) ingestEntity(ctx context.Context, e *Entity, rc *resolveContext
 }
 
 // findSameEntity returns the live entity named name (ignoring case) whose
-// type normalises to typ, preferring an exact name and type match, or nil.
+// type is of the same kind as typ (see kindMatches), preferring an exact
+// name, or nil.
 func (c *Cortex) findSameEntity(ctx context.Context, name, typ string) (*Entity, error) {
-	var id string
-	err := c.db.QueryRowContext(ctx,
-		`SELECT id FROM entities
-		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) = lower(?) AND `+normTypeSQL("type")+` = ?
-		 ORDER BY (name = ?) DESC, (type = ?) DESC, created_at, id
-		 LIMIT 1`,
-		c.userID, name, typ, name, typ,
-	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, type FROM entities
+		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) = lower(?)
+		 ORDER BY (name = ?) DESC, created_at, id`,
+		c.userID, name, name)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find entity: %w", err)
 	}
-	return c.GetEntity(ctx, id)
+	var match string
+	for rows.Next() {
+		var id, t string
+		if err := rows.Scan(&id, &t); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("cortex: scan entity: %w", err)
+		}
+		if match == "" && kindMatches(t, typ) {
+			match = id
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cortex: find entity: %w", err)
+	}
+	if match == "" {
+		return nil, nil
+	}
+	return c.GetEntity(ctx, match)
+}
+
+// kindMatches reports whether a stored entity type is the same kind as typ:
+// equal after normalisation, or mapping to the same curated type. An empty
+// typ matches everything.
+func kindMatches(stored, typ string) bool {
+	if typ == "" {
+		return true
+	}
+	st := NormalizeType(stored)
+	if st == typ {
+		return true
+	}
+	sc, _ := CanonicalEntityType(st)
+	tc, _ := CanonicalEntityType(typ)
+	return sc == tc
 }
 
 // absorbIntoEntity folds an extracted entity into the stored one it matched:

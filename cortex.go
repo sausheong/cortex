@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Remember extracts entities, relationships, memories, and chunks from the
@@ -36,7 +37,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// for resolving relationships and memory links.
 	nameToID := make(map[string]string)
 	var entityIDs []string // distinct, in extraction order
-	rc := &resolveContext{content: truncateRunes(content, 2000)}
+	rc := &resolveContext{content: truncateRunes(content, 2000), ownerSpeaks: ownerVoice(cfg.speaker, cfg.source)}
 	for i := range extraction.Entities {
 		e := &extraction.Entities[i]
 		if cfg.source != "" && e.Source == "" {
@@ -53,16 +54,34 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		nameToID[nameKey(e.Name)] = e.ID
 	}
 
-	// 3. Store relationships, resolving name-based IDs to real entity IDs.
+	// 3. Store relationships, resolving name-based IDs to real entity IDs
+	// and mapping the verb onto the curated set (CanonicalRelation): a
+	// synonym may swap the ends, and a verb that is unknown or does not fit
+	// its ends' types is stored as related_to with the original as "label".
+	idToType := make(map[string]string, len(extraction.Entities))
+	for _, e := range extraction.Entities {
+		idToType[e.ID], _ = CanonicalEntityType(e.Type)
+	}
 	for i := range extraction.Relationships {
 		r := &extraction.Relationships[i]
 		sourceID, srcOK := nameToID[nameKey(r.SourceID)]
 		targetID, tgtOK := nameToID[nameKey(r.TargetID)]
-		if !srcOK || !tgtOK {
-			continue // skip if either end doesn't resolve
+		if !srcOK || !tgtOK || sourceID == targetID {
+			continue // skip if either end doesn't resolve, or it is a self-loop
 		}
-		r.SourceID = sourceID
-		r.TargetID = targetID
+		verb, swap, label := CanonicalRelation(r.Type, idToType[sourceID], idToType[targetID])
+		if swap {
+			sourceID, targetID = targetID, sourceID
+		}
+		r.SourceID, r.TargetID, r.Type = sourceID, targetID, verb
+		if label != "" {
+			if r.Attributes == nil {
+				r.Attributes = map[string]any{}
+			}
+			if _, ok := r.Attributes["label"]; !ok {
+				r.Attributes["label"] = label
+			}
+		}
 		if cfg.source != "" && r.Source == "" {
 			r.Source = cfg.source
 		}
@@ -137,6 +156,16 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	}
 
 	return errors.Join(extractPartial, unembedded.err())
+}
+
+// ownerVoice reports whether text remembered with this speaker and source is
+// in the owner's own voice, so "I" and "me" mean the owner.
+func ownerVoice(speaker, source string) bool {
+	switch strings.ToLower(strings.TrimSpace(speaker)) {
+	case "user", "owner", "me", "self":
+		return true
+	}
+	return source == "owner"
 }
 
 // truncateRunes returns s cut to at most n runes.

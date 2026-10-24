@@ -460,12 +460,19 @@ func (c *Cortex) undoChange(ctx context.Context, tx *dbTx, ch batchChange) error
 		     WHERE t.user_id = ? AND t.kind = r.kind AND t.value_norm = r.value_norm AND t.entity_id = r.entity_id`
 		args = []any{ch.row, c.userID}
 	case "update":
-		if ch.table != "entities" {
+		switch ch.table {
+		case "entities":
+			q = `UPDATE entities t SET attributes = r.attributes, updated_at = r.updated_at, type = r.type, name = r.name
+			     FROM jsonb_populate_record(NULL::entities, ?::jsonb) r
+			     WHERE t.id = r.id AND t.user_id = ?`
+		case "relationships":
+			q = `UPDATE relationships t SET type = r.type, source_id = r.source_id, target_id = r.target_id,
+			       attributes = r.attributes, evidence_count = r.evidence_count
+			     FROM jsonb_populate_record(NULL::relationships, ?::jsonb) r
+			     WHERE t.id = r.id AND t.user_id = ?`
+		default:
 			return fmt.Errorf("cortex: unexpected batch table %q", ch.table)
 		}
-		q = `UPDATE entities t SET attributes = r.attributes, updated_at = r.updated_at
-		     FROM jsonb_populate_record(NULL::entities, ?::jsonb) r
-		     WHERE t.id = r.id AND t.user_id = ?`
 		args = []any{ch.row, c.userID}
 	default:
 		return fmt.Errorf("cortex: unexpected batch op %q", ch.op)

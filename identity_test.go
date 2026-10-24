@@ -107,7 +107,7 @@ func TestRemember_AnchorsOwnerAndLearnsAliases(t *testing.T) {
 			}, nil
 		},
 	})
-	if err := c.Remember(ctx, "I like tea"); err != nil {
+	if err := c.Remember(ctx, "I like tea", WithSpeaker("user")); err != nil {
 		t.Fatal(err)
 	}
 	people, err := c.FindEntities(ctx, EntityFilter{Type: "person"})
@@ -208,5 +208,33 @@ func TestMerge_MovesAliasesAndUndoRestoresThem(t *testing.T) {
 	}
 	if al, _ := c.Aliases(ctx, keep.ID); len(al) != 0 {
 		t.Errorf("keep still has aliases after undo: %v", al)
+	}
+}
+
+func TestRemember_FirstPersonIsNotOwnerInSomeoneElsesText(t *testing.T) {
+	c, ownerID := ownerCortex(t, "Sau Sheong", "sausheong@gmail.com")
+	ctx := context.Background()
+	c.SetExtractor(&mockExtractor{
+		extractFn: func(_ context.Context, _, _ string) (*Extraction, error) {
+			return &Extraction{
+				Entities: []Entity{{Name: "me", Type: "person"}, {Name: "the user", Type: "person"}},
+				Memories: []Memory{{Content: "The sender wants to connect", About: []string{"me"}}},
+			}, nil
+		},
+	})
+	// An email ingested by an agent: no owner speaker.
+	if err := c.Remember(ctx, "Hi, I'd like to connect", WithSource("gmail")); err != nil {
+		t.Fatal(err)
+	}
+	mems, err := c.GetMemoriesByEntity(ctx, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mems) != 0 {
+		t.Errorf("owner picked up %d memories from someone else's first person", len(mems))
+	}
+	res, _ := c.ResolveEntity(ctx, "the user", "person")
+	if res.Entity == nil || res.Entity.ID != ownerID {
+		t.Errorf("\"the user\" should still resolve to the owner, got %+v", res.Entity)
 	}
 }

@@ -61,7 +61,7 @@ func main() {
 	}
 	if ref != "" {
 		if !userCommands[cmd] {
-			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync, users set-provider)\n", cmd)
+			fmt.Fprintf(os.Stderr, "error: --user is not supported by %q (use it with maintain, recall, profile, import-sqlite, sync, normalize, users set-provider)\n", cmd)
 			os.Exit(1)
 		}
 		userRef = ref
@@ -95,6 +95,8 @@ func main() {
 		cmdReconcile()
 	case "relate":
 		cmdRelate()
+	case "normalize":
+		cmdNormalize()
 	case "decay":
 		cmdDecay()
 	case "expire":
@@ -126,7 +128,7 @@ func printUsage() {
 Global options:
   --db <postgres-url>            Postgres connection URL (or CORTEX_DATABASE_URL env var; no default)
   --user <id|verified-email>     Act as that user with their own provider settings (needs CORTEX_SECRET_KEY);
-                                 accepted by maintain, recall, profile, import-sqlite and sync
+                                 accepted by maintain, recall, profile, import-sqlite, sync and normalize
 
 Commands:
   serve [--addr host:port]       Multi-user web, OAuth and MCP service (needs CORTEX_SECRET_KEY)
@@ -161,6 +163,9 @@ Commands:
                                  Scan the graph for cleanup candidates (orphans, near-duplicates, etc.)
   reconcile [--apply] [--out <file>]
                                  Soft-invalidate memories superseded by newer facts (dry-run by default; --apply commits)
+  normalize [--dry-run] [--out <file>]
+                                 Move entity types and relationship verbs onto the curated vocabulary
+                                 and merge the duplicates that exposes (one undoable batch)
   relate [--out <file>]
                                  Detect and record derives/extends edges between related memories (additive, idempotent)
   decay [--half-life <dur>] [--floor <0-1>] [--dry-run] [--out <file>]

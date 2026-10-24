@@ -145,7 +145,7 @@ func chunkedExtractor(failMarker string, calls *atomic.Int32) *mockExtractor {
 				Entities: []Entity{{Type: "person", Name: "Bob"}},
 				Relationships: []Relationship{
 					{SourceID: "Alice", TargetID: "Stripe", Type: "works_at"},
-					{SourceID: "Bob", TargetID: "stripe", Type: "knows"},
+					{SourceID: "Bob", TargetID: "stripe", Type: "uses"},
 				},
 				Memories: []Memory{{Content: "Bob knows Stripe"}},
 			}, nil
@@ -195,8 +195,8 @@ func TestRemember_ChunkedExtractionMergesAndDedupes(t *testing.T) {
 		}
 	}
 	brels, _ := c.GetRelationships(ctx, bob.ID)
-	if len(brels) != 1 || brels[0].Type != "knows" {
-		t.Fatalf("Bob relationships = %v, want one knows", brels)
+	if len(brels) != 1 || brels[0].Type != "uses" {
+		t.Fatalf("Bob relationships = %v, want one uses", brels)
 	}
 	mems, _, _ := c.ListMemories(ctx, MemoryListFilter{}, 100, 0)
 	if len(mems) != 2 {

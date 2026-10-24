@@ -211,6 +211,9 @@ func (c *Cortex) MergeEntitiesDryRun(ctx context.Context, keepID, dropID string)
 type mergeOpts struct {
 	batchID string
 	by      string
+	// sameKind allows merging entities whose types differ only in spelling
+	// or map to the same curated type (see kindMatches).
+	sameKind bool
 }
 
 // recordChanges snapshots the rows of table matching where into the batch's
@@ -265,7 +268,7 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID strin
 		}
 		return stats, fmt.Errorf("cortex: load drop entity: %w", err)
 	}
-	if keep.Type != drop.Type {
+	if keep.Type != drop.Type && !(mo.sameKind && kindMatches(drop.Type, NormalizeType(keep.Type))) {
 		return stats, fmt.Errorf("cortex: cannot merge across types: %s (keep) vs %s (drop)", keep.Type, drop.Type)
 	}
 

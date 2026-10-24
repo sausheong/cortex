@@ -232,12 +232,23 @@ const (
 	fuzzyAsk         = 0.50
 	llmMinConfidence = 0.70
 	proximityBoost   = 0.10
-	fuzzyCandidates  = 200
+	fuzzyCandidates  = 500
 	disambiguateTopK = 5
 )
 
-// selfMentions are how text refers to the owner of the graph.
-var selfMentions = map[string]bool{"i": true, "me": true, "myself": true, "user": true, "the user": true}
+// userMentions are how an assistant writing to the graph refers to its
+// owner; firstPerson words refer to the owner only when the owner is the
+// speaker (in an ingested email, "I" is the sender).
+var (
+	userMentions = map[string]bool{"user": true, "the user": true}
+	firstPerson  = map[string]bool{"i": true, "me": true, "myself": true}
+)
+
+// isSelfMention reports whether key (a normalised name) refers to the owner
+// given who is speaking.
+func isSelfMention(key string, rc *resolveContext) bool {
+	return userMentions[key] || (rc.ownerSpeaks && firstPerson[key])
+}
 
 // ResolveEntity resolves a mention to the stored entity it most likely names,
 // without creating anything or consulting an LLM. typ narrows name matching
@@ -245,17 +256,21 @@ var selfMentions = map[string]bool{"i": true, "me": true, "myself": true, "user"
 // (email, phone, handle) match regardless of type.
 func (c *Cortex) ResolveEntity(ctx context.Context, mention, typ string) (*Resolution, error) {
 	rc := &resolveContext{}
-	return c.resolve(ctx, mention, NormalizeType(typ), nil, rc, false)
+	if typ != "" {
+		typ, _ = CanonicalEntityType(typ)
+	}
+	return c.resolve(ctx, mention, typ, nil, rc, false)
 }
 
 // resolveContext carries what one Remember call knows while it resolves its
 // entities: the source text, entities resolved so far, and the owner.
 type resolveContext struct {
-	content    string
-	resolved   []string
-	ownerID    string
-	ownerNames map[string]bool
-	ownerReady bool
+	content     string
+	ownerSpeaks bool // the text is in the owner's voice
+	resolved    []string
+	ownerID     string
+	ownerNames  map[string]bool
+	ownerReady  bool
 }
 
 // owner loads the owner entity and the names it goes by, once per context.
@@ -305,7 +320,7 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	if typ == "" || typ == "person" {
 		ownerID, names := c.owner(ctx, rc)
 		key := normalizeAlias(AliasName, mention)
-		if ownerID != "" && (selfMentions[key] || names[key]) {
+		if ownerID != "" && (isSelfMention(key, rc) || names[key]) {
 			e, err := c.GetEntity(ctx, ownerID)
 			if err == nil {
 				return &Resolution{Entity: e, Method: ResolvedByOwner, Score: 1}, nil
@@ -395,38 +410,33 @@ func identifiers(mention string, attrs map[string]any) [][2]string {
 }
 
 // matchAlias finds the one live entity an alias names. Identifier aliases
-// match any type; a name alias must match typ when typ is given. An alias
-// shared by several live entities is ambiguous and matches nothing.
+// match any type; a name alias must be of the same kind as typ when typ is
+// given. An alias naming several live entities is ambiguous and matches
+// nothing.
 func (c *Cortex) matchAlias(ctx context.Context, mention, typ string, attrs map[string]any) (*Entity, error) {
-	var conds []string
-	var args []any
+	conds := []string{"(a.kind = 'name' AND a.value_norm = ?)"}
+	args := []any{c.userID, normalizeAlias(AliasName, mention)}
 	for _, id := range identifiers(mention, attrs) {
 		conds = append(conds, "(a.kind = ? AND a.value_norm = ?)")
 		args = append(args, id[0], normalizeAlias(id[0], id[1]))
 	}
-	nameCond := "(a.kind = 'name' AND a.value_norm = ?)"
-	args = append(args, normalizeAlias(AliasName, mention))
-	if typ != "" {
-		nameCond = "(a.kind = 'name' AND a.value_norm = ? AND " + normTypeSQL("e.type") + " = ?)"
-		args = append(args, typ)
-	}
-	conds = append(conds, nameCond)
-
-	q := `SELECT DISTINCT a.entity_id FROM entity_aliases a
-	      JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
-	      WHERE a.user_id = ? AND (` + strings.Join(conds, " OR ") + `) LIMIT 2`
-	rows, err := c.db.QueryContext(ctx, q, append([]any{c.userID}, args...)...)
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT a.entity_id, a.kind, e.type FROM entity_aliases a
+		 JOIN entities e ON e.id = a.entity_id AND e.deleted_at IS NULL
+		 WHERE a.user_id = ? AND (`+strings.Join(conds, " OR ")+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: match alias: %w", err)
 	}
-	var ids []string
+	ids := map[string]bool{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, kind, t string
+		if err := rows.Scan(&id, &kind, &t); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan alias match: %w", err)
 		}
-		ids = append(ids, id)
+		if kind != AliasName || kindMatches(t, typ) {
+			ids[id] = true
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -435,7 +445,10 @@ func (c *Cortex) matchAlias(ctx context.Context, mention, typ string, attrs map[
 	if len(ids) != 1 {
 		return nil, nil
 	}
-	return c.GetEntity(ctx, ids[0])
+	for id := range ids {
+		return c.GetEntity(ctx, id)
+	}
+	return nil, nil
 }
 
 // fuzzyCandidates scores stored entities whose names share a word with the
@@ -452,15 +465,10 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 	if len(likes) == 0 {
 		return nil, nil
 	}
-	q := `SELECT id, type, name, confidence FROM entities
-	      WHERE user_id = ? AND deleted_at IS NULL AND lower(name) LIKE ANY(?)`
-	args := []any{c.userID, likes}
-	if typ != "" {
-		q += ` AND ` + normTypeSQL("type") + ` = ?`
-		args = append(args, typ)
-	}
-	q += ` LIMIT ` + fmt.Sprint(fuzzyCandidates)
-	rows, err := c.db.QueryContext(ctx, q, args...)
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, type, name, confidence FROM entities
+		 WHERE user_id = ? AND deleted_at IS NULL AND lower(name) LIKE ANY(?)
+		 LIMIT `+fmt.Sprint(fuzzyCandidates), c.userID, likes)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: fuzzy candidates: %w", err)
 	}
@@ -470,6 +478,9 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 		if err := rows.Scan(&e.ID, &e.Type, &e.Name, &e.Confidence); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("cortex: scan candidate: %w", err)
+		}
+		if !kindMatches(e.Type, typ) {
+			continue
 		}
 		if s := NameSimilarity(mention, e.Name); s > 0 {
 			out = append(out, ScoredEntity{Entity: e, Score: s})

@@ -713,6 +713,8 @@ func deletedKind(k string) string {
 		return "Compaction"
 	case "merge":
 		return "Merged items"
+	case "normalize":
+		return "Graph tidy-up"
 	case "forget", "entity":
 		return "Forgotten item"
 	}

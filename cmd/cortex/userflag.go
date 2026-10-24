@@ -17,7 +17,7 @@ import (
 var userRef string
 
 // userCommands are the commands that accept --user.
-var userCommands = map[string]bool{"maintain": true, "recall": true, "profile": true, "import-sqlite": true, "sync": true, "users": true}
+var userCommands = map[string]bool{"maintain": true, "recall": true, "profile": true, "import-sqlite": true, "sync": true, "users": true, "normalize": true}
 
 // stripUserFlag removes every `--user <ref>` pair from args (after the
 // program name) and returns the last value.
