@@ -222,6 +222,9 @@ type mergeOpts struct {
 	sameKind bool
 }
 
+// changeRowID is the AAD row id of one undo snapshot: batch plus row id.
+func changeRowID(batchID string, id int64) string { return fmt.Sprintf("%s/%d", batchID, id) }
+
 // recordChanges snapshots the rows of table matching where into the batch's
 // change records, before the caller modifies or deletes them. extra is a JSON
 // object merged into each snapshot (e.g. the retarget destination).
@@ -239,7 +242,7 @@ func (c Ops) recordChanges(ctx context.Context, tx *store.Tx, mo mergeOpts, user
 		return nil
 	}
 	// Encrypted user: the snapshot is sealed whole (AAD column row_json, row
-	// id = the batch id) so the undo log holds no readable row content.
+	// id = batch id and change id) so the undo log holds no readable row content.
 	if err := c.RequireKey(); err != nil {
 		return err
 	}
@@ -262,13 +265,27 @@ func (c Ops) recordChanges(ctx context.Context, tx *store.Tx, mo mergeOpts, user
 		return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
 	}
 	for _, j := range snaps {
-		ct, err := c.SealStr("delete_batch_changes", mo.batchID, "row_json", j)
+		// Insert first so the row's own id can bind the ciphertext: two
+		// snapshots in one batch must not be swappable.
+		var id int64
+		r, err := tx.QueryContext(ctx,
+			`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json, row_ct, enc)
+			 VALUES (?, ?, ?, ?, NULL, NULL, TRUE) RETURNING id`, mo.batchID, userID, table, op)
+		if err != nil {
+			return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+		}
+		if r.Next() {
+			err = r.Scan(&id)
+		}
+		r.Close()
+		if err != nil {
+			return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+		}
+		ct, err := c.SealStr("delete_batch_changes", changeRowID(mo.batchID, id), "row_json", j)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json, row_ct, enc)
-			 VALUES (?, ?, ?, ?, NULL, ?, TRUE)`, mo.batchID, userID, table, op, ct); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE delete_batch_changes SET row_ct = ? WHERE id = ?`, ct, id); err != nil {
 			return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
 		}
 	}

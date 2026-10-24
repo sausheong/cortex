@@ -292,7 +292,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 
 	// 1. Undo recorded changes, newest first.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT table_name, op, row_json::text, row_ct, enc FROM delete_batch_changes
+		`SELECT id, table_name, op, row_json::text, row_ct, enc FROM delete_batch_changes
 		 WHERE batch_id = ? AND user_id = ? ORDER BY id DESC`, batchID, c.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: load batch changes: %w", err)
@@ -300,17 +300,18 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 	var changes []batchChange
 	for rows.Next() {
 		var ch batchChange
+		var chID int64
 		var rowJSON sql.NullString
 		var ct []byte
 		var enc bool
-		if err := rows.Scan(&ch.table, &ch.op, &rowJSON, &ct, &enc); err != nil {
+		if err := rows.Scan(&chID, &ch.table, &ch.op, &rowJSON, &ct, &enc); err != nil {
 			rows.Close()
 			return fmt.Errorf("cortex: scan batch change: %w", err)
 		}
 		if enc {
 			// The sealed snapshot is the row as stored (ciphertext columns
 			// included), so restoring it rewrites the encrypted row as it was.
-			j, err := c.OpenStr("delete_batch_changes", batchID, "row_json", ct)
+			j, err := c.OpenStr("delete_batch_changes", changeRowID(batchID, chID), "row_json", ct)
 			if err != nil {
 				rows.Close()
 				return err
