@@ -131,6 +131,12 @@ cortex migrate [--timeout 30m]                     # apply migrations, print ver
 
 `--user` takes a user ID or a verified email only. An email that matches several accounts, or only an unverified account, is refused with the matching IDs listed. With `--user` the command uses that user's own saved provider settings, so it needs `CORTEX_SECRET_KEY` in the environment; the operator's `OPENAI_API_KEY` is never used for another user.
 
+#### Per-user encryption migration and old copies of plaintext
+
+Passkey enrollment is on by default (`CORTEX_ENCRYPTION_ENROLL=0` turns it off). When an existing user enrolls, a background job rewrites all of their rows as ciphertext in batches. It runs only while that user has a key attached (any signed-in request or reconnected assistant), resumes by itself after a restart, and finishes with a post-check that flips the account to `encrypted`. Then it runs `VACUUM (FULL)` and `ANALYZE` on each content table, one table at a time. `VACUUM FULL` takes an exclusive lock on the table while it rewrites it, so expect short pauses for every user of the instance, longer on large tables. A long-running transaction elsewhere in the database can stop the rewrite from discarding old row versions; if the instance had one, run `VACUUM (FULL)` on the content tables again once it is idle. Schedule the first enrollments for a quiet hour.
+
+Encrypting the live database does not reach copies made earlier. Backups, `pg_dump` files, replicas and WAL archives taken before the migration still contain that user's plaintext. After the post-check passes, the operator must purge or age out those copies (see Backups below); until then the user is only as private as the oldest backup.
+
 #### Backing up `CORTEX_SECRET_KEY`
 
 `CORTEX_SECRET_KEY` encrypts every user's provider key. Without it the stored keys cannot be read and users must re-enter them. Copy it off the box (a password manager is fine) when it is first generated. Database backups do not contain it.

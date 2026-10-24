@@ -39,9 +39,10 @@ const (
 	// CeremonyTTL is how long a WebAuthn challenge lives.
 	CeremonyTTL = 5 * time.Minute
 	// MigrateEncKind is the job kind of the owner's encryption migration.
-	// ConfirmEnroll parks one; Task 16 runs it. StatusParked jobs are not
+	// ConfirmEnroll parks one; jobs.EnsureMigrationJob queues it once a key
+	// is attached and jobs.EncryptUserJob runs it. StatusParked jobs are not
 	// picked up by the pool.
-	MigrateEncKind = "encrypt_migrate"
+	MigrateEncKind = "encmigrate"
 	StatusParked   = "parked"
 
 	maxConfirmAttempts = 5

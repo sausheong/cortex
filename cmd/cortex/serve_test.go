@@ -78,6 +78,10 @@ func TestServeStartupOrder(t *testing.T) {
 		"CORTEX_DATABASE_URL": dsn, "CORTEX_SECRET_KEY": serveSecret,
 		"CORTEX_AUTH_TOKEN": "tunnel-tok", "OPENAI_API_KEY": "k", "OPENAI_BASE_URL": stubOpenAI(t),
 		"CORTEX_ALLOW_PRIVATE_PROVIDERS": "1",
+		// The bootstrap user here is created after the migrations, so with
+		// enrollment on it would count as a new account that must enroll
+		// first; a real legacy deployment's owner predates the marker.
+		"CORTEX_ENCRYPTION_ENROLL": "0",
 	}
 	app, err := runServe(ctx, env)
 	if err != nil {
@@ -144,5 +148,13 @@ func TestServeBootstrapRunsOnce(t *testing.T) {
 	rec, _ := mcpCall(t, app.Handler, "tunnel-tok", `{}`, "")
 	if rec.Code != 401 {
 		t.Fatalf("revoked tunnel token: %d, want 401", rec.Code)
+	}
+}
+
+func TestEnrollmentFlagDefaultsOn(t *testing.T) {
+	for v, want := range map[string]bool{"": true, "1": true, "on": true, "0": false, "false": false, "off": false, "garbage": true} {
+		if got := envBoolDefault(v, true); got != want {
+			t.Errorf("envBoolDefault(%q, true) = %v, want %v", v, got, want)
+		}
 	}
 }

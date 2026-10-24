@@ -445,6 +445,7 @@ anthropicllm.NewLLM("sk-ant-...", anthropicllm.WithModel("claude-haiku-4-5"))
 | `CORTEX_TRANSPORT`, `CORTEX_ADDR` | `stdio`, `127.0.0.1:8080` | `cortex mcp` transport and address |
 | `CORTEX_AUTH_TOKEN` | | bearer token for HTTP MCP |
 | `CORTEX_SECRET_KEY` | | encrypts per-user provider keys (`serve`, `--user`) |
+| `CORTEX_ENCRYPTION_ENROLL` | `1` | passkey enrollment and the owner encryption migration (`serve`); `0` turns it off. Backups and dumps made before a user migrates still hold plaintext; see [docs/ops/deploy.md](docs/ops/deploy.md) |
 
 The provider variables configure single-user CLI and MCP use. On the multi-user service each user's settings hold their provider; see [docs/ops/deploy.md](docs/ops/deploy.md) for the service's variables.
 
