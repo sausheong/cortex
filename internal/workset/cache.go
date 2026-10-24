@@ -179,7 +179,31 @@ func sweepLocked(now time.Time) {
 	for id, u := range g.users {
 		if now.Sub(time.Unix(0, u.lastUsed.Load())) > g.idle {
 			delete(g.users, id)
+			notifyEvict(id)
 		}
+	}
+}
+
+var (
+	evictMu    sync.Mutex
+	evictHooks []func(userID string)
+)
+
+// OnEvict registers a callback run whenever a user's set is evicted (idle
+// sweep or Drop), so other plaintext caches can go with it. Callbacks must
+// not call back into this package.
+func OnEvict(fn func(userID string)) {
+	evictMu.Lock()
+	evictHooks = append(evictHooks, fn)
+	evictMu.Unlock()
+}
+
+func notifyEvict(userID string) {
+	evictMu.Lock()
+	hs := append([]func(string){}, evictHooks...)
+	evictMu.Unlock()
+	for _, h := range hs {
+		h(userID)
 	}
 }
 
@@ -262,6 +286,7 @@ func Drop(userID string) {
 	g.mu.Lock()
 	delete(g.users, userID)
 	g.mu.Unlock()
+	notifyEvict(userID)
 }
 
 // Cached reports whether the user currently has a cached set.

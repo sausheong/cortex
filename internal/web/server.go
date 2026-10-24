@@ -19,6 +19,7 @@ import (
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/web/pages"
+	"github.com/sausheong/cortex/internal/workset"
 )
 
 //go:embed static
@@ -120,6 +121,10 @@ func newServer(cfg Config, root *cortex.Cortex, st *accounts.Store, opts Options
 	s.testProvider = func(ctx context.Context, set accounts.Settings) error {
 		return accounts.TestProvider(ctx, set, accounts.SafeClient(st.AllowPrivate, accounts.ChatBodyCap))
 	}
+	workset.OnEvict(func(userID string) {
+		s.vcache.drop(userID)
+		s.vcache.sweep(s.now())
+	})
 	return s
 }
 

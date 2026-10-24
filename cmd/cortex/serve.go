@@ -21,6 +21,7 @@ import (
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/web"
 	"github.com/sausheong/cortex/internal/web/oauth"
+	"github.com/sausheong/cortex/internal/workset"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -206,6 +207,7 @@ func cmdServe() {
 		os.Exit(1)
 	}
 	defer app.Close()
+	workset.StartJanitor(ctx)
 
 	srv := &http.Server{Addr: *addr, Handler: app.Handler, ReadHeaderTimeout: 10 * time.Second}
 	go func() {

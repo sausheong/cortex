@@ -201,6 +201,24 @@ func (c *vaultCache) entry(user string) *vaultEntry {
 	return e
 }
 
+// drop removes one user's cached vault.
+func (c *vaultCache) drop(user string) {
+	c.mu.Lock()
+	delete(c.m, user)
+	c.mu.Unlock()
+}
+
+// sweep removes every vault older than the TTL.
+func (c *vaultCache) sweep(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, o := range c.m {
+		if o.v != nil && now.Sub(o.v.builtAt) >= vaultCacheTTL {
+			delete(c.m, k)
+		}
+	}
+}
+
 // trim evicts the oldest vaults (never keep) until the cache fits its byte
 // budget. Evicted users simply rebuild on their next visit.
 func (c *vaultCache) trim(keep string) {

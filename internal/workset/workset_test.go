@@ -507,3 +507,21 @@ func TestWorksetConcurrentForInvalidate(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestOnEvictFiresOnDropAndSweep(t *testing.T) {
+	var got []string
+	workset.OnEvict(func(id string) { got = append(got, id) })
+	workset.Drop("u-evict")
+	if len(got) == 0 || got[len(got)-1] != "u-evict" {
+		t.Fatalf("hook not fired on Drop: %v", got)
+	}
+}
+
+func TestOnEvictFiresOnDrop(t *testing.T) {
+	var got []string
+	workset.OnEvict(func(id string) { got = append(got, id) })
+	workset.Drop("u-evict")
+	if len(got) == 0 || got[len(got)-1] != "u-evict" {
+		t.Fatalf("hook not fired on Drop: %v", got)
+	}
+}
