@@ -1,12 +1,12 @@
-package cortex
+package llmutil
 
 import "strings"
 
-// splitContent breaks long content into chunks of roughly maxChars characters,
+// SplitContent breaks long content into chunks of roughly maxChars characters,
 // preferring paragraph (\n\n) boundaries, then sentence boundaries, then a
 // hard cut. If maxChars <= 0 or the content fits, the original content is
 // returned as a single-element slice.
-func splitContent(content string, maxChars int) []string {
+func SplitContent(content string, maxChars int) []string {
 	if maxChars <= 0 || len(content) <= maxChars {
 		return []string{content}
 	}

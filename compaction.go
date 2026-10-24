@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 const (
@@ -62,7 +63,7 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			s := cosineSimilarity(cands[i].vec, cands[j].vec)
+			s := vecmath.Cosine(cands[i].vec, cands[j].vec)
 			if s >= compactMergeSim {
 				parentMerge[find(parentMerge, i)] = find(parentMerge, j)
 			}

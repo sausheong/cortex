@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -54,14 +55,14 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 		report.EntitiesScanned++
 		report.MemoriesScanned += len(mems)
 
-		pairs, err := retryLLM(ctx, func() ([]ConflictPair, error) { return rec.DetectConflicts(ctx, mems) })
+		pairs, err := llmutil.RetryLLM(ctx, func() ([]ConflictPair, error) { return rec.DetectConflicts(ctx, mems) })
 		if err != nil {
 			if ctx.Err() != nil {
 				return ReconcileReport{}, fmt.Errorf("cortex: detect conflicts for entity %s: %w", eid, err)
 			}
 			// A provider failure for one entity must not abort the run.
 			report.EntitiesSkipped++
-			addReportError(&report.Errors, "detect conflicts for entity %s: %v", eid, err)
+			llmutil.AddReportError(&report.Errors, "detect conflicts for entity %s: %v", eid, err)
 			if c.cfg.Logf != nil {
 				c.cfg.Logf("cortex: reconcile: skipping entity %s: %v", eid, err)
 			}

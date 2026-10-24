@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 // Reserved entity attribute keys for profiles.
@@ -162,7 +164,7 @@ func (c *Cortex) distillBucketErr(ctx context.Context, name, instruction string,
 	}
 
 	texts := append([]string{fmt.Sprintf(instruction, name)}, raw...)
-	out, err := retryLLM(ctx, func() (string, error) { return c.cfg.LLM.Summarize(ctx, texts) })
+	out, err := llmutil.RetryLLM(ctx, func() (string, error) { return c.cfg.LLM.Summarize(ctx, texts) })
 	if err != nil {
 		if c.cfg.Logf != nil {
 			c.cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
@@ -381,7 +383,7 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 		rep.Rebuilt++
 		if !p.Distilled && derr != nil {
 			rep.Undistilled++
-			addReportError(&rep.Errors, "distill profile %s: %v", id, derr)
+			llmutil.AddReportError(&rep.Errors, "distill profile %s: %v", id, derr)
 		}
 	}
 	return rep, nil
@@ -435,19 +437,6 @@ func wordSet(norm string) map[string]struct{} {
 	return set
 }
 
-func jaccard(a, b map[string]struct{}) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	inter := 0
-	for w := range a {
-		if _, ok := b[w]; ok {
-			inter++
-		}
-	}
-	return float64(inter) / float64(len(a)+len(b)-inter)
-}
-
 // staticPriority ranks a memory for inclusion in the static half: identity-ish
 // content and confidence first, a Static flag as a bonus.
 func staticPriority(m Memory) float64 {
@@ -497,7 +486,7 @@ func selectStaticCandidates(pool []Memory, selfID string, limit int) []Memory {
 		}
 		dup := false
 		for _, o := range sets {
-			if jaccard(ws, o) >= staticNearDupJaccard {
+			if vecmath.Jaccard(ws, o) >= staticNearDupJaccard {
 				dup = true
 				break
 			}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -217,16 +218,8 @@ func scanMemoryRefs(rows *sql.Rows) ([]MemoryRef, error) {
 		if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence); err != nil {
 			return nil, err
 		}
-		m.Content = truncate(m.Content, 80)
+		m.Content = llmutil.Truncate(m.Content, 80)
 		out = append(out, m)
 	}
 	return out, rows.Err()
-}
-
-// truncate returns s if shorter than n, else s[:n] + "...".
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 )
 
 // Remember extracts entities, relationships, memories, and chunks from the
@@ -24,7 +26,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// 1. Extract structured data from content. Long content is extracted
 	// per chunk and merged; a failing chunk does not discard the others, the
 	// caller gets an *ExtractPartialError after everything else is stored.
-	parts := splitContent(content, cfg.MaxChunkSize)
+	parts := llmutil.SplitContent(content, cfg.MaxChunkSize)
 	extraction, err := c.extractParts(ctx, content, parts, cfg.ContentType)
 	var extractPartial error
 	if err != nil {
@@ -39,7 +41,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// for resolving relationships and memory links.
 	nameToID := make(map[string]string)
 	var entityIDs []string // distinct, in extraction order
-	rc := &resolveContext{content: truncateRunes(content, 2000), ownerSpeaks: ownerVoice(cfg.Speaker, cfg.Source)}
+	rc := &resolveContext{content: llmutil.TruncateRunes(content, 2000), ownerSpeaks: ownerVoice(cfg.Speaker, cfg.Source)}
 	for i := range extraction.Entities {
 		e := &extraction.Entities[i]
 		if cfg.Source != "" && e.Source == "" {
@@ -170,18 +172,9 @@ func ownerVoice(speaker, source string) bool {
 	return source == "owner"
 }
 
-// truncateRunes returns s cut to at most n runes.
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
-}
-
 // nameKey is the key an extracted entity name is looked up by: lower-cased
 // with whitespace collapsed, matching how mergeExtractions dedupes names.
-func nameKey(name string) string { return normKey(name) }
+func nameKey(name string) string { return ontology.NormKey(name) }
 
 // memoryEntityIDs resolves a memory's "about" names to entity IDs. Names that
 // match no extracted entity are ignored. A memory with no usable "about" —

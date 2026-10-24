@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 // Graph-aware recall. A query that names entities (by name or alias) gets
@@ -196,7 +197,7 @@ func (g graphContext) boost(entityIDs []string) float64 {
 // recallSeedMemories ranks the memories linked directly to the seed
 // entities, honouring the temporal mode: memories linked to more seeds
 // first, then higher confidence, then newer.
-func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit int, mode model.TemporalMode) ([]vecmath.Ranked, map[string]Result) {
 	if len(g.seeds) == 0 {
 		return nil, nil
 	}
@@ -217,7 +218,7 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 		return nil, nil
 	}
 	defer rows.Close()
-	var items []rankedItem
+	var items []vecmath.Ranked
 	results := map[string]Result{}
 	for rows.Next() {
 		var r Result
@@ -227,7 +228,7 @@ func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit i
 		}
 		r.Type = "memory"
 		key := "mem:" + r.ID
-		items = append(items, rankedItem{id: key, rank: len(items)})
+		items = append(items, vecmath.Ranked{ID: key, Rank: len(items)})
 		results[key] = r
 	}
 	if err := rows.Err(); err != nil {
@@ -259,10 +260,10 @@ func popularity(n int) float64 {
 
 // accessCounts loads access_count for the memory keys ("mem:<id>") among
 // items, keyed by key.
-func (c *Cortex) accessCounts(ctx context.Context, items []rankedItem) map[string]int {
+func (c *Cortex) accessCounts(ctx context.Context, items []vecmath.Ranked) map[string]int {
 	var ids []string
 	for _, it := range items {
-		if id, ok := strings.CutPrefix(it.id, "mem:"); ok {
+		if id, ok := strings.CutPrefix(it.ID, "mem:"); ok {
 			ids = append(ids, id)
 		}
 	}

@@ -8,31 +8,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/llmutil"
 )
 
 func fastBackoff(t *testing.T) {
 	t.Helper()
-	old := llmBackoff
-	llmBackoff = func(int) time.Duration { return time.Millisecond }
-	t.Cleanup(func() { llmBackoff = old })
-}
-
-func TestIsTransientLLMErr(t *testing.T) {
-	for _, e := range []error{
-		errors.New(`openai: detect conflicts: Post "x": net/http: timeout awaiting response headers`),
-		errors.New("error, status code: 429, status: 429 Too Many Requests"),
-		errors.New("error, status code: 503, message: unavailable"),
-		context.DeadlineExceeded,
-	} {
-		if !isTransientLLMErr(e) {
-			t.Errorf("want transient: %v", e)
-		}
-	}
-	for _, e := range []error{errors.New("error, status code: 401, message: bad key"), errors.New("invalid json"), nil} {
-		if isTransientLLMErr(e) {
-			t.Errorf("want permanent: %v", e)
-		}
-	}
+	old := llmutil.Backoff
+	llmutil.Backoff = func(int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { llmutil.Backoff = old })
 }
 
 func TestReconcile_TimeoutSkipsEntityAndContinues(t *testing.T) {

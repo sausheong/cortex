@@ -1,4 +1,4 @@
-package cortex
+package llmutil
 
 import (
 	"context"
@@ -17,17 +17,17 @@ const llmMaxRetries = 2
 // maxReportErrors bounds how many error strings a pass report carries.
 const maxReportErrors = 5
 
-// llmBackoff returns the wait before retry number attempt (1-based). It is a
+// Backoff returns the wait before retry number attempt (1-based). It is a
 // variable so tests can make it instant.
-var llmBackoff = func(attempt int) time.Duration {
+var Backoff = func(attempt int) time.Duration {
 	return time.Duration(attempt) * 3 * time.Second
 }
 
 var transientStatusRE = regexp.MustCompile(`\b(429|5\d\d)\b`)
 
-// isTransientLLMErr reports whether err looks like a retryable provider
+// IsTransientLLMErr reports whether err looks like a retryable provider
 // failure: a timeout, a rate limit (429) or a server error (5xx).
-func isTransientLLMErr(err error) bool {
+func IsTransientLLMErr(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -48,26 +48,26 @@ func isTransientLLMErr(err error) bool {
 	return transientStatusRE.MatchString(s)
 }
 
-// retryLLM runs fn, retrying transient failures up to llmMaxRetries times with
+// RetryLLM runs fn, retrying transient failures up to llmMaxRetries times with
 // backoff. Non-transient errors, and any error once ctx is done, return at once.
-func retryLLM[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+func RetryLLM[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 	var out T
 	var err error
 	for attempt := 0; ; attempt++ {
 		out, err = fn()
-		if err == nil || ctx.Err() != nil || attempt >= llmMaxRetries || !isTransientLLMErr(err) {
+		if err == nil || ctx.Err() != nil || attempt >= llmMaxRetries || !IsTransientLLMErr(err) {
 			return out, err
 		}
 		select {
 		case <-ctx.Done():
 			return out, err
-		case <-time.After(llmBackoff(attempt + 1)):
+		case <-time.After(Backoff(attempt + 1)):
 		}
 	}
 }
 
-// addReportError appends a bounded, truncated error string.
-func addReportError(errs *[]string, format string, args ...any) {
+// AddReportError appends a bounded, truncated error string.
+func AddReportError(errs *[]string, format string, args ...any) {
 	if len(*errs) >= maxReportErrors {
 		return
 	}

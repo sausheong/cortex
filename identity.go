@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 var (
@@ -387,7 +390,7 @@ func (c *Cortex) fuzzyCandidates(ctx context.Context, mention, typ string, rc *r
 	for _, w := range strings.Fields(strings.ToLower(mention)) {
 		w = strings.Trim(w, ".,;:!?()[]{}\"'")
 		if len([]rune(w)) >= 3 {
-			likes = append(likes, "%"+escapeLike(w)+"%")
+			likes = append(likes, "%"+llmutil.EscapeLike(w)+"%")
 		}
 	}
 	if len(likes) == 0 {
@@ -462,10 +465,6 @@ func (c *Cortex) neighbours(ctx context.Context, ids []string) (map[string]bool,
 	return near, rows.Err()
 }
 
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
-}
-
 func minF(a, b float64) float64 {
 	if a < b {
 		return a
@@ -488,7 +487,7 @@ func NameSimilarity(a, b string) float64 {
 	if ja == jb {
 		return 1
 	}
-	s := jaccard(trigrams(ja), trigrams(jb))
+	s := vecmath.Jaccard(trigrams(ja), trigrams(jb))
 	short, long := wa, wb
 	if len(short) > len(long) {
 		short, long = long, short

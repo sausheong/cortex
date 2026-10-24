@@ -1,4 +1,4 @@
-package cortex
+package ontology
 
 import (
 	"regexp"
@@ -21,8 +21,14 @@ func NormalizeType(t string) string {
 	return strings.Trim(t, "_")
 }
 
-// normTypeSQL is the SQL equivalent of NormalizeType applied to col, for
+// NormTypeSQL is the SQL equivalent of NormalizeType applied to col, for
 // matching rows whose stored type predates normalisation.
-func normTypeSQL(col string) string {
+func NormTypeSQL(col string) string {
 	return `btrim(regexp_replace(lower(btrim(` + col + `)), '[[:space:]_-]+', '_', 'g'), '_')`
+}
+
+// NormKey lower-cases s and collapses whitespace; it is the key under which
+// extracted names and types are compared.
+func NormKey(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }

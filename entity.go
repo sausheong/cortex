@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 )
 
 // PutEntity upserts an entity by (name, type), with the type normalised by
@@ -113,7 +114,7 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 	args := []any{c.userID}
 
 	if f.Type != "" {
-		conditions = append(conditions, normTypeSQL("type")+" = ?")
+		conditions = append(conditions, ontology.NormTypeSQL("type")+" = ?")
 		args = append(args, NormalizeType(f.Type))
 	}
 	if f.NameLike != "" {

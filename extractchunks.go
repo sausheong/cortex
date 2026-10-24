@@ -3,8 +3,9 @@ package cortex
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
+
+	"github.com/sausheong/cortex/internal/ontology"
 )
 
 // extractConcurrency bounds how many chunk extractions run at once.
@@ -67,10 +68,6 @@ func (c *Cortex) extractParts(ctx context.Context, content string, parts []strin
 	return merged, nil
 }
 
-func normKey(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
-}
-
 // mergeExtractions combines per-chunk extractions, in order, into one.
 // Entities dedupe by case-insensitive name and type (first spelling wins,
 // attributes merge with the first value kept on conflict). Relationship
@@ -84,8 +81,8 @@ func mergeExtractions(results []*Extraction) *Extraction {
 	canon := map[string]string{}  // normalised name -> canonical name
 	for _, r := range results {
 		for _, e := range r.Entities {
-			nk := normKey(e.Name)
-			key := nk + "\x00" + normKey(e.Type)
+			nk := ontology.NormKey(e.Name)
+			key := nk + "\x00" + ontology.NormKey(e.Type)
 			if i, ok := entityIdx[key]; ok {
 				dst := &out.Entities[i]
 				for k, v := range e.Attributes {
@@ -117,7 +114,7 @@ func mergeExtractions(results []*Extraction) *Extraction {
 	}
 
 	resolve := func(name string) string {
-		if n, ok := canon[normKey(name)]; ok {
+		if n, ok := canon[ontology.NormKey(name)]; ok {
 			return n
 		}
 		return name
@@ -128,7 +125,7 @@ func mergeExtractions(results []*Extraction) *Extraction {
 		for _, rel := range r.Relationships {
 			rel.SourceID = resolve(rel.SourceID)
 			rel.TargetID = resolve(rel.TargetID)
-			key := normKey(rel.SourceID) + "\x00" + normKey(rel.TargetID) + "\x00" + normKey(rel.Type)
+			key := ontology.NormKey(rel.SourceID) + "\x00" + ontology.NormKey(rel.TargetID) + "\x00" + ontology.NormKey(rel.Type)
 			if seenRel[key] {
 				continue
 			}
@@ -136,7 +133,7 @@ func mergeExtractions(results []*Extraction) *Extraction {
 			out.Relationships = append(out.Relationships, rel)
 		}
 		for _, m := range r.Memories {
-			key := normKey(m.Content)
+			key := ontology.NormKey(m.Content)
 			if seenMem[key] {
 				continue
 			}

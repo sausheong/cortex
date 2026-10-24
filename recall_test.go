@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/pgtest"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 func TestRecallFindsMemories(t *testing.T) {
@@ -770,7 +771,7 @@ func TestRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
 	}
 	for i := 0; i < n; i++ {
 		cv := testDeterministicVector(out.Results[i].Content)
-		if cos := float64(cosineSimilarity(queryVec, cv)); cos > want {
+		if cos := float64(vecmath.Cosine(queryVec, cv)); cos > want {
 			want = cos
 		}
 	}

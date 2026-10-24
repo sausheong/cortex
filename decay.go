@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 const (
@@ -80,7 +81,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 	for _, cd := range cands {
 		report.Scanned++
 		elapsed := now.Sub(cd.anchor)
-		newConf := decayedConfidence(cd.conf, elapsed, cfg.HalfLife)
+		newConf := vecmath.DecayConf(cd.conf, elapsed, cfg.HalfLife)
 		if newConf == cd.conf {
 			continue // no measurable change
 		}

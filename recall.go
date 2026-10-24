@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/vecmath"
 )
 
 // augmentForEmbedding prepends a memory's linked-entity context to its
@@ -91,7 +92,7 @@ func (c *Cortex) cosineStrength(ctx context.Context, query string, results []Res
 	queryVec := vecs[0]
 	var maxCos float64
 	for i := 0; i < n; i++ {
-		if cos := float64(cosineSimilarity(queryVec, vecs[i+1])); cos > maxCos {
+		if cos := float64(vecmath.Cosine(queryVec, vecs[i+1])); cos > maxCos {
 			maxCos = cos
 		}
 	}
@@ -138,7 +139,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// Execute sub-queries in parallel, collecting ranked lists and results.
 	var (
 		mu        sync.Mutex
-		lists     [][]rankedItem
+		lists     [][]vecmath.Ranked
 		resultMap = make(map[string]Result) // keyed by prefixed ID
 	)
 
@@ -185,7 +186,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	}
 
 	// Merge via reciprocal rank fusion.
-	merged := rrfMerge(lists, 60)
+	merged := vecmath.RRF(lists, 60)
 
 	// Confidence-weight the fusion score: a result's rank score is its RRF
 	// score scaled by how certain we are about it. Confidence is in [0,1];
@@ -227,20 +228,20 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// This also makes a dead vector path (e.g. embedder over quota → empty
 	// list) degrade cleanly to keyword order rather than a worse reranked one.
 	if cfg.Rerank && c.cfg.Embedder != nil && len(lists) > 1 && len(merged) > 1 {
-		cands := make([]mmrCandidate, 0, len(merged))
+		cands := make([]vecmath.MMRCand, 0, len(merged))
 		for _, item := range merged {
-			r, ok := resultMap[item.id]
+			r, ok := resultMap[item.ID]
 			if !ok {
 				continue
 			}
-			cands = append(cands, mmrCandidate{
-				id:    item.id, // prefixed key (mem:/chunk:/entity:)
-				score: weightedScore(item.score, r),
-				vec:   c.vectorForKey(ctx, item.id),
+			cands = append(cands, vecmath.MMRCand{
+				ID:    item.ID, // prefixed key (mem:/chunk:/entity:)
+				Score: weightedScore(item.Score, r),
+				Vec:   c.vectorForKey(ctx, item.ID),
 			})
 		}
 		// limit == len(cands) → MMR reorders every candidate, drops none.
-		order := mmrRerank(cands, RerankLambda, len(cands))
+		order := vecmath.MMR(cands, RerankLambda, len(cands))
 		for _, key := range order {
 			r := resultMap[key]
 			r.Score = weightedScore(rrfScore(merged, key), r)
@@ -252,8 +253,8 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		// re-sort by the confidence-weighted score (rrfMerge sorted by raw
 		// score).
 		for _, item := range merged {
-			if r, ok := resultMap[item.id]; ok {
-				r.Score = weightedScore(item.score, r)
+			if r, ok := resultMap[item.ID]; ok {
+				r.Score = weightedScore(item.Score, r)
 				final = append(final, r)
 			}
 		}
@@ -305,10 +306,10 @@ func (c *Cortex) vectorForKey(ctx context.Context, key string) []float32 {
 
 // rrfScore returns the raw fusion score for a prefixed key from the merged
 // list, or 0 if absent. Used to recover the score after MMR reorders by key.
-func rrfScore(merged []rankedItem, key string) float64 {
+func rrfScore(merged []vecmath.Ranked, key string) float64 {
 	for _, item := range merged {
-		if item.id == key {
-			return item.score
+		if item.ID == key {
+			return item.Score
 		}
 	}
 	return 0
@@ -336,7 +337,7 @@ func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQ
 
 // executeSubQuery runs a single sub-query and returns ranked items plus
 // a map of prefixed-ID to Result for later lookup.
-func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit int, mode model.TemporalMode) ([]vecmath.Ranked, map[string]Result) {
 	query, _ := sq.Params["query"].(string)
 	if query == "" {
 		return nil, nil
@@ -360,17 +361,17 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 	}
 }
 
-func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]vecmath.Ranked, map[string]Result) {
 	mems, err := c.searchMemoriesMode(ctx, query, limit, mode)
 	if err != nil || len(mems) == 0 {
 		return nil, nil
 	}
 
-	items := make([]rankedItem, len(mems))
+	items := make([]vecmath.Ranked, len(mems))
 	results := make(map[string]Result, len(mems))
 	for i, m := range mems {
 		key := "mem:" + m.ID
-		items[i] = rankedItem{id: key, rank: i}
+		items[i] = vecmath.Ranked{ID: key, Rank: i}
 		res := Result{
 			ID:         m.ID,
 			Type:       "memory",
@@ -398,7 +399,7 @@ func (c *Cortex) logf(format string, args ...any) {
 	}
 }
 
-func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]vecmath.Ranked, map[string]Result) {
 	if c.cfg.Embedder == nil {
 		return nil, nil
 	}
@@ -411,11 +412,11 @@ func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int
 		return nil, nil
 	}
 
-	items := make([]rankedItem, len(mems))
+	items := make([]vecmath.Ranked, len(mems))
 	results := make(map[string]Result, len(mems))
 	for i, m := range mems {
 		key := "mem:" + m.ID
-		items[i] = rankedItem{id: key, rank: i}
+		items[i] = vecmath.Ranked{ID: key, Rank: i}
 		res := Result{
 			ID:         m.ID,
 			Type:       "memory",
@@ -433,17 +434,17 @@ func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int
 	return items, results
 }
 
-func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]vecmath.Ranked, map[string]Result) {
 	chunks, err := c.SearchKeyword(ctx, query, limit)
 	if err != nil || len(chunks) == 0 {
 		return nil, nil
 	}
 
-	items := make([]rankedItem, len(chunks))
+	items := make([]vecmath.Ranked, len(chunks))
 	results := make(map[string]Result, len(chunks))
 	for i, ch := range chunks {
 		key := "chunk:" + ch.ID
-		items[i] = rankedItem{id: key, rank: i}
+		items[i] = vecmath.Ranked{ID: key, Rank: i}
 		conf := 1.0
 		if ch.EntityID != "" {
 			if e, err := c.GetEntity(ctx, ch.EntityID); err == nil {
@@ -461,7 +462,7 @@ func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]
 	return items, results
 }
 
-func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]vecmath.Ranked, map[string]Result) {
 	if c.cfg.Embedder == nil {
 		return nil, nil
 	}
@@ -475,11 +476,11 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 		return nil, nil
 	}
 
-	items := make([]rankedItem, len(chunks))
+	items := make([]vecmath.Ranked, len(chunks))
 	results := make(map[string]Result, len(chunks))
 	for i, ch := range chunks {
 		key := "chunk:" + ch.ID
-		items[i] = rankedItem{id: key, rank: i}
+		items[i] = vecmath.Ranked{ID: key, Rank: i}
 		conf := 1.0
 		if ch.EntityID != "" {
 			if e, err := c.GetEntity(ctx, ch.EntityID); err == nil {
@@ -497,7 +498,7 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 	return items, results
 }
 
-func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]vecmath.Ranked, map[string]Result) {
 	// Seed from the entities the sub-query names, then list each seed and
 	// its neighbours, nearest first, summarised with their relationships.
 	g := c.buildGraphContext(ctx, query, model.TemporalMode{})
@@ -520,7 +521,7 @@ func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]ra
 		ids = ids[:limit]
 	}
 
-	items := make([]rankedItem, 0, len(ids))
+	items := make([]vecmath.Ranked, 0, len(ids))
 	results := make(map[string]Result, len(ids))
 	for _, id := range ids {
 		e, err := c.GetEntity(ctx, id)
@@ -536,7 +537,7 @@ func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]ra
 			content += " [" + strings.Join(parts, ", ") + "]"
 		}
 		key := "entity:" + e.ID
-		items = append(items, rankedItem{id: key, rank: len(items)})
+		items = append(items, vecmath.Ranked{ID: key, Rank: len(items)})
 		results[key] = Result{
 			ID:         e.ID,
 			Type:       "entity",

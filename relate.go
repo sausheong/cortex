@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/sausheong/cortex/internal/llmutil"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -51,13 +52,13 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 		report.EntitiesScanned++
 		report.MemoriesScanned += len(mems)
 
-		rels, err := retryLLM(ctx, func() ([]MemoryRelation, error) { return det.DetectRelations(ctx, mems) })
+		rels, err := llmutil.RetryLLM(ctx, func() ([]MemoryRelation, error) { return det.DetectRelations(ctx, mems) })
 		if err != nil {
 			if ctx.Err() != nil {
 				return RelationReport{}, fmt.Errorf("cortex: detect relations for entity %s: %w", eid, err)
 			}
 			report.EntitiesSkipped++
-			addReportError(&report.Errors, "detect relations for entity %s: %v", eid, err)
+			llmutil.AddReportError(&report.Errors, "detect relations for entity %s: %v", eid, err)
 			if c.cfg.Logf != nil {
 				c.cfg.Logf("cortex: relate: skipping entity %s: %v", eid, err)
 			}

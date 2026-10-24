@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 )
 
 // PutRelationship upserts a relationship keyed on (source, target, type),
@@ -68,7 +69,7 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 
 	// A single-valued verb (lives_in, reports_to) holds one current target per
 	// source: asserting a new one closes the others.
-	if r.InvalidAt == nil && contains(singleValuedVerbs(), r.Type) {
+	if r.InvalidAt == nil && contains(ontology.SingleValuedVerbs(), r.Type) {
 		// Close at the new edge's start, else at the database's now(): the
 		// "holds now" check compares with the database clock, which may lag
 		// this process's.
