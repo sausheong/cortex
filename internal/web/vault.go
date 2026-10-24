@@ -114,7 +114,7 @@ func newVaultSet(set *vault.Set, now time.Time) *vaultSet {
 				continue
 			}
 			seen[p] = true
-			v.backlinks[p] = append(v.backlinks[p], backlink{Path: f.Path, Name: f.Name, Rel: relContext(f.Content, t)})
+			v.backlinks[p] = append(v.backlinks[p], backlink{Path: f.Path, Name: f.Name, Rel: relLabelIf(relContext(f.Content, t))})
 		}
 	}
 	return v
@@ -409,7 +409,8 @@ func (s *server) vaultList(w http.ResponseWriter, r *http.Request, u SessionUser
 type vaultPageView struct {
 	Path, Title, Folder, FolderLabel string
 	Props                            []prop
-	Exported                         string
+	Details                          []prop // identifiers, folded away
+	Exported                         exportedAt
 	Body                             template.HTML
 	Source                           string
 	ShowSource                       bool
@@ -448,8 +449,11 @@ func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser
 		body = strings.ReplaceAll(body, "See also: [[log]]\n", "")
 	}
 	props, exported := splitExported(parseProps(front))
+	props, details := s.friendlyProps(props)
+	body = humanizeRelLines(body)
 	v := vaultPageView{
-		Exported: exported,
+		Exported: s.exportedAt(exported),
+		Details:  details,
 		Path:     f.Path, Title: title, Folder: f.Folder, FolderLabel: folderLabel(f.Folder), Kind: string(f.Kind),
 		Props:      props,
 		Body:       renderMarkdown(body, vs.resolve),
@@ -593,4 +597,72 @@ type vaultMissingView struct{ Path string }
 // vaultMissing is the friendly 404 for a vault page that does not exist.
 func (s *server) vaultMissing(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusNotFound, "vault_missing", vaultMissingView{})
+}
+
+// relLabelIf humanizes a relationship word, leaving "" (not a relationship) alone.
+func relLabelIf(t string) string {
+	if t == "" {
+		return ""
+	}
+	return relLabel(t)
+}
+
+// humanizeRelLines rewrites the exporter's "- works_at → [[x]]" lines as
+// "- works at → [[x]]" so the page reads in words.
+func humanizeRelLines(md string) string {
+	lines := strings.Split(md, "\n")
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, "- ") {
+			continue
+		}
+		if t, rest, ok := strings.Cut(strings.TrimPrefix(ln, "- "), " → "); ok && !strings.Contains(t, " ") && strings.Contains(t, "_") && strings.HasPrefix(rest, "[[") {
+			lines[i] = "- " + relLabel(t) + " → " + rest
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// exportedAt is a vault timestamp shown like dates elsewhere: relative text
+// with the exact time in the title. Raw holds an unparseable stamp as-is.
+type exportedAt struct{ Ago, Abs, ISO, Raw string }
+
+func (e exportedAt) Any() bool { return e.Ago != "" || e.Raw != "" }
+
+func (s *server) exportedAt(raw string) exportedAt {
+	if raw == "" {
+		return exportedAt{}
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return exportedAt{Raw: raw}
+	}
+	return exportedAt{Ago: relTime(s.now(), t), Abs: absTime(t), ISO: t.UTC().Format(time.RFC3339)}
+}
+
+var propLabels = map[string]string{"created_at": "Created", "updated_at": "Updated"}
+
+// friendlyProps turns raw frontmatter rows into display rows: plain labels,
+// dates like the rest of the app, and identifiers moved into details.
+func (s *server) friendlyProps(in []prop) (out, details []prop) {
+	for _, p := range in {
+		if !p.Nested && p.Key == "cortex_id" {
+			p.Label = "Entity ID"
+			details = append(details, p)
+			continue
+		}
+		p.Label = propLabels[p.Key]
+		if p.Label == "" {
+			p.Label = strings.ReplaceAll(p.Key, "_", " ")
+			if p.Label != "" {
+				p.Label = strings.ToUpper(p.Label[:1]) + p.Label[1:]
+			}
+		}
+		if p.Key == "created_at" || p.Key == "updated_at" {
+			if e := s.exportedAt(p.Value); e.Ago != "" {
+				p.When = &e
+			}
+		}
+		out = append(out, p)
+	}
+	return out, details
 }

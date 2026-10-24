@@ -26,7 +26,7 @@ document.getElementById("main").focus()}).catch(function(){})},3000)})();
 </script>
 {{else if eq .Status "ready"}}
 {{if .Changes}}
-<p class="lede">Review the proposed changes. Nothing changes until you confirm, and the originals are kept for 30 days.</p>
+<p class="lede">Each change keeps one combined memory. The memories it replaces move to Recently deleted for 30 days, so you can restore them. Nothing changes until you confirm.</p>
 <form method="post" action="/compaction/{{.ID}}/apply">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="toolbar">
@@ -37,9 +37,9 @@ document.getElementById("main").focus()}).catch(function(){})},3000)})();
   {{range .Changes}}
   <section class="change">
     <label><input type="checkbox" name="idx" value="{{.Index}}"> <strong>{{.Label}}</strong></label>
-    <p>Replaces:</p>
+    <p><span class="note">Kept:</span> {{.Result}}</p>
+    <p class="note">Moves to Recently deleted for 30 days:</p>
     <ul>{{range .Sources}}<li>{{.}}</li>{{end}}</ul>
-    <p>With: {{.Result}}</p>
   </section>
   {{end}}
   </div>

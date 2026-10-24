@@ -197,6 +197,8 @@ func splitFrontmatter(content string) (front, body string) {
 type prop struct {
 	Key, Value string
 	Nested     bool
+	Label      string      // display label
+	When       *exportedAt // set for timestamps
 }
 
 var kvLine = regexp.MustCompile(`^(\s*)([A-Za-z0-9_.-]+):(?: (.*))?$`)

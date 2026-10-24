@@ -14,7 +14,7 @@
 /* Type scale (fixed rem, app UI): small 0.875, body 1, h2 1.25, h1 1.75. Weights: 400 body, 500 labels and links in nav, 600 headings and emphasis. */
 :root{accent-color:var(--accent)}
 :root{--font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;--text-sm:.875rem;--text-base:1rem;--text-lg:1.25rem;--text-xl:1.75rem;
---lh-body:1.55;--lh-tight:1.2;--measure:68ch;--w-body:400;--w-label:500;--w-strong:600}
+--lh-body:1.55;--lh-tight:1.2;--measure:64ch;--w-body:400;--w-label:500;--w-strong:600}
 body{margin:0;background:var(--bg);color:var(--fg);font:var(--w-body) var(--text-base)/var(--lh-body) var(--font);font-kerning:normal;-webkit-text-size-adjust:100%;text-rendering:optimizeLegibility}
 .top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 16px;padding:8px 16px;border-bottom:1px solid var(--line)}
 .top nav a{display:inline-flex;align-items:center;min-height:44px}
@@ -87,6 +87,7 @@ time,.conn-meta,.mem-meta,.status,dd,.selcount{font-variant-numeric:tabular-nums
 .consent li+li{margin-top:var(--s1)}
 .inline-form{display:inline;margin:0}
 .toolbar label.check{margin:0}
+.change input[type=checkbox]{width:20px;height:20px;margin:0 var(--s2) 0 0}
 .change>label strong{font-weight:var(--w-strong)}
 .section{margin-top:var(--s6)}
 .section>h3:first-of-type{margin-top:0}
@@ -143,7 +144,7 @@ details.more .search-row:not(.dates){grid-template-columns:repeat(2,minmax(0,12r
 #memlist{margin-top:var(--s4)}
 .memday+.memday{margin-top:var(--s5)}
 h2.day{margin:0 0 var(--s2);font-size:var(--text-base);font-weight:var(--w-strong);letter-spacing:0;color:var(--muted)}
-.mem-text{max-width:75ch}
+.mem-text{max-width:var(--measure)}
 .memlist li{padding:0}
 .mem{display:flex;align-items:flex-start;gap:var(--s3);margin:0;padding:var(--s3) var(--s1);font-size:inherit;font-weight:var(--w-body);line-height:var(--lh-body);color:var(--fg);cursor:pointer}
 .mem input[type=checkbox]{flex:none;margin:3px 0 0;width:20px;height:20px}
@@ -361,7 +362,10 @@ details.more .home-bullets{margin-top:var(--s1)}
 .doc-meta{margin:0 0 var(--s3)}
 .doc-links{display:flex;flex-wrap:wrap;gap:var(--s1) var(--s5);margin:0 0 var(--s3)}
 .doc-links a{display:inline-flex;align-items:center;min-height:44px}
-.props-block{margin:var(--s4) 0 var(--s5);padding:var(--s3) var(--s4);background:var(--accent-soft);border-radius:8px}
+.props-block{margin:var(--s4) 0 var(--s5);padding:var(--s3) 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.details-quiet{margin-top:var(--s2)}
+.details-quiet>summary{display:flex;align-items:center;width:fit-content;min-height:44px;color:var(--muted);font-size:var(--text-sm);cursor:pointer}
+.details-quiet .note{margin:0 0 var(--s2);overflow-wrap:anywhere}
 .props{margin:0;display:grid;gap:var(--s1)}
 .props>div{display:grid;grid-template-columns:minmax(6rem,9rem) minmax(0,1fr);gap:var(--s3);align-items:baseline}
 .props dt{color:var(--muted);font-size:var(--text-sm);font-weight:var(--w-label)}

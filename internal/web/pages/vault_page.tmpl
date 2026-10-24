@@ -14,13 +14,14 @@
 {{if .ShowSource}}
 <pre class="vault-source" tabindex="0" aria-label="Markdown source of {{.Path}}"><code>{{.Source}}</code></pre>
 {{else}}
-{{if .Props}}<section aria-labelledby="props-h" class="props-block"><h2 id="props-h" class="sr-only">Properties</h2>
-<dl class="props">{{range .Props}}{{if .Value}}<div class="{{if .Nested}}nested{{end}}"><dt>{{.Key}}</dt><dd>{{.Value}}</dd></div>{{else}}<div class="group"><dt>{{.Key}}</dt><dd></dd></div>{{end}}{{end}}</dl></section>{{end}}
+{{if or .Props .Details}}<section aria-labelledby="props-h" class="props-block"><h2 id="props-h" class="sr-only">Properties</h2>
+<dl class="props">{{range .Props}}{{if .When}}<div><dt>{{.Label}}</dt><dd><time datetime="{{.When.ISO}}" title="{{.When.Abs}}">{{.When.Ago}}</time></dd></div>{{else if .Value}}<div class="{{if .Nested}}nested{{end}}"><dt>{{.Label}}</dt><dd>{{.Value}}</dd></div>{{else}}<div class="group"><dt>{{.Label}}</dt><dd></dd></div>{{end}}{{end}}</dl>
+{{if .Details}}<details class="details-quiet"><summary>Details</summary>{{range .Details}}<p class="note"><span>{{.Label}}</span> <code>{{.Value}}</code></p>{{end}}</details>{{end}}</section>{{end}}
 <div class="prose">{{.Body}}</div>
 {{if .Backlinks}}<section class="backlinks" aria-labelledby="bl-h"><h2 id="bl-h">Backlinks</h2>
 <ul>{{range .Backlinks}}<li><a class="wikilink" href="/vault/{{vpath .Path}}">{{.Name}}</a>{{if .Rel}} <span class="note">{{.Rel}}</span>{{end}}</li>{{end}}</ul></section>{{end}}
 {{end}}
-{{if .Exported}}<p class="note doc-foot">Exported {{.Exported}}</p>{{end}}
+{{if .Exported.Any}}<p class="note doc-foot">Exported {{if .Exported.Ago}}<time datetime="{{.Exported.ISO}}" title="{{.Exported.Abs}}">{{.Exported.Ago}}</time>{{else}}{{.Exported.Raw}}{{end}}</p>{{end}}
 </article>
 {{end}}
 {{end}}

@@ -122,14 +122,14 @@ func TestVaultPageRendersLinksAndBacklinks(t *testing.T) {
 	if !strings.Contains(body, `<span class="unresolved" title="No page with this name">Ghost Person</span>`) || strings.Contains(body, `href="/vault/people/ghost`) {
 		t.Errorf("unresolved link wrong")
 	}
-	if !strings.Contains(body, "Engineer") || !strings.Contains(body, "cortex_id") || !strings.Contains(body, `class="props"`) {
+	if !strings.Contains(body, "Engineer") || !strings.Contains(body, "Details") || !strings.Contains(body, `class="props"`) {
 		t.Errorf("properties block missing")
 	}
 	if !strings.Contains(body, "/graph?center="+al[0].ID) || !strings.Contains(body, "/memories?entity="+al[0].ID) {
 		t.Errorf("graph/memories links missing")
 	}
 	_, body = e.get("/vault/organizations/stripe.md")
-	if !strings.Contains(body, `id="bl-h">Backlinks`) || !strings.Contains(body, `href="/vault/people/alice-chen.md"`) || !strings.Contains(body, "works_at") {
+	if !strings.Contains(body, `id="bl-h">Backlinks`) || !strings.Contains(body, `href="/vault/people/alice-chen.md"`) || !strings.Contains(body, "works at") || strings.Contains(body, "works_at") {
 		t.Errorf("backlinks missing: %s", body)
 	}
 	if strings.Count(body, "Backlinks") != 1 {
