@@ -1,6 +1,6 @@
 module github.com/sausheong/cortex
 
-go 1.25.1
+go 1.26.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.35.0
@@ -9,6 +9,8 @@ require (
 	github.com/mark3labs/mcp-go v0.47.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/sashabaranov/go-openai v1.41.2
+	github.com/yuin/goldmark v1.7.8
+	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.36.0
 	modernc.org/sqlite v1.50.1
 )
@@ -31,10 +33,9 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/goldmark v1.7.8 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
