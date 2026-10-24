@@ -1,7 +1,8 @@
-package cortex
+package integration_test
 
 import (
 	"context"
+	. "github.com/sausheong/cortex"
 	"testing"
 	"time"
 )

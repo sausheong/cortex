@@ -1,8 +1,10 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"fmt"
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 	"strings"
 	"sync"
 	"testing"
@@ -698,7 +700,7 @@ func testMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 	}
 	vec := make([]float32, 8)
 	vec[0] = 1
-	if err := cx.putEmbedding(ctx, drop.ID, "entity", vec); err != nil {
+	if err := putEmbedding(cx, ctx, drop.ID, "entity", vec); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := cx.MergeEntities(ctx, keep.ID, drop.ID)
@@ -709,7 +711,7 @@ func testMergeEntities_StaleEmbeddingDropped(t *testing.T) {
 		t.Errorf("Embeddings = %d, want 1", stats.Embeddings)
 	}
 	var count int
-	if err := cx.h.DB.QueryRowContext(ctx,
+	if err := testutil.H(cx).DB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE ref_id = ?`, drop.ID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
@@ -849,7 +851,7 @@ func TestMergeEntities_LocksRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A concurrent writer holds the keep row; the merge must wait for it.
-	tx, err := c.h.DB.BeginTx(ctx, nil)
+	tx, err := testutil.H(c).DB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

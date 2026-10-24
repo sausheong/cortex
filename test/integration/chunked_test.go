@@ -1,9 +1,11 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -236,7 +238,7 @@ func testRemember_ChunkExtractionFailureKeepsTheRest(t *testing.T) {
 		t.Fatalf("entities = %d, want 3 from the surviving chunks", len(ents))
 	}
 	var n int
-	if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM chunks WHERE user_id = ?`, c.h.UserID).Scan(&n); err != nil || n != 3 {
+	if err := testutil.H(c).DB.QueryRowContext(ctx, `SELECT count(*) FROM chunks WHERE user_id = ?`, testutil.H(c).UserID).Scan(&n); err != nil || n != 3 {
 		t.Fatalf("chunks stored = %d err=%v, want 3 (raw text kept for failed chunk too)", n, err)
 	}
 }

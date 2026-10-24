@@ -1,8 +1,9 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"fmt"
+	. "github.com/sausheong/cortex"
 	"strings"
 	"testing"
 )
