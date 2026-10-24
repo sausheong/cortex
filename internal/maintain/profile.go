@@ -1,4 +1,4 @@
-package cortex
+package maintain
 
 import (
 	"context"
@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/tenancy"
 	"github.com/sausheong/cortex/internal/vecmath"
@@ -18,45 +20,45 @@ import (
 
 // Reserved entity attribute keys for profiles.
 const (
-	attrProfile  = "_profile"  // cached digest (cachedProfile, JSON)
-	attrProfiled = "_profiled" // tracking marker (bool)
+	AttrProfile  = "_profile"  // cached digest (cachedProfile, JSON)
+	AttrProfiled = "_profiled" // tracking marker (bool)
 )
 
 // TrackProfile marks an entity for automatic profile refresh during Maintain.
 // The owner entity is always eligible regardless of this marker.
-func (c *Cortex) TrackProfile(ctx context.Context, entityID string) error {
-	e, err := c.GetEntity(ctx, entityID)
+func (c Ops) TrackProfile(ctx context.Context, entityID string) error {
+	e, err := graph.New(c.Handle).GetEntity(ctx, entityID)
 	if err != nil {
 		return err
 	}
 	if e.Attributes == nil {
 		e.Attributes = map[string]any{}
 	}
-	e.Attributes[attrProfiled] = true
-	return c.PutEntity(ctx, e)
+	e.Attributes[AttrProfiled] = true
+	return graph.New(c.Handle).PutEntity(ctx, e)
 }
 
 // UntrackProfile removes the tracking marker and drops any cached digest.
-func (c *Cortex) UntrackProfile(ctx context.Context, entityID string) error {
-	e, err := c.GetEntity(ctx, entityID)
+func (c Ops) UntrackProfile(ctx context.Context, entityID string) error {
+	e, err := graph.New(c.Handle).GetEntity(ctx, entityID)
 	if err != nil {
 		return err
 	}
 	if e.Attributes != nil {
-		delete(e.Attributes, attrProfiled)
-		delete(e.Attributes, attrProfile)
+		delete(e.Attributes, AttrProfiled)
+		delete(e.Attributes, AttrProfile)
 	}
-	return c.PutEntity(ctx, e)
+	return graph.New(c.Handle).PutEntity(ctx, e)
 }
 
-// profileEligibleIDs returns the IDs of entities that get auto-refreshed
+// ProfileEligibleIDs returns the IDs of entities that get auto-refreshed
 // profiles: the owner entity (source=owner) plus any entity flagged via
 // TrackProfile. Order is owner(s) first, then tracked; duplicates removed.
-func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
+func (c Ops) ProfileEligibleIDs(ctx context.Context) ([]string, error) {
 	seen := map[string]bool{}
 	var ids []string
 
-	owners, err := c.FindEntities(ctx, EntityFilter{Type: "person", Source: "owner"})
+	owners, err := graph.New(c.Handle).FindEntities(ctx, model.EntityFilter{Type: "person", Source: "owner"})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find owner entities: %w", err)
 	}
@@ -67,12 +69,12 @@ func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
 		}
 	}
 
-	all, err := c.FindEntities(ctx, EntityFilter{})
+	all, err := graph.New(c.Handle).FindEntities(ctx, model.EntityFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find entities: %w", err)
 	}
 	for _, e := range all {
-		if v, _ := e.Attributes[attrProfiled].(bool); v && !seen[e.ID] {
+		if v, _ := e.Attributes[AttrProfiled].(bool); v && !seen[e.ID] {
 			seen[e.ID] = true
 			ids = append(ids, e.ID)
 		}
@@ -85,10 +87,10 @@ func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
 // window, newest first, capped at recentK. Static = everything else, ranked
 // by confidence then recency, capped at staticCap. A memory in the recent
 // window is only ever dynamic (dynamic wins); statics are drawn from the rest.
-func partitionMemories(mems []Memory, cfg model.ProfileConfig, now time.Time) (static, dynamic []Memory) {
+func partitionMemories(mems []model.Memory, cfg model.ProfileConfig, now time.Time) (static, dynamic []model.Memory) {
 	cutoff := now.Add(-cfg.Window)
 
-	var recent, rest []Memory
+	var recent, rest []model.Memory
 	for _, m := range mems {
 		// Static memories are never dynamic: route straight to the static pool.
 		if m.Static {
@@ -126,7 +128,7 @@ func partitionMemories(mems []Memory, cfg model.ProfileConfig, now time.Time) (s
 	return static, dynamic
 }
 
-const profileStaticPrompt = "Below are stable, long-term facts about %s. " +
+const ProfileStaticPrompt = "Below are stable, long-term facts about %s. " +
 	"Write a concise, deduplicated bullet list that represents who they are as a whole person, " +
 	"covering (where the facts support it): identity, background, work, strengths and capabilities, " +
 	"preferences, and key relationships. Merge near-duplicate facts into one bullet and give no single " +
@@ -137,21 +139,21 @@ const profileDynamicPrompt = "Below are recent notes about %s. " +
 	"Distill them into a short bullet list of their current context and recent " +
 	"activity. One item per line, no preamble."
 
-// distillBucket turns a set of memories into digest lines. With an LLM
+// DistillBucket turns a set of memories into digest lines. With an LLM
 // configured it asks Summarize for a bullet list (instruction prepended,
 // name interpolated) and cleans the output into lines; on a nil LLM or any
 // Summarize error it falls back to the raw memory contents and reports
 // distilled=false (logging the error via logf when present). An empty bucket
 // returns (nil, true) without calling the LLM.
-func (c *Cortex) distillBucket(ctx context.Context, name, instruction string, mems []Memory) (lines []string, distilled bool) {
+func (c Ops) DistillBucket(ctx context.Context, name, instruction string, mems []model.Memory) (lines []string, distilled bool) {
 	lines, distilled, _ = c.distillBucketErr(ctx, name, instruction, mems)
 	return lines, distilled
 }
 
-// distillBucketErr is distillBucket plus the Summarize error (nil when the LLM
+// distillBucketErr is DistillBucket plus the Summarize error (nil when the LLM
 // was absent, returned nothing usable, or succeeded). Transient provider
 // failures are retried before falling back to raw contents.
-func (c *Cortex) distillBucketErr(ctx context.Context, name, instruction string, mems []Memory) (lines []string, distilled bool, err error) {
+func (c Ops) distillBucketErr(ctx context.Context, name, instruction string, mems []model.Memory) (lines []string, distilled bool, err error) {
 	if len(mems) == 0 {
 		return nil, true, nil
 	}
@@ -160,15 +162,15 @@ func (c *Cortex) distillBucketErr(ctx context.Context, name, instruction string,
 		raw[i] = m.Content
 	}
 
-	if c.h.Cfg.LLM == nil {
+	if c.Cfg.LLM == nil {
 		return raw, false, nil
 	}
 
 	texts := append([]string{fmt.Sprintf(instruction, name)}, raw...)
-	out, err := llmutil.RetryLLM(ctx, func() (string, error) { return c.h.Cfg.LLM.Summarize(ctx, texts) })
+	out, err := llmutil.RetryLLM(ctx, func() (string, error) { return c.Cfg.LLM.Summarize(ctx, texts) })
 	if err != nil {
-		if c.h.Cfg.Logf != nil {
-			c.h.Cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
+		if c.Cfg.Logf != nil {
+			c.Cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
 		}
 		return raw, false, err
 	}
@@ -198,7 +200,7 @@ func cleanBullets(s string) []string {
 	return out
 }
 
-// cachedProfile is the digest stored under attrProfile in an entity's
+// cachedProfile is the digest stored under AttrProfile in an entity's
 // attributes JSON.
 type cachedProfile struct {
 	Static      []string  `json:"static"`
@@ -212,26 +214,26 @@ type cachedProfile struct {
 // fresh, otherwise rebuilds and caches it. Freshness fails (forcing a rebuild)
 // when there is no cache, the cache is older than the TTL, or the entity's
 // current valid-memory count differs from the cached count.
-func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOption) (Profile, error) {
+func (c Ops) Profile(ctx context.Context, entityID string, opts ...model.ProfileOption) (model.Profile, error) {
 	cfg := model.DefaultProfileConfig()
 	for _, o := range opts {
 		o(&cfg)
 	}
 	now := time.Now().UTC()
 
-	e, err := c.GetEntity(ctx, entityID)
+	e, err := graph.New(c.Handle).GetEntity(ctx, entityID)
 	if err != nil {
-		return Profile{}, err
+		return model.Profile{}, err
 	}
 
-	mems, err := c.GetMemoriesByEntity(ctx, entityID)
+	mems, err := memory.New(c.Handle).GetMemoriesByEntity(ctx, entityID)
 	if err != nil {
-		return Profile{}, err
+		return model.Profile{}, err
 	}
 
 	// A cached undistilled digest is rebuilt once an LLM is available.
-	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.h.Cfg.LLM == nil) {
-		return Profile{
+	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.Cfg.LLM == nil) {
+		return model.Profile{
 			EntityID:  e.ID,
 			Name:      e.Name,
 			Static:    cp.Static,
@@ -248,32 +250,32 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 // CachedProfile returns the owner entity's stored digest without ever
 // building one or calling a model. ok is false when the user has no owner
 // entity or no digest has been built yet.
-func (c *Cortex) CachedProfile(ctx context.Context) (Profile, bool, error) {
-	id, err := tenancy.New(c.h).OwnerEntityID(ctx)
-	if errors.Is(err, ErrNotFound) {
-		return Profile{}, false, nil
+func (c Ops) CachedProfile(ctx context.Context) (model.Profile, bool, error) {
+	id, err := tenancy.New(c.Handle).OwnerEntityID(ctx)
+	if errors.Is(err, model.ErrNotFound) {
+		return model.Profile{}, false, nil
 	}
 	if err != nil {
-		return Profile{}, false, err
+		return model.Profile{}, false, err
 	}
-	e, err := c.GetEntity(ctx, id)
-	if errors.Is(err, ErrNotFound) {
-		return Profile{}, false, nil
+	e, err := graph.New(c.Handle).GetEntity(ctx, id)
+	if errors.Is(err, model.ErrNotFound) {
+		return model.Profile{}, false, nil
 	}
 	if err != nil {
-		return Profile{}, false, err
+		return model.Profile{}, false, err
 	}
 	cp, ok := readCachedProfile(e)
 	if !ok {
-		return Profile{}, false, nil
+		return model.Profile{}, false, nil
 	}
-	return Profile{EntityID: e.ID, Name: e.Name, Static: cp.Static, Dynamic: cp.Dynamic,
+	return model.Profile{EntityID: e.ID, Name: e.Name, Static: cp.Static, Dynamic: cp.Dynamic,
 		BuiltAt: cp.BuiltAt, Distilled: cp.Distilled, Cached: true}, true, nil
 }
 
 // buildProfileFromMemories partitions + distills the given memories, persists
 // the digest to the entity's attributes, and returns it with Cached=false.
-func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems []Memory, cfg model.ProfileConfig, now time.Time) (Profile, error) {
+func (c Ops) buildProfileFromMemories(ctx context.Context, e *model.Entity, mems []model.Memory, cfg model.ProfileConfig, now time.Time) (model.Profile, error) {
 	p, _, err := c.buildProfile(ctx, e, mems, cfg, now)
 	return p, err
 }
@@ -281,12 +283,12 @@ func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems [
 // buildProfile is buildProfileFromMemories plus the first distill error.
 // The static half is built from a diverse candidate selection (see
 // selectStaticCandidates) rather than the N highest-confidence memories.
-func (c *Cortex) buildProfile(ctx context.Context, e *Entity, mems []Memory, cfg model.ProfileConfig, now time.Time) (p Profile, distillErr, err error) {
+func (c Ops) buildProfile(ctx context.Context, e *model.Entity, mems []model.Memory, cfg model.ProfileConfig, now time.Time) (p model.Profile, distillErr, err error) {
 	poolCfg := cfg
 	poolCfg.StaticCap = len(mems) + 1 // partition keeps the whole static pool; diversity trims it
 	staticPool, dynamicMems := partitionMemories(mems, poolCfg, now)
 	staticMems := selectStaticCandidates(staticPool, e.ID, cfg.StaticCap)
-	staticLines, sDist, sErr := c.distillBucketErr(ctx, e.Name, profileStaticPrompt, staticMems)
+	staticLines, sDist, sErr := c.distillBucketErr(ctx, e.Name, ProfileStaticPrompt, staticMems)
 	dynamicLines, dDist, dErr := c.distillBucketErr(ctx, e.Name, profileDynamicPrompt, dynamicMems)
 	distilled := sDist && dDist
 	distillErr = sErr
@@ -304,12 +306,12 @@ func (c *Cortex) buildProfile(ctx context.Context, e *Entity, mems []Memory, cfg
 	if e.Attributes == nil {
 		e.Attributes = map[string]any{}
 	}
-	e.Attributes[attrProfile] = cp
-	if err := c.PutEntity(ctx, e); err != nil {
-		return Profile{}, distillErr, fmt.Errorf("cortex: persist profile: %w", err)
+	e.Attributes[AttrProfile] = cp
+	if err := graph.New(c.Handle).PutEntity(ctx, e); err != nil {
+		return model.Profile{}, distillErr, fmt.Errorf("cortex: persist profile: %w", err)
 	}
 
-	return Profile{
+	return model.Profile{
 		EntityID:  e.ID,
 		Name:      e.Name,
 		Static:    staticLines,
@@ -323,8 +325,8 @@ func (c *Cortex) buildProfile(ctx context.Context, e *Entity, mems []Memory, cfg
 // readCachedProfile decodes the cached digest from an entity's attributes.
 // The value round-trips through JSON because attributes are stored as JSON
 // (a freshly-set value is a cachedProfile; a reloaded value is a map).
-func readCachedProfile(e *Entity) (cachedProfile, bool) {
-	raw, ok := e.Attributes[attrProfile]
+func readCachedProfile(e *model.Entity) (cachedProfile, bool) {
+	raw, ok := e.Attributes[AttrProfile]
 	if !ok {
 		return cachedProfile{}, false
 	}
@@ -357,12 +359,12 @@ func isFresh(cp cachedProfile, currentCount int, cfg model.ProfileConfig, now ti
 // (owner + tracked). It forces a rebuild regardless of TTL so a scheduled
 // Maintain run always refreshes. A single entity's build failure is recorded
 // in the report's Skipped list and does not abort the pass.
-func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (ProfileReport, error) {
-	ids, err := c.profileEligibleIDs(ctx)
+func (c Ops) RefreshProfiles(ctx context.Context, opts ...model.ProfileOption) (model.ProfileReport, error) {
+	ids, err := c.ProfileEligibleIDs(ctx)
 	if err != nil {
-		return ProfileReport{}, err
+		return model.ProfileReport{}, err
 	}
-	rep := ProfileReport{Scanned: len(ids)}
+	rep := model.ProfileReport{Scanned: len(ids)}
 	// Force a rebuild each run by collapsing the TTL; caller opts still apply
 	// after this (so an explicit WithProfileTTL would override, which is fine).
 	cfg := model.DefaultProfileConfig()
@@ -376,8 +378,8 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 				return rep, ctx.Err()
 			}
 			rep.Skipped = append(rep.Skipped, id)
-			if c.h.Cfg.Logf != nil {
-				c.h.Cfg.Logf("cortex: refresh profile %s: %v", id, err)
+			if c.Cfg.Logf != nil {
+				c.Cfg.Logf("cortex: refresh profile %s: %v", id, err)
 			}
 			continue
 		}
@@ -391,14 +393,14 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 }
 
 // rebuildProfile forces a rebuild of one entity's digest, ignoring the cache.
-func (c *Cortex) rebuildProfile(ctx context.Context, entityID string, cfg model.ProfileConfig) (p Profile, distillErr, err error) {
-	e, err := c.GetEntity(ctx, entityID)
+func (c Ops) rebuildProfile(ctx context.Context, entityID string, cfg model.ProfileConfig) (p model.Profile, distillErr, err error) {
+	e, err := graph.New(c.Handle).GetEntity(ctx, entityID)
 	if err != nil {
-		return Profile{}, nil, err
+		return model.Profile{}, nil, err
 	}
-	mems, err := c.GetMemoriesByEntity(ctx, entityID)
+	mems, err := memory.New(c.Handle).GetMemoriesByEntity(ctx, entityID)
 	if err != nil {
-		return Profile{}, nil, err
+		return model.Profile{}, nil, err
 	}
 	return c.buildProfile(ctx, e, mems, cfg, time.Now().UTC())
 }
@@ -440,7 +442,7 @@ func wordSet(norm string) map[string]struct{} {
 
 // staticPriority ranks a memory for inclusion in the static half: identity-ish
 // content and confidence first, a Static flag as a bonus.
-func staticPriority(m Memory) float64 {
+func staticPriority(m model.Memory) float64 {
 	score := m.Confidence
 	if m.Static {
 		score += 0.5
@@ -461,11 +463,11 @@ func staticPriority(m Memory) float64 {
 // (same normalized text or word-set Jaccard >= staticNearDupJaccard) are
 // dropped, and at most staticPerEntityCap chosen memories may link to any one
 // entity other than selfID.
-func selectStaticCandidates(pool []Memory, selfID string, limit int) []Memory {
+func selectStaticCandidates(pool []model.Memory, selfID string, limit int) []model.Memory {
 	if limit <= 0 || len(pool) == 0 {
 		return nil
 	}
-	ranked := append([]Memory(nil), pool...)
+	ranked := append([]model.Memory(nil), pool...)
 	sort.SliceStable(ranked, func(i, j int) bool {
 		pi, pj := staticPriority(ranked[i]), staticPriority(ranked[j])
 		if pi != pj {
@@ -474,7 +476,7 @@ func selectStaticCandidates(pool []Memory, selfID string, limit int) []Memory {
 		return ranked[i].CreatedAt.After(ranked[j].CreatedAt)
 	})
 
-	var out []Memory
+	var out []model.Memory
 	var sets []map[string]struct{}
 	perEntity := map[string]int{}
 	for _, m := range ranked {

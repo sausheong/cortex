@@ -1,4 +1,4 @@
-package cortex
+package maintain
 
 import (
 	"context"
@@ -19,21 +19,21 @@ import (
 // strictly newer than the stale one and both are currently valid.
 //
 // Use ApplyReconcile to actually invalidate the proposed stale memories.
-func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (ReconcileReport, error) {
+func (c Ops) Reconcile(ctx context.Context, opts ...model.ReconcileOption) (model.ReconcileReport, error) {
 	cfg := &model.ReconcileConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	rec, ok := c.h.Cfg.LLM.(Reconciler)
-	if c.h.Cfg.LLM == nil || !ok {
-		return ReconcileReport{
+	rec, ok := c.Cfg.LLM.(model.Reconciler)
+	if c.Cfg.LLM == nil || !ok {
+		return model.ReconcileReport{
 			Skipped:    true,
 			SkipReason: "no Reconciler-capable LLM configured",
 		}, nil
 	}
 
-	var report ReconcileReport
+	var report model.ReconcileReport
 
 	// seen dedups proposals across entity passes within a single run: a memory
 	// linked to multiple entities is evaluated once per entity, so the same
@@ -42,13 +42,13 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 
 	entityIDs, err := c.allEntityIDs(ctx)
 	if err != nil {
-		return ReconcileReport{}, err
+		return model.ReconcileReport{}, err
 	}
 
 	for _, eid := range entityIDs {
-		mems, err := c.GetMemoriesByEntity(ctx, eid) // currently-valid only (Tier 2a default)
+		mems, err := memory.New(c.Handle).GetMemoriesByEntity(ctx, eid) // currently-valid only (Tier 2a default)
 		if err != nil {
-			return ReconcileReport{}, err
+			return model.ReconcileReport{}, err
 		}
 		if len(mems) < 2 {
 			continue
@@ -56,21 +56,21 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 		report.EntitiesScanned++
 		report.MemoriesScanned += len(mems)
 
-		pairs, err := llmutil.RetryLLM(ctx, func() ([]ConflictPair, error) { return rec.DetectConflicts(ctx, mems) })
+		pairs, err := llmutil.RetryLLM(ctx, func() ([]model.ConflictPair, error) { return rec.DetectConflicts(ctx, mems) })
 		if err != nil {
 			if ctx.Err() != nil {
-				return ReconcileReport{}, fmt.Errorf("cortex: detect conflicts for entity %s: %w", eid, err)
+				return model.ReconcileReport{}, fmt.Errorf("cortex: detect conflicts for entity %s: %w", eid, err)
 			}
 			// A provider failure for one entity must not abort the run.
 			report.EntitiesSkipped++
 			llmutil.AddReportError(&report.Errors, "detect conflicts for entity %s: %v", eid, err)
-			if c.h.Cfg.Logf != nil {
-				c.h.Cfg.Logf("cortex: reconcile: skipping entity %s: %v", eid, err)
+			if c.Cfg.Logf != nil {
+				c.Cfg.Logf("cortex: reconcile: skipping entity %s: %v", eid, err)
 			}
 			continue
 		}
 
-		byID := make(map[string]Memory, len(mems))
+		byID := make(map[string]model.Memory, len(mems))
 		for _, m := range mems {
 			byID[m.ID] = m
 		}
@@ -80,14 +80,14 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 			newer, nOK := byID[p.SupersededByID]
 			// Deterministic gate.
 			if !sOK || !nOK {
-				report.Rejected = append(report.Rejected, RejectedPair{
+				report.Rejected = append(report.Rejected, model.RejectedPair{
 					StaleID: p.StaleID, SupersededByID: p.SupersededByID,
 					Reason: "id not in current candidate set",
 				})
 				continue
 			}
 			if !newer.CreatedAt.After(stale.CreatedAt) {
-				report.Rejected = append(report.Rejected, RejectedPair{
+				report.Rejected = append(report.Rejected, model.RejectedPair{
 					StaleID: p.StaleID, SupersededByID: p.SupersededByID,
 					Reason: "superseding memory is not strictly newer than stale memory",
 				})
@@ -98,7 +98,7 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 				continue // already proposed in an earlier entity pass
 			}
 			seen[key] = true
-			report.Proposed = append(report.Proposed, Supersession{
+			report.Proposed = append(report.Proposed, model.Supersession{
 				StaleID:             stale.ID,
 				StaleContent:        stale.Content,
 				SupersededByID:      newer.ID,
@@ -124,18 +124,18 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 // error it returns that error; supersessions applied before the failure remain
 // applied (soft-invalidation is reversible). Returns the Skipped report
 // unchanged when no Reconciler is configured.
-func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (ReconcileReport, error) {
+func (c Ops) ApplyReconcile(ctx context.Context, opts ...model.ReconcileOption) (model.ReconcileReport, error) {
 	report, err := c.Reconcile(ctx, opts...)
 	if err != nil || report.Skipped {
 		return report, err
 	}
 	for _, p := range report.Proposed {
 		invalidAt := p.InvalidAt
-		if err := c.InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
+		if err := memory.New(c.Handle).InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
 			return report, fmt.Errorf("cortex: apply supersession (stale %s): %w", p.StaleID, err)
 		}
-		edge := &MemoryEdge{SourceID: p.SupersededByID, TargetID: p.StaleID, Type: EdgeSupersedes}
-		if err := c.PutMemoryEdge(ctx, edge); err != nil {
+		edge := &model.MemoryEdge{SourceID: p.SupersededByID, TargetID: p.StaleID, Type: model.EdgeSupersedes}
+		if err := memory.New(c.Handle).PutMemoryEdge(ctx, edge); err != nil {
 			return report, fmt.Errorf("cortex: record supersedes edge (stale %s): %w", p.StaleID, err)
 		}
 	}
@@ -143,8 +143,8 @@ func (c *Cortex) ApplyReconcile(ctx context.Context, opts ...ReconcileOption) (R
 }
 
 // allEntityIDs returns every entity id in the graph.
-func (c *Cortex) allEntityIDs(ctx context.Context) ([]string, error) {
-	rows, err := c.h.DB.QueryContext(ctx, `SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL`, c.h.UserID)
+func (c Ops) allEntityIDs(ctx context.Context) ([]string, error) {
+	rows, err := c.DB.QueryContext(ctx, `SELECT id FROM entities WHERE user_id = ? AND deleted_at IS NULL`, c.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: list entity ids: %w", err)
 	}
@@ -173,26 +173,26 @@ func (c *Cortex) allEntityIDs(ctx context.Context) ([]string, error) {
 // report's Rejected list with a reason. A Skipped input report is returned
 // unchanged. The returned report's Proposed list contains only the
 // supersessions that were actually applied.
-func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileReport) (ReconcileReport, error) {
+func (c Ops) ApplyReconcileReport(ctx context.Context, report model.ReconcileReport) (model.ReconcileReport, error) {
 	if report.Skipped {
 		return report, nil
 	}
 
-	out := ReconcileReport{
+	out := model.ReconcileReport{
 		EntitiesScanned: report.EntitiesScanned,
 		MemoriesScanned: report.MemoriesScanned,
 	}
 
 	for _, p := range report.Proposed {
-		stale, err := memory.New(c.h).GetMemoryByID(ctx, p.StaleID)
-		if errors.Is(err, ErrNotFound) {
+		stale, err := memory.New(c.Handle).GetMemoryByID(ctx, p.StaleID)
+		if errors.Is(err, model.ErrNotFound) {
 			stale, err = nil, nil
 		}
 		if err != nil {
 			return out, err
 		}
-		newer, err := memory.New(c.h).GetMemoryByID(ctx, p.SupersededByID)
-		if errors.Is(err, ErrNotFound) {
+		newer, err := memory.New(c.Handle).GetMemoryByID(ctx, p.SupersededByID)
+		if errors.Is(err, model.ErrNotFound) {
 			newer, err = nil, nil
 		}
 		if err != nil {
@@ -201,18 +201,18 @@ func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileRepor
 
 		reason, ok := revalidateSupersession(stale, newer)
 		if !ok {
-			out.Rejected = append(out.Rejected, RejectedPair{
+			out.Rejected = append(out.Rejected, model.RejectedPair{
 				StaleID: p.StaleID, SupersededByID: p.SupersededByID, Reason: reason,
 			})
 			continue
 		}
 
 		invalidAt := p.InvalidAt
-		if err := c.InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
+		if err := memory.New(c.Handle).InvalidateMemory(ctx, p.StaleID, &invalidAt); err != nil {
 			return out, fmt.Errorf("cortex: apply reviewed supersession (stale %s): %w", p.StaleID, err)
 		}
-		edge := &MemoryEdge{SourceID: p.SupersededByID, TargetID: p.StaleID, Type: EdgeSupersedes}
-		if err := c.PutMemoryEdge(ctx, edge); err != nil {
+		edge := &model.MemoryEdge{SourceID: p.SupersededByID, TargetID: p.StaleID, Type: model.EdgeSupersedes}
+		if err := memory.New(c.Handle).PutMemoryEdge(ctx, edge); err != nil {
 			return out, fmt.Errorf("cortex: record reviewed supersedes edge (stale %s): %w", p.StaleID, err)
 		}
 		out.Proposed = append(out.Proposed, p)
@@ -224,7 +224,7 @@ func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileRepor
 // revalidateSupersession re-checks the deterministic gate against current
 // memory state. Returns ("", true) when the supersession may be applied,
 // or (reason, false) when it must be skipped.
-func revalidateSupersession(stale, newer *Memory) (string, bool) {
+func revalidateSupersession(stale, newer *model.Memory) (string, bool) {
 	if stale == nil {
 		return "stale memory no longer exists", false
 	}

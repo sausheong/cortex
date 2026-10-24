@@ -1,10 +1,11 @@
-package cortex
+package maintain
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -15,21 +16,21 @@ import (
 // marked Skipped. The record-vs-reject decision is made by a deterministic
 // gate here, not by the LLM. Edge writes are idempotent (PutMemoryEdge), so
 // re-running does not stack edges. This never modifies or deletes memories.
-func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (RelationReport, error) {
+func (c Ops) BuildMemoryEdges(ctx context.Context, opts ...model.RelateOption) (model.RelationReport, error) {
 	cfg := &model.RelateConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	det, ok := c.h.Cfg.LLM.(RelationDetector)
-	if c.h.Cfg.LLM == nil || !ok {
-		return RelationReport{
+	det, ok := c.Cfg.LLM.(model.RelationDetector)
+	if c.Cfg.LLM == nil || !ok {
+		return model.RelationReport{
 			Skipped:    true,
 			SkipReason: "no RelationDetector-capable LLM configured",
 		}, nil
 	}
 
-	var report RelationReport
+	var report model.RelationReport
 
 	// Dedup proposals across entity passes; keyed by an order-insensitive
 	// pair+type signature so an (a,b,extends) seen under one shared entity
@@ -38,13 +39,13 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 
 	entityIDs, err := c.allEntityIDs(ctx)
 	if err != nil {
-		return RelationReport{}, err
+		return model.RelationReport{}, err
 	}
 
 	for _, eid := range entityIDs {
-		mems, err := c.GetMemoriesByEntity(ctx, eid) // currently-valid only
+		mems, err := memory.New(c.Handle).GetMemoriesByEntity(ctx, eid) // currently-valid only
 		if err != nil {
-			return RelationReport{}, err
+			return model.RelationReport{}, err
 		}
 		if len(mems) < 2 {
 			continue
@@ -52,20 +53,20 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 		report.EntitiesScanned++
 		report.MemoriesScanned += len(mems)
 
-		rels, err := llmutil.RetryLLM(ctx, func() ([]MemoryRelation, error) { return det.DetectRelations(ctx, mems) })
+		rels, err := llmutil.RetryLLM(ctx, func() ([]model.MemoryRelation, error) { return det.DetectRelations(ctx, mems) })
 		if err != nil {
 			if ctx.Err() != nil {
-				return RelationReport{}, fmt.Errorf("cortex: detect relations for entity %s: %w", eid, err)
+				return model.RelationReport{}, fmt.Errorf("cortex: detect relations for entity %s: %w", eid, err)
 			}
 			report.EntitiesSkipped++
 			llmutil.AddReportError(&report.Errors, "detect relations for entity %s: %v", eid, err)
-			if c.h.Cfg.Logf != nil {
-				c.h.Cfg.Logf("cortex: relate: skipping entity %s: %v", eid, err)
+			if c.Cfg.Logf != nil {
+				c.Cfg.Logf("cortex: relate: skipping entity %s: %v", eid, err)
 			}
 			continue
 		}
 
-		inSet := make(map[string]Memory, len(mems))
+		inSet := make(map[string]model.Memory, len(mems))
 		for _, m := range mems {
 			inSet[m.ID] = m
 		}
@@ -73,18 +74,18 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 		for _, r := range rels {
 			reason, okGate := c.gateRelation(ctx, r, inSet, seen)
 			if !okGate {
-				report.Rejected = append(report.Rejected, RejectedRelation{
+				report.Rejected = append(report.Rejected, model.RejectedRelation{
 					SourceID: r.SourceID, TargetID: r.TargetID, Type: r.Type, Reason: reason,
 				})
 				continue
 			}
-			edge := &MemoryEdge{SourceID: r.SourceID, TargetID: r.TargetID, Type: r.Type}
-			if err := c.PutMemoryEdge(ctx, edge); err != nil {
+			edge := &model.MemoryEdge{SourceID: r.SourceID, TargetID: r.TargetID, Type: r.Type}
+			if err := memory.New(c.Handle).PutMemoryEdge(ctx, edge); err != nil {
 				return report, fmt.Errorf("cortex: record %s edge: %w", r.Type, err)
 			}
 			src := inSet[r.SourceID]
 			tgt := inSet[r.TargetID]
-			report.Proposed = append(report.Proposed, RelationProposal{
+			report.Proposed = append(report.Proposed, model.RelationProposal{
 				SourceID: r.SourceID, SourceContent: src.Content,
 				TargetID: r.TargetID, TargetContent: tgt.Content,
 				Type: r.Type, Reason: r.Reason,
@@ -96,8 +97,8 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 
 // gateRelation is the deterministic gate. Returns ("", true) to record, or
 // (reason, false) to reject.
-func (c *Cortex) gateRelation(ctx context.Context, r MemoryRelation, inSet map[string]Memory, seen map[string]bool) (string, bool) {
-	if r.Type != EdgeDerives && r.Type != EdgeExtends {
+func (c Ops) gateRelation(ctx context.Context, r model.MemoryRelation, inSet map[string]model.Memory, seen map[string]bool) (string, bool) {
+	if r.Type != model.EdgeDerives && r.Type != model.EdgeExtends {
 		return "unsupported relation type", false
 	}
 	if r.SourceID == r.TargetID {
@@ -119,7 +120,7 @@ func (c *Cortex) gateRelation(ctx context.Context, r MemoryRelation, inSet map[s
 		return "duplicate relation in this run", false
 	}
 	// Already-persisted edge of this type in either direction?
-	existing, err := c.GetMemoryEdgesByType(ctx, r.SourceID, r.Type)
+	existing, err := memory.New(c.Handle).GetMemoryEdgesByType(ctx, r.SourceID, r.Type)
 	if err == nil {
 		for _, e := range existing {
 			if (e.SourceID == r.SourceID && e.TargetID == r.TargetID) ||

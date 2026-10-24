@@ -3,6 +3,7 @@ package cortex
 import (
 	"context"
 
+	"github.com/sausheong/cortex/internal/maintain"
 	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 )
@@ -42,3 +43,19 @@ func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mo
 const reembedLockSQL = memory.ReembedLockSQL
 
 func vectorLiteral(v []float32) string { return memory.VectorLiteral(v) }
+
+// Wrappers for internal/maintain.
+
+const (
+	attrProfile         = maintain.AttrProfile
+	attrProfiled        = maintain.AttrProfiled
+	profileStaticPrompt = maintain.ProfileStaticPrompt
+)
+
+func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
+	return maintain.New(c.h).ProfileEligibleIDs(ctx)
+}
+
+func (c *Cortex) distillBucket(ctx context.Context, name, instruction string, mems []Memory) ([]string, bool) {
+	return maintain.New(c.h).DistillBucket(ctx, name, instruction, mems)
+}

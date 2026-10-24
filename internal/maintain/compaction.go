@@ -1,4 +1,4 @@
-package cortex
+package maintain
 
 import (
 	"context"
@@ -32,16 +32,16 @@ type compactCand struct {
 }
 
 var compactPrompts = map[string]string{
-	CompactMerge:   "These memories are near-duplicates. Merge them into one concise memory that keeps every distinct fact. Reply with the merged memory only.",
-	CompactCombine: "These memories are closely related. Combine them into one concise memory that keeps every distinct fact. Reply with the combined memory only.",
-	CompactRollup:  "These are older memories about one subject. Summarize them into one concise memory that keeps the lasting facts. Reply with the summary only.",
+	model.CompactMerge:   "These memories are near-duplicates. Merge them into one concise memory that keeps every distinct fact. Reply with the merged memory only.",
+	model.CompactCombine: "These memories are closely related. Combine them into one concise memory that keeps every distinct fact. Reply with the combined memory only.",
+	model.CompactRollup:  "These are older memories about one subject. Summarize them into one concise memory that keeps the lasting facts. Reply with the summary only.",
 }
 
 // ProposeCompaction proposes merges, combinations and rollups of this user's
 // live memories using the user's LLM. Only the active embedding generation is
 // read. Nothing is written.
-func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
-	if c.h.Cfg.LLM == nil {
+func (c Ops) ProposeCompaction(ctx context.Context) ([]model.Change, error) {
+	if c.Cfg.LLM == nil {
 		return nil, fmt.Errorf("cortex: no LLM configured")
 	}
 	cands, err := c.compactCandidates(ctx)
@@ -95,7 +95,7 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 	}
 
 	used := map[string]bool{}
-	var changes []Change
+	var changes []model.Change
 	add := func(kind string, idx []int) error {
 		if len(idx) > compactMaxGroup {
 			idx = idx[:compactMaxGroup]
@@ -114,7 +114,7 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 		return nil
 	}
 	for _, g := range group(parentMerge) {
-		if err := add(CompactMerge, g); err != nil {
+		if err := add(model.CompactMerge, g); err != nil {
 			return nil, err
 		}
 	}
@@ -126,7 +126,7 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 			}
 		}
 		if len(free) > 1 {
-			if err := add(CompactCombine, free); err != nil {
+			if err := add(model.CompactCombine, free); err != nil {
 				return nil, err
 			}
 		}
@@ -134,11 +134,11 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 
 	// Rollups: old non-static memories grouped by entity.
 	cutoff := time.Now().Add(-compactRollupAge)
-	rows, err := c.h.DB.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT me.entity_id, m.id, m.content
 		 FROM memories m JOIN memory_entities me ON me.memory_id = m.id AND me.user_id = m.user_id
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.static = false AND m.created_at < ?
-		 ORDER BY me.entity_id, m.created_at, m.id`, c.h.UserID, cutoff)
+		 ORDER BY me.entity_id, m.created_at, m.id`, c.UserID, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: rollup candidates: %w", err)
 	}
@@ -175,14 +175,14 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 		if len(free) > compactMaxGroup {
 			free = free[:compactMaxGroup]
 		}
-		ch := Change{Kind: CompactRollup}
+		ch := model.Change{Kind: model.CompactRollup}
 		var texts []string
 		for _, m := range free {
 			ch.SourceIDs = append(ch.SourceIDs, m.id)
 			ch.Sources = append(ch.Sources, m.content)
 			texts = append(texts, m.content)
 		}
-		res, err := c.compactSummarize(ctx, CompactRollup, texts)
+		res, err := c.compactSummarize(ctx, model.CompactRollup, texts)
 		if err != nil {
 			return nil, err
 		}
@@ -198,17 +198,17 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 	return changes, nil
 }
 
-func (c *Cortex) compactSummarize(ctx context.Context, kind string, texts []string) (string, error) {
+func (c Ops) compactSummarize(ctx context.Context, kind string, texts []string) (string, error) {
 	in := append([]string{compactPrompts[kind]}, texts...)
-	out, err := c.h.Cfg.LLM.Summarize(ctx, in)
+	out, err := c.Cfg.LLM.Summarize(ctx, in)
 	if err != nil {
 		return "", fmt.Errorf("cortex: compaction summarize: %w", err)
 	}
 	return strings.TrimSpace(out), nil
 }
 
-func (c *Cortex) compactChange(ctx context.Context, kind string, cands []compactCand, idx []int) (*Change, error) {
-	ch := &Change{Kind: kind}
+func (c Ops) compactChange(ctx context.Context, kind string, cands []compactCand, idx []int) (*model.Change, error) {
+	ch := &model.Change{Kind: kind}
 	var texts []string
 	for _, i := range idx {
 		ch.SourceIDs = append(ch.SourceIDs, cands[i].id)
@@ -229,14 +229,14 @@ func (c *Cortex) compactChange(ctx context.Context, kind string, cands []compact
 
 // compactCandidates loads live memories with an active-generation embedding,
 // newest first, capped.
-func (c *Cortex) compactCandidates(ctx context.Context) ([]compactCand, error) {
-	rows, err := c.h.DB.QueryContext(ctx,
+func (c Ops) compactCandidates(ctx context.Context) ([]compactCand, error) {
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT m.id, m.content, m.static, m.created_at, e.embedding::text
 		 FROM memories m JOIN embeddings e
 		   ON e.ref_id = m.id AND e.ref_type = 'memory' AND e.user_id = m.user_id
 		  AND e.generation = (SELECT active_embedding_generation FROM users WHERE id = ?)
 		 WHERE m.user_id = ? AND m.deleted_at IS NULL
-		 ORDER BY m.created_at DESC, m.id LIMIT ?`, c.h.UserID, c.h.UserID, compactMaxCands)
+		 ORDER BY m.created_at DESC, m.id LIMIT ?`, c.UserID, c.UserID, compactMaxCands)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: compaction candidates: %w", err)
 	}
@@ -260,7 +260,7 @@ func (c *Cortex) compactCandidates(ctx context.Context) ([]compactCand, error) {
 // edge to every source, and soft-deletes the sources (by "compaction"), all
 // in one batch. Every source must be one of this user's live memories, else
 // ErrNotFound is returned and nothing is written.
-func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string, error) {
+func (c Ops) ApplyCompaction(ctx context.Context, changes []model.Change) (string, error) {
 	if len(changes) == 0 {
 		return "", nil
 	}
@@ -280,12 +280,12 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 	}
 	// Embed results first so a failure writes nothing.
 	var vecs [][]float32
-	if c.h.Cfg.Embedder != nil {
+	if c.Cfg.Embedder != nil {
 		texts := make([]string, len(changes))
 		for i, ch := range changes {
 			texts[i] = ch.Result
 		}
-		v, err := c.h.Cfg.Embedder.Embed(ctx, texts)
+		v, err := c.Cfg.Embedder.Embed(ctx, texts)
 		if err != nil {
 			return "", fmt.Errorf("cortex: embed compaction results: %w", err)
 		}
@@ -295,14 +295,14 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 		vecs = v
 	}
 
-	tx, err := c.h.DB.BeginTx(ctx, nil)
+	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
 	ph := make([]string, len(all))
-	args := []any{c.h.UserID}
+	args := []any{c.UserID}
 	for i, id := range all {
 		ph[i] = "?"
 		args = append(args, id)
@@ -317,7 +317,7 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 		return "", model.NotFound("cortex: compaction source not found")
 	}
 
-	batchID, err := graph.NewBatch(ctx, tx, c.h.UserID, "compaction")
+	batchID, err := graph.NewBatch(ctx, tx, c.UserID, "compaction")
 	if err != nil {
 		return "", err
 	}
@@ -329,14 +329,14 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO memories (id, user_id, content, source, confidence, created_at, updated_at, static)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			rid, c.h.UserID, strings.TrimSpace(ch.Result), compactSourcePrefx+batchID, 1.0, now, now, ch.Static); err != nil {
+			rid, c.UserID, strings.TrimSpace(ch.Result), compactSourcePrefx+batchID, 1.0, now, now, ch.Static); err != nil {
 			return "", fmt.Errorf("cortex: insert compaction result: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO memory_entities (user_id, memory_id, entity_id)
 			 SELECT DISTINCT ?::text, ?::text, entity_id FROM memory_entities
 			 WHERE user_id = ? AND memory_id IN (SELECT unnest(?::text[]))`,
-			c.h.UserID, rid, c.h.UserID, pgTextArray(ch.SourceIDs)); err != nil {
+			c.UserID, rid, c.UserID, pgTextArray(ch.SourceIDs)); err != nil {
 			return "", fmt.Errorf("cortex: link compaction entities: %w", err)
 		}
 		for _, sid := range ch.SourceIDs {
@@ -344,7 +344,7 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 				`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source, created_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
-				store.NewID(), c.h.UserID, rid, sid, EdgeDerives, "compaction", now); err != nil {
+				store.NewID(), c.UserID, rid, sid, model.EdgeDerives, "compaction", now); err != nil {
 				return "", fmt.Errorf("cortex: insert derives edge: %w", err)
 			}
 		}
@@ -352,14 +352,14 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE memories SET deleted_at = now(), deleted_by = 'compaction', delete_batch_id = ?
 		 WHERE user_id = ? AND deleted_at IS NULL AND id IN (`+strings.Join(ph, ",")+`)`,
-		append([]any{batchID, c.h.UserID}, args[1:]...)...); err != nil {
+		append([]any{batchID, c.UserID}, args[1:]...)...); err != nil {
 		return "", fmt.Errorf("cortex: soft delete compaction sources: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("cortex: commit compaction: %w", err)
 	}
 	for i, v := range vecs {
-		if err := memory.New(c.h).PutEmbedding(ctx, resultIDs[i], "memory", v); err != nil {
+		if err := memory.New(c.Handle).PutEmbedding(ctx, resultIDs[i], "memory", v); err != nil {
 			return batchID, fmt.Errorf("cortex: store compaction embedding: %w", err)
 		}
 	}
@@ -369,14 +369,14 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 // UndoCompaction restores the sources of a compaction batch and soft-deletes
 // the memories the compaction wrote. A batch that is not this user's is
 // ErrNotFound.
-func (c *Cortex) UndoCompaction(ctx context.Context, batchID string) error {
-	if err := c.RestoreBatch(ctx, batchID); err != nil {
+func (c Ops) UndoCompaction(ctx context.Context, batchID string) error {
+	if err := graph.New(c.Handle).RestoreBatch(ctx, batchID); err != nil {
 		return err
 	}
-	_, err := c.h.DB.ExecContext(ctx,
+	_, err := c.DB.ExecContext(ctx,
 		`UPDATE memories SET deleted_at = now(), deleted_by = 'compaction-undo'
 		 WHERE user_id = ? AND deleted_at IS NULL AND source = ?`,
-		c.h.UserID, compactSourcePrefx+batchID)
+		c.UserID, compactSourcePrefx+batchID)
 	if err != nil {
 		return fmt.Errorf("cortex: retire compaction results: %w", err)
 	}

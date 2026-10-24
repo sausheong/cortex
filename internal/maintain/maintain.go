@@ -1,4 +1,4 @@
-package cortex
+package maintain
 
 import (
 	"context"
@@ -22,17 +22,17 @@ import (
 // relate second (link the reconciled set), decay third (age/prune the settled
 // set), expire fourth (retire memories past their forget_after), profile last
 // (refresh owner + tracked entities' digests over the settled, pruned set).
-func (c *Cortex) Maintain(ctx context.Context, opts ...MaintainOption) (MaintainReport, error) {
+func (c Ops) Maintain(ctx context.Context, opts ...model.MaintainOption) (model.MaintainReport, error) {
 	cfg := &model.MaintainConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	report := MaintainReport{DryRun: cfg.DryRun}
+	report := model.MaintainReport{DryRun: cfg.DryRun}
 
 	// 1. Reconcile.
 	if !cfg.SkipReconcile {
-		var rr ReconcileReport
+		var rr model.ReconcileReport
 		var err error
 		if cfg.DryRun {
 			rr, err = c.Reconcile(ctx)
@@ -49,7 +49,7 @@ func (c *Cortex) Maintain(ctx context.Context, opts ...MaintainOption) (Maintain
 	// write-nothing guarantee.
 	if !cfg.SkipRelate {
 		if cfg.DryRun {
-			report.Relate = &RelationReport{
+			report.Relate = &model.RelationReport{
 				Skipped:    true,
 				SkipReason: "relate has no dry-run; skipped under --dry-run",
 			}
@@ -66,7 +66,7 @@ func (c *Cortex) Maintain(ctx context.Context, opts ...MaintainOption) (Maintain
 	if !cfg.SkipDecay {
 		decayOpts := cfg.DecayOpts
 		if cfg.DryRun {
-			decayOpts = append(decayOpts, WithDecayDryRun())
+			decayOpts = append(decayOpts, model.WithDecayDryRun())
 		}
 		dr, err := c.DecayConfidence(ctx, decayOpts...)
 		if err != nil {

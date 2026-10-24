@@ -1,4 +1,4 @@
-package cortex
+package maintain
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/vecmath"
 )
@@ -26,23 +27,23 @@ const (
 // Pruning is soft (expired_at only, invalid_at left NULL) — the memory is
 // system-retired, not marked false; it stays reachable via as_of /
 // include_invalid. Dry-run computes the report without writing anything.
-func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (DecayReport, error) {
+func (c Ops) DecayConfidence(ctx context.Context, opts ...model.DecayOption) (model.DecayReport, error) {
 	cfg := &model.DecayConfig{HalfLife: defaultDecayHalfLife, Floor: defaultDecayFloor}
 	for _, o := range opts {
 		o(cfg)
 	}
 
 	now := time.Now().UTC()
-	report := DecayReport{DryRun: cfg.DryRun}
+	report := model.DecayReport{DryRun: cfg.DryRun}
 
-	rows, err := c.h.DB.QueryContext(ctx,
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT id, content, confidence, created_at, last_decay_at, last_accessed_at
 		 FROM memories
 		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND NOT static`,
-		c.h.UserID,
+		c.UserID,
 	)
 	if err != nil {
-		return DecayReport{}, fmt.Errorf("cortex: decay scan: %w", err)
+		return model.DecayReport{}, fmt.Errorf("cortex: decay scan: %w", err)
 	}
 
 	type candidate struct {
@@ -59,7 +60,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 		var lastDecay, lastAccess sql.NullTime
 		if err := rows.Scan(&id, &content, &conf, &createdAt, &lastDecay, &lastAccess); err != nil {
 			rows.Close()
-			return DecayReport{}, fmt.Errorf("cortex: decay scan row: %w", err)
+			return model.DecayReport{}, fmt.Errorf("cortex: decay scan row: %w", err)
 		}
 		anchor := createdAt
 		if lastDecay.Valid {
@@ -74,7 +75,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return DecayReport{}, fmt.Errorf("cortex: decay iterate: %w", err)
+		return model.DecayReport{}, fmt.Errorf("cortex: decay iterate: %w", err)
 	}
 	rows.Close()
 
@@ -86,7 +87,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 			continue // no measurable change
 		}
 		pruned := newConf < cfg.Floor
-		report.Changes = append(report.Changes, DecayChange{
+		report.Changes = append(report.Changes, model.DecayChange{
 			ID: cd.id, Content: cd.content,
 			OldConfidence: cd.conf, NewConfidence: newConf, Pruned: pruned,
 		})
@@ -99,14 +100,14 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 			continue
 		}
 
-		if _, err := c.h.DB.ExecContext(ctx,
+		if _, err := c.DB.ExecContext(ctx,
 			`UPDATE memories SET confidence = ?, last_decay_at = ? WHERE id = ? AND user_id = ?`,
-			newConf, now, cd.id, c.h.UserID,
+			newConf, now, cd.id, c.UserID,
 		); err != nil {
 			return report, fmt.Errorf("cortex: decay update %s: %w", cd.id, err)
 		}
 		if pruned {
-			if err := c.InvalidateMemory(ctx, cd.id, nil); err != nil {
+			if err := memory.New(c.Handle).InvalidateMemory(ctx, cd.id, nil); err != nil {
 				return report, fmt.Errorf("cortex: decay prune %s: %w", cd.id, err)
 			}
 		}

@@ -185,3 +185,11 @@ Root testdata/ was referenced by no Go test, script or doc, so it was moved to e
 - Exported inside the internal package: `PutEmbedding`, `GetMemoryByID`, `GetMemoriesByEntityMode`, `EmbeddingByRef`, `SearchVectorRaw` (returns `VectorResult` with exported `RefID`, `Similarity`), `SearchMemoriesMode`, `Neighbourhood`, `EnsureVectorSchema`, `ParseVectorLiteral`, `VectorLiteral`, `TruncateEmbedText`, `AugmentForEmbedding`, `ReembedLockSQL`. `graphContext` is used only inside the package and stays unexported.
 - Pure tests moved: `TestOrTSQuery`, `TestQueryNgrams`, `TestPopularityIsCapped`, `TestCheckPgvectorVersion`, `TestAugmentForEmbedding`. The one root test edit is `search_test.go` using `RefID` instead of `refID`.
 - The only goroutine in the package (`Recall` sub-queries) is joined before the call returns; no `Ops` is stored.
+
+## Stage 7 notes
+
+- `internal/query` (queries.go) imports `graph`, `memory`, `model`, `ontology`, `store`, `tenancy`; `internal/maintain` (decay, expire, reconcile, relate, compaction, profile, maintain) imports `graph`, `llmutil`, `memory`, `model`, `ontology`, `store`, `tenancy`, `vecmath`. They are siblings with no edge between them; one commit.
+- Qualification was done by a throwaway script driven by `go build` errors, then `goimports`. Root forwarders in `api_queries.go` and `api_maintenance.go` were generated from the method signatures (docs preserved).
+- Exported for root white-box tests: `ProfileEligibleIDs`, `DistillBucket`, `AttrProfile`, `AttrProfiled`, `ProfileStaticPrompt`; `whitebox_test.go` re-exposes them under the old unexported names. Pure tests `TestPartitionMemories_*` and `TestSelectStaticCandidates_PerEntityCap` moved to `internal/maintain` (there is no isFresh test). DB tests stay in root.
+- Neither package spawns goroutines or stores an `Ops`; every `Ops` is built per call from the same `*Handle`.
+- apidiff: only the known alias-to-internal reports and the `RelationshipVerbs` element type; no removed or changed method.

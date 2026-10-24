@@ -1,4 +1,4 @@
-package cortex
+package query
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/ontology"
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/tenancy"
 )
@@ -26,13 +27,13 @@ const whoIsMemories = 20
 // returns the entity with its aliases, current relationships (named) and
 // current memories, static ones first. When the mention does not resolve
 // confidently, the card is empty and Candidates lists the closest entities.
-func (c *Cortex) WhoIs(ctx context.Context, mention string) (*EntityCard, error) {
-	res, err := c.ResolveEntity(ctx, mention, "")
+func (c Ops) WhoIs(ctx context.Context, mention string) (*model.EntityCard, error) {
+	res, err := graph.New(c.Handle).ResolveEntity(ctx, mention, "")
 	if err != nil {
 		return nil, err
 	}
 	if res.Entity == nil {
-		return &EntityCard{Resolution: res, Candidates: res.Candidates, Aliases: []Alias{}, Relationships: []NamedEdge{}, Memories: []Memory{}}, nil
+		return &model.EntityCard{Resolution: res, Candidates: res.Candidates, Aliases: []model.Alias{}, Relationships: []model.NamedEdge{}, Memories: []model.Memory{}}, nil
 	}
 	card, err := c.Describe(ctx, res.Entity.ID)
 	if err != nil {
@@ -43,23 +44,23 @@ func (c *Cortex) WhoIs(ctx context.Context, mention string) (*EntityCard, error)
 }
 
 // Describe returns the EntityCard of a known entity.
-func (c *Cortex) Describe(ctx context.Context, entityID string) (*EntityCard, error) {
-	e, err := c.GetEntity(ctx, entityID)
+func (c Ops) Describe(ctx context.Context, entityID string) (*model.EntityCard, error) {
+	e, err := graph.New(c.Handle).GetEntity(ctx, entityID)
 	if err != nil {
 		return nil, err
 	}
-	card := &EntityCard{Entity: *e}
-	if card.Aliases, err = c.Aliases(ctx, e.ID); err != nil {
+	card := &model.EntityCard{Entity: *e}
+	if card.Aliases, err = graph.New(c.Handle).Aliases(ctx, e.ID); err != nil {
 		return nil, err
 	}
-	rels, err := c.GetRelationships(ctx, e.ID)
+	rels, err := graph.New(c.Handle).GetRelationships(ctx, e.ID)
 	if err != nil {
 		return nil, err
 	}
 	if card.Relationships, err = c.nameEdges(ctx, rels); err != nil {
 		return nil, err
 	}
-	mems, err := c.GetMemoriesByEntity(ctx, e.ID)
+	mems, err := memory.New(c.Handle).GetMemoriesByEntity(ctx, e.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -74,16 +75,16 @@ func (c *Cortex) Describe(ctx context.Context, entityID string) (*EntityCard, er
 	}
 	card.Memories = mems
 	if card.Aliases == nil {
-		card.Aliases = []Alias{}
+		card.Aliases = []model.Alias{}
 	}
 	if card.Memories == nil {
-		card.Memories = []Memory{}
+		card.Memories = []model.Memory{}
 	}
 	return card, nil
 }
 
 // nameEdges attaches both ends' names to relationships.
-func (c *Cortex) nameEdges(ctx context.Context, rels []Relationship) ([]NamedEdge, error) {
+func (c Ops) nameEdges(ctx context.Context, rels []model.Relationship) ([]model.NamedEdge, error) {
 	ids := map[string]bool{}
 	for _, r := range rels {
 		ids[r.SourceID], ids[r.TargetID] = true, true
@@ -92,16 +93,16 @@ func (c *Cortex) nameEdges(ctx context.Context, rels []Relationship) ([]NamedEdg
 	if err != nil {
 		return nil, err
 	}
-	out := make([]NamedEdge, 0, len(rels))
+	out := make([]model.NamedEdge, 0, len(rels))
 	for _, r := range rels {
-		out = append(out, NamedEdge{Relationship: r, SourceName: names[r.SourceID], TargetName: names[r.TargetID]})
+		out = append(out, model.NamedEdge{Relationship: r, SourceName: names[r.SourceID], TargetName: names[r.TargetID]})
 	}
 	return out, nil
 }
 
 // entityNames loads the names of the given entities, including deleted ones
 // (an edge in history may outlive an end).
-func (c *Cortex) entityNames(ctx context.Context, ids map[string]bool) (map[string]string, error) {
+func (c Ops) entityNames(ctx context.Context, ids map[string]bool) (map[string]string, error) {
 	names := map[string]string{}
 	if len(ids) == 0 {
 		return names, nil
@@ -110,8 +111,8 @@ func (c *Cortex) entityNames(ctx context.Context, ids map[string]bool) (map[stri
 	for id := range ids {
 		list = append(list, id)
 	}
-	rows, err := c.h.DB.QueryContext(ctx,
-		`SELECT id, name FROM entities WHERE user_id = ? AND id = ANY(?)`, c.h.UserID, list)
+	rows, err := c.DB.QueryContext(ctx,
+		`SELECT id, name FROM entities WHERE user_id = ? AND id = ANY(?)`, c.UserID, list)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: entity names: %w", err)
 	}
@@ -134,15 +135,15 @@ const maxPathHops = 6
 // 6), or nil when they are not connected within that distance. The owner is
 // only used as an end, never as a stepping stone: everything connects
 // through the owner, which says nothing.
-func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]NamedEdge, error) {
-	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, fromID); err != nil {
+func (c Ops) Path(ctx context.Context, fromID, toID string, maxHops int) ([]model.NamedEdge, error) {
+	if err := store.RequireEntity(ctx, c.DB, c.UserID, fromID); err != nil {
 		return nil, err
 	}
-	if err := store.RequireEntity(ctx, c.h.DB, c.h.UserID, toID); err != nil {
+	if err := store.RequireEntity(ctx, c.DB, c.UserID, toID); err != nil {
 		return nil, err
 	}
 	if fromID == toID {
-		return []NamedEdge{}, nil
+		return []model.NamedEdge{}, nil
 	}
 	if maxHops <= 0 {
 		maxHops = 4
@@ -150,14 +151,14 @@ func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]
 	if maxHops > maxPathHops {
 		maxHops = maxPathHops
 	}
-	ownerID, _ := tenancy.New(c.h).OwnerEntityID(ctx)
+	ownerID, _ := tenancy.New(c.Handle).OwnerEntityID(ctx)
 	validity, vargs := graph.EdgeValidityClause("r", false, nil)
 	const next = `CASE WHEN r.source_id = w.node THEN r.target_id ELSE r.source_id END`
-	args := []any{fromID, fromID, c.h.UserID}
+	args := []any{fromID, fromID, c.UserID}
 	args = append(args, vargs...)
 	args = append(args, maxHops, ownerID, toID, toID)
 	var edgeIDs string
-	err := c.h.DB.QueryRowContext(ctx,
+	err := c.DB.QueryRowContext(ctx,
 		`WITH RECURSIVE walk(node, visited, edges, depth) AS (
 		   SELECT ?::text, ARRAY[?::text], ARRAY[]::text[], 0
 		   UNION ALL
@@ -178,7 +179,7 @@ func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]
 		return nil, fmt.Errorf("cortex: path: %w", err)
 	}
 	ids := strings.Split(edgeIDs, ",")
-	rels := make([]Relationship, 0, len(ids))
+	rels := make([]model.Relationship, 0, len(ids))
 	for _, id := range ids {
 		r, err := c.getRelationship(ctx, id)
 		if err != nil {
@@ -190,13 +191,13 @@ func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]
 }
 
 // getRelationship loads one relationship by ID.
-func (c *Cortex) getRelationship(ctx context.Context, id string) (*Relationship, error) {
-	var r Relationship
+func (c Ops) getRelationship(ctx context.Context, id string) (*model.Relationship, error) {
+	var r model.Relationship
 	var attrsJSON sql.NullString
 	var validAt, invalidAt sql.NullTime
-	err := c.h.DB.QueryRowContext(ctx,
+	err := c.DB.QueryRowContext(ctx,
 		`SELECT id, source_id, target_id, type, attributes, source, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
-		 FROM relationships WHERE id = ? AND user_id = ?`, id, c.h.UserID,
+		 FROM relationships WHERE id = ? AND user_id = ?`, id, c.UserID,
 	).Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.Confidence, &r.CreatedAt, &r.EvidenceCount, &r.LastSeenAt, &validAt, &invalidAt)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: get relationship: %w", err)
@@ -215,23 +216,23 @@ func (c *Cortex) getRelationship(ctx context.Context, id string) (*Relationship,
 // end of its relationships. since, when non-zero, drops earlier events;
 // limit (default 100) keeps the most recent. Retired memories are included,
 // so the timeline shows what used to be true.
-func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time, limit int) ([]TimelineEvent, error) {
+func (c Ops) Timeline(ctx context.Context, entityID string, since time.Time, limit int) ([]model.TimelineEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	mems, err := memory.New(c.h).GetMemoriesByEntityMode(ctx, entityID, model.TemporalMode{IncludeInvalid: true})
+	mems, err := memory.New(c.Handle).GetMemoriesByEntityMode(ctx, entityID, model.TemporalMode{IncludeInvalid: true})
 	if err != nil {
 		return nil, err
 	}
-	var out []TimelineEvent
+	var out []model.TimelineEvent
 	for _, m := range mems {
 		at := m.CreatedAt
 		if m.ValidAt != nil {
 			at = *m.ValidAt
 		}
-		out = append(out, TimelineEvent{At: at, Kind: "memory", Text: m.Content, ID: m.ID})
+		out = append(out, model.TimelineEvent{At: at, Kind: "memory", Text: m.Content, ID: m.ID})
 	}
-	rels, err := c.GetRelationships(ctx, entityID, RelIncludeInvalid())
+	rels, err := graph.New(c.Handle).GetRelationships(ctx, entityID, model.RelIncludeInvalid())
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +245,9 @@ func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time,
 		if e.ValidAt != nil {
 			start = *e.ValidAt
 		}
-		out = append(out, TimelineEvent{At: start, Kind: "relationship_started", Text: e.String(), ID: e.ID})
+		out = append(out, model.TimelineEvent{At: start, Kind: "relationship_started", Text: e.String(), ID: e.ID})
 		if e.InvalidAt != nil {
-			out = append(out, TimelineEvent{At: *e.InvalidAt, Kind: "relationship_ended", Text: e.String(), ID: e.ID})
+			out = append(out, model.TimelineEvent{At: *e.InvalidAt, Kind: "relationship_ended", Text: e.String(), ID: e.ID})
 		}
 	}
 	if !since.IsZero() {
@@ -271,7 +272,7 @@ func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time,
 		out = out[len(out)-limit:]
 	}
 	if out == nil {
-		out = []TimelineEvent{}
+		out = []model.TimelineEvent{}
 	}
 	return out, nil
 }
@@ -282,21 +283,21 @@ func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time,
 // after t (by when they ended, which for a back-dated end may be before it
 // was recorded). Each list holds at most limit items (default 50), newest
 // first.
-func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*Changes, error) {
+func (c Ops) WhatChanged(ctx context.Context, since time.Time, limit int) (*model.Changes, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	ch := &Changes{Since: since}
+	ch := &model.Changes{Since: since}
 
-	erows, err := c.h.DB.QueryContext(ctx,
+	erows, err := c.DB.QueryContext(ctx,
 		`SELECT id, type, name, COALESCE(source, ''), confidence, created_at, updated_at FROM entities
 		 WHERE user_id = ? AND deleted_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
-		c.h.UserID, since, limit)
+		c.UserID, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: changed entities: %w", err)
 	}
 	for erows.Next() {
-		var e Entity
+		var e model.Entity
 		if err := erows.Scan(&e.ID, &e.Type, &e.Name, &e.Source, &e.Confidence, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			erows.Close()
 			return nil, fmt.Errorf("cortex: scan changed entity: %w", err)
@@ -305,17 +306,17 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 	}
 	erows.Close()
 
-	memQuery := func(where string) ([]Memory, error) {
-		rows, err := c.h.DB.QueryContext(ctx,
+	memQuery := func(where string) ([]model.Memory, error) {
+		rows, err := c.DB.QueryContext(ctx,
 			`SELECT id, content, COALESCE(source, ''), confidence, created_at, valid_at, invalid_at, expired_at FROM memories
-			 WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.h.UserID, since, limit)
+			 WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.UserID, since, limit)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
-		var out []Memory
+		var out []model.Memory
 		for rows.Next() {
-			var m Memory
+			var m model.Memory
 			var validAt, invalidAt, expiredAt sql.NullTime
 			if err := rows.Scan(&m.ID, &m.Content, &m.Source, &m.Confidence, &m.CreatedAt, &validAt, &invalidAt, &expiredAt); err != nil {
 				return nil, err
@@ -332,9 +333,9 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 		return nil, fmt.Errorf("cortex: retired memories: %w", err)
 	}
 
-	relQuery := func(where string) ([]NamedEdge, error) {
-		rows, err := c.h.DB.QueryContext(ctx,
-			`SELECT id FROM relationships WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.h.UserID, since, limit)
+	relQuery := func(where string) ([]model.NamedEdge, error) {
+		rows, err := c.DB.QueryContext(ctx,
+			`SELECT id FROM relationships WHERE user_id = ? AND deleted_at IS NULL AND `+where+` LIMIT ?`, c.UserID, since, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -351,7 +352,7 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 		if err := rows.Err(); err != nil {
 			return nil, err
 		}
-		rels := make([]Relationship, 0, len(ids))
+		rels := make([]model.Relationship, 0, len(ids))
 		for _, id := range ids {
 			r, err := c.getRelationship(ctx, id)
 			if err != nil {
@@ -369,13 +370,13 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 	}
 
 	if ch.NewEntities == nil {
-		ch.NewEntities = []Entity{}
+		ch.NewEntities = []model.Entity{}
 	}
 	if ch.NewMemories == nil {
-		ch.NewMemories = []Memory{}
+		ch.NewMemories = []model.Memory{}
 	}
 	if ch.RetiredMemories == nil {
-		ch.RetiredMemories = []Memory{}
+		ch.RetiredMemories = []model.Memory{}
 	}
 	return ch, nil
 }
@@ -386,7 +387,7 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 // resolves to nothing is created with the given type (default person), and
 // an identifier used as its name is kept as an alias. The verb is mapped
 // onto the curated vocabulary as in Remember.
-func (c *Cortex) Link(ctx context.Context, r LinkRequest) (*NamedEdge, error) {
+func (c Ops) Link(ctx context.Context, r model.LinkRequest) (*model.NamedEdge, error) {
 	rc := &graph.ResolveContext{}
 	src, err := c.linkEnd(ctx, r.Source, r.SourceType, r.Provenance, rc)
 	if err != nil {
@@ -399,36 +400,36 @@ func (c *Cortex) Link(ctx context.Context, r LinkRequest) (*NamedEdge, error) {
 	if src.ID == tgt.ID {
 		return nil, fmt.Errorf("cortex: both ends are %q", src.Name)
 	}
-	st, _ := CanonicalEntityType(src.Type)
-	tt, _ := CanonicalEntityType(tgt.Type)
-	verb, swap, label := CanonicalRelation(r.Type, st, tt)
+	st, _ := ontology.CanonicalEntityType(src.Type)
+	tt, _ := ontology.CanonicalEntityType(tgt.Type)
+	verb, swap, label := ontology.CanonicalRelation(r.Type, st, tt)
 	if swap {
 		src, tgt = tgt, src
 	}
-	rel := &Relationship{SourceID: src.ID, TargetID: tgt.ID, Type: verb, Source: r.Provenance}
+	rel := &model.Relationship{SourceID: src.ID, TargetID: tgt.ID, Type: verb, Source: r.Provenance}
 	if label != "" {
 		rel.Attributes = map[string]any{"label": label}
 	}
-	if err := c.PutRelationship(ctx, rel); err != nil {
+	if err := graph.New(c.Handle).PutRelationship(ctx, rel); err != nil {
 		return nil, err
 	}
-	return &NamedEdge{Relationship: *rel, SourceName: src.Name, TargetName: tgt.Name}, nil
+	return &model.NamedEdge{Relationship: *rel, SourceName: src.Name, TargetName: tgt.Name}, nil
 }
 
 // linkEnd finds or creates one end of a Link.
-func (c *Cortex) linkEnd(ctx context.Context, ref, typ, provenance string, rc *graph.ResolveContext) (*Entity, error) {
+func (c Ops) linkEnd(ctx context.Context, ref, typ, provenance string, rc *graph.ResolveContext) (*model.Entity, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, fmt.Errorf("cortex: empty entity reference")
 	}
-	if e, err := c.GetEntity(ctx, ref); err == nil {
+	if e, err := graph.New(c.Handle).GetEntity(ctx, ref); err == nil {
 		return e, nil
 	}
 	canonical := ""
 	if typ != "" {
-		canonical, _ = CanonicalEntityType(typ)
+		canonical, _ = ontology.CanonicalEntityType(typ)
 	}
-	res, err := graph.New(c.h).Resolve(ctx, ref, canonical, nil, rc, false)
+	res, err := graph.New(c.Handle).Resolve(ctx, ref, canonical, nil, rc, false)
 	if err != nil {
 		return nil, err
 	}
@@ -436,14 +437,14 @@ func (c *Cortex) linkEnd(ctx context.Context, ref, typ, provenance string, rc *g
 		return res.Entity, nil
 	}
 	if canonical == "" {
-		canonical = TypePerson
+		canonical = ontology.TypePerson
 	}
-	e := &Entity{Name: ref, Type: canonical, Source: provenance}
-	if err := c.PutEntity(ctx, e); err != nil {
+	e := &model.Entity{Name: ref, Type: canonical, Source: provenance}
+	if err := graph.New(c.Handle).PutEntity(ctx, e); err != nil {
 		return nil, err
 	}
-	if kind := DetectAliasKind(ref); kind != AliasName {
-		graph.New(c.h).AddAliasQuiet(ctx, e.ID, kind, ref, "link")
+	if kind := graph.DetectAliasKind(ref); kind != model.AliasName {
+		graph.New(c.Handle).AddAliasQuiet(ctx, e.ID, kind, ref, "link")
 	}
 	return e, nil
 }
