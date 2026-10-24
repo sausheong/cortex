@@ -263,11 +263,6 @@ func TestGraphPageRendersListWithoutScript(t *testing.T) {
 	if !strings.Contains(body, `data-src="/graph/data?center=`+owner) || !strings.Contains(body, "This is you") {
 		t.Errorf("default centre is not the owner")
 	}
-	// Nav order: Memories, Graph, Connections.
-	i, j, k := strings.Index(body, ">Memories</a>"), strings.Index(body, ">Graph</a>"), strings.Index(body, ">Connections</a>")
-	if !(i < j && j < k) {
-		t.Errorf("nav order %d %d %d", i, j, k)
-	}
 }
 
 func TestGraphSearchIsScopedAndLiteral(t *testing.T) {
@@ -588,5 +583,17 @@ func TestMemoriesEntityFilter(t *testing.T) {
 	_, body = e.get("/memories?entity=" + theirs)
 	if strings.Contains(body, "bobs private note") || strings.Contains(body, "Theirs") || strings.Contains(body, "about acme") {
 		t.Fatalf("foreign entity filter leaked or matched: %s", body)
+	}
+}
+
+func TestGraphOwnerMentionsCountsAllMemories(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	e.write(ua.ID, "", "likes tea")
+	e.write(ua.ID, "", "lives in Oslo")
+	_, body := e.get("/graph")
+	if !strings.Contains(body, "Saved about you") || strings.Contains(body, "Mentioned in</dt><dd>0 ") || !strings.Contains(body, "<dd>2 memories</dd>") {
+		t.Errorf("owner panel should count all memories: %s", body)
 	}
 }

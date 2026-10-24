@@ -5,6 +5,7 @@
 <h1>{{.Title}}</h1>
 {{if .Error}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 <p class="consequence">{{.Consequence}}</p>
+{{if .Items}}<ul class="confirm-items">{{range .Items}}<li>{{.}}</li>{{end}}</ul>{{if .More}}<p class="note">{{.More}}</p>{{end}}{{end}}
 {{range .Details}}<p class="note">{{.}}</p>{{end}}
 <form method="post" action="{{.Action}}" autocomplete="off">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">

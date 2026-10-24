@@ -316,6 +316,9 @@ details.fold[open]>summary{margin-bottom:var(--s1)}
 .rels,.mentions{margin:0;padding:0;list-style:none}
 .rels li,.mentions li{padding:var(--s2) 0;border-top:1px solid var(--line);max-width:none}
 .rels li:last-child,.mentions li:last-child{border-bottom:1px solid var(--line)}
+.confirm-items{margin:var(--s4) 0 var(--s2);padding:0;list-style:none}
+.confirm-items li{padding:var(--s2) 0;border-top:1px solid var(--line);max-width:none}
+.confirm-items li:last-child{border-bottom:1px solid var(--line)}
 .rel-label{font-weight:var(--w-label);color:var(--muted)}
 .rel-self{font-weight:var(--w-label)}
 .mention-text{display:block;color:var(--fg);text-decoration:none}

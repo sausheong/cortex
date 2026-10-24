@@ -566,7 +566,16 @@ func (s *server) buildPanel(r *http.Request, cx *cortex.Cortex, p graphParams, i
 		pv.Relations = append(pv.Relations, relRow{Label: relLabel(rl.Type), Outgoing: rl.Outgoing, OtherID: rl.OtherID,
 			OtherName: rl.OtherName, OtherType: typeLabel(rl.OtherType), Href: p.href(rl.OtherID)})
 	}
-	mems, n, err := cx.EntityMentions(ctx, id, 10)
+	// Memories are linked to the people and things they name, never to the
+	// owner, so "you" counts every live memory: they are all about you.
+	var mems []cortex.Memory
+	var n int
+	if pv.IsOwner {
+		mems, n, err = cx.ListMemories(ctx, cortex.MemoryListFilter{}, 10, 0)
+		pv.MemHref = "/memories"
+	} else {
+		mems, n, err = cx.EntityMentions(ctx, id, 10)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -20,8 +20,7 @@
     {{range .Assistants.Rows}}<li>
       <strong class="row-name">{{.Name}}</strong>
       <span class="row-meta">
-        {{if eq .Flag "unused"}}<span class="status status-unused"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Not used yet</span>
-        {{else}}<time datetime="{{.UsedISO}}">{{.Used}}</time>{{if eq .Flag "idle"}} <span class="status status-idle"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>Idle for over 30 days</span>{{end}}{{end}}
+        {{template "status" .Status}}{{if .UsedISO}} <time datetime="{{.UsedISO}}">{{.Used}}</time>{{end}}
         <span class="conn-meta">{{.Written7}} written in the last 7 days</span>
       </span>
     </li>{{end}}
@@ -33,7 +32,8 @@
 {{if not $first}}<section class="home-section" aria-labelledby="health-h">
   <h2 id="health-h">Health</h2>
   {{if .Health.Err}}<p class="note" role="status">Some of this could not be loaded just now. Reload to try again.</p>{{end}}
-  <ul class="home-rows">
+  {{if .Health.OKLine}}<p>{{.Health.OKLine}} <a href="/account">Storage details</a></p>
+  {{else}}<ul class="home-rows">
     {{if and .Health.MaintState (or (not $.Setup) (ne .Health.MaintState "none"))}}<li>
       <strong class="row-name">Nightly maintenance</strong>
       <span class="row-meta">
@@ -53,7 +53,7 @@
       <strong class="row-name">Recently deleted</strong>
       <span class="row-meta">{{.Health.DeletedText}}{{if .Health.DeletedCount}} <a href="/memories/deleted">Review</a>{{end}}</span>
     </li>
-  </ul>
+  </ul>{{end}}
 </section>{{end}}
 
 {{if not $first}}<section class="home-section" aria-labelledby="new-h">

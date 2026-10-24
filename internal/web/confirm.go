@@ -19,6 +19,9 @@ type confirmView struct {
 	Title       string
 	Consequence string
 	Details     []string
+	// Items previews what is being deleted; More is the "and N more" line.
+	Items []string
+	More  string
 	Action      string
 	Fields      []confirmField
 	Count       int

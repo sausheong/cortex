@@ -567,6 +567,9 @@ func atoiOr(s string) int {
 	return n
 }
 
+// confirmSampleSize is how many memory snippets the delete confirmation lists.
+const confirmSampleSize = 5
+
 func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -635,6 +638,16 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 			}
 		}
 		cv.Details = []string{"Selected: " + describeFilter(f, days, cn) + "."}
+	}
+	if sample, err := cx.SampleMemories(r.Context(), f, confirmSampleSize); err != nil {
+		s.cfg.Logger.Error("memories sample", "err", err)
+	} else {
+		for _, m := range sample {
+			cv.Items = append(cv.Items, snippet(m.Content, 100))
+		}
+		if n > len(sample) {
+			cv.More = "and " + fmtInt(n-len(sample)) + " more"
+		}
 	}
 	cv.Details = append(cv.Details, "Restore from Recently deleted. After 30 days they are removed for good.")
 	cv.Fields = []confirmField{{"scope", scope}}

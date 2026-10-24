@@ -43,6 +43,8 @@ type connView struct {
 	LastUsedAgo string
 	Written     int
 	Revoked     bool
+	// Status is assistantStatus, the same derivation Home uses.
+	Status string
 	// DeleteCount is how many items "Revoke and delete" would remove.
 	DeleteCount int
 	CSRF        string
@@ -109,7 +111,7 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 		if q.Get("renamed") == c.ID {
 			v.Notice = &connNotice{Text: "Renamed to " + c.Name + "."}
 		}
-		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil, CSRF: u.CSRF}
+		cv := connView{ID: c.ID, Name: c.Name, Written: c.Written, Revoked: c.RevokedAt != nil, Status: assistantStatus(c, h.d.Now()), CSRF: u.CSRF}
 		if c.RevokedAt == nil {
 			if cv.DeleteCount, err = cx.CountByConnection(r.Context(), c.ID); err != nil {
 				return v, err

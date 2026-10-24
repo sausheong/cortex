@@ -226,9 +226,8 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	}
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
-		if name == "home" || name == "memories" || name == "connections" || name == "settings" {
-			p.Setup, p.SetUp = s.setupRead(r.Context(), u.UserID)
-		}
+		// Every signed-in page needs it: the nav shrinks while setup is open.
+		p.Setup, p.SetUp = s.setupRead(r.Context(), u.UserID)
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {

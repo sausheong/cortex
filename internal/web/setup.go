@@ -26,7 +26,7 @@ func (s *server) setupRead(ctx context.Context, userID string) (*pages.Setup, bo
 		for _, c := range conns {
 			if c.RevokedAt == nil && c.RemovedAt == nil {
 				st.Connect = true
-				if assistantFlag(c, s.now()) == "" {
+				if assistantStatus(c, s.now()) == statusActive {
 					active = true
 				}
 			}

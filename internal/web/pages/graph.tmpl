@@ -82,7 +82,7 @@
     <h2 id="panel-h">{{.Name}}</h2>
     <p class="panel-type">{{.Shape}}<span>{{.TypeLabel}}</span>{{if .IsOwner}} <span class="note">&middot; This is you</span>{{end}}</p>
     <dl class="facts">
-      <div><dt>Mentioned in</dt><dd>{{n .Mentions}} {{if eq .Mentions 1}}memory{{else}}memories{{end}}</dd></div>
+      <div><dt>{{if .IsOwner}}Saved about you{{else}}Mentioned in{{end}}</dt><dd>{{n .Mentions}} {{if eq .Mentions 1}}memory{{else}}memories{{end}}</dd></div>
       <div><dt>Relationships</dt><dd>{{n .RelTotal}}</dd></div>
       {{range .Attrs}}<div><dt>{{.K}}</dt><dd>{{.V}}</dd></div>{{end}}
     </dl>
@@ -97,11 +97,11 @@
     </details>
 
     <details class="fold" open>
-      <summary>Memories that mention it ({{n .Mentions}})</summary>
+      <summary>{{if .IsOwner}}Latest memories{{else}}Memories that mention it{{end}} ({{n .Mentions}})</summary>
     {{if .Memories}}<ul class="mentions">{{range .Memories}}
       <li><a href="{{$.Data.Panel.MemHref}}" class="mention-text">{{.Text}}</a> <time class="note" datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></li>{{end}}</ul>
       {{if gt .Mentions (len .Memories)}}<p><a href="{{.MemHref}}">See all {{n .Mentions}} in Memories</a></p>{{end}}
-    {{else}}<p class="note">No memory mentions it right now.</p>{{end}}
+    {{else}}<p class="note">{{if .IsOwner}}Nothing saved yet.{{else}}No memory mentions it right now.{{end}}</p>{{end}}
     </details>
 
     <details class="fold"{{if or (eq $.Data.ErrField "rename") (eq $.Data.ErrField "merge") (eq $.Data.ErrField "delete") $.Data.Offer $.Data.MergeSearched}} open data-keep{{else}} open{{end}}>
