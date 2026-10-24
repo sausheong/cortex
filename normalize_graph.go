@@ -140,9 +140,6 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 				}
 			}
 		}
-		if canonical != e.typ {
-			report.Retyped = append(report.Retyped, RetypedEntity{ID: e.id, Name: e.name, From: e.typ, To: canonical})
-		}
 		e.typ = canonical
 		k := canonical + "\x00" + strings.ToLower(strings.TrimSpace(e.name))
 		if canonical == TypePerson && ownerLive && ownerNames[normalizeAlias(AliasName, e.name)] {
@@ -152,6 +149,23 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 			keys = append(keys, k)
 		}
 		groups[k] = append(groups[k], e)
+	}
+
+	// A concept group folds into the one specifically-typed group with the
+	// same name: concept is the catch-all, so "FileSG" typed concept once and
+	// system once is one thing. With several specific groups it stays apart.
+	specific := map[string][]string{} // lower name -> non-concept group keys
+	for _, k := range keys {
+		if typ, name, ok := strings.Cut(k, "\x00"); ok && typ != TypeConcept {
+			specific[name] = append(specific[name], k)
+		}
+	}
+	for _, k := range keys {
+		if typ, name, ok := strings.Cut(k, "\x00"); ok && typ == TypeConcept && len(specific[name]) == 1 {
+			target := specific[name][0]
+			groups[target] = append(groups[target], groups[k]...)
+			groups[k] = nil
+		}
 	}
 
 	// 2. Per group: pick the keeper, merge the rest into it, then write the
@@ -169,11 +183,21 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 			return g[i].links > g[j].links
 		})
 		keep := g[0]
+		// The group's type is its specific one when a concept was folded in.
+		for _, e := range g {
+			if e.typ != TypeConcept {
+				keep.typ = e.typ
+				break
+			}
+		}
 		for _, drop := range g[1:] {
 			if _, err := mergeEntitiesTx(ctx, tx, c.userID, keep.id, drop.id, mo); err != nil {
 				return report, fmt.Errorf("cortex: normalize merge %q into %q: %w", drop.name, keep.name, err)
 			}
 			report.Merged = append(report.Merged, MergedEntity{KeepID: keep.id, DropID: drop.id, Name: keep.name, DropName: drop.name, Type: keep.typ})
+		}
+		if keep.typ != keep.orig {
+			report.Retyped = append(report.Retyped, RetypedEntity{ID: keep.id, Name: keep.name, From: keep.orig, To: keep.typ})
 		}
 		if keep.typ == keep.orig && !keep.labelled {
 			continue
@@ -297,17 +321,6 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 		report.RelationshipsRetyped++
 	}
 
-	dropped := map[string]bool{}
-	for _, m := range report.Merged {
-		dropped[m.DropID] = true
-	}
-	kept := report.Retyped[:0]
-	for _, r := range report.Retyped {
-		if !dropped[r.ID] {
-			kept = append(kept, r)
-		}
-	}
-	report.Retyped = kept
 	if len(report.UnmappedVerbs) == 0 {
 		report.UnmappedVerbs = nil
 	}

@@ -199,3 +199,71 @@ func TestNormalizeGraph_RetypesMergesAndUndoes(t *testing.T) {
 		t.Errorf("after undo twin has %d edges, want 3: %+v", len(rels), rels)
 	}
 }
+
+func TestNormalizeGraph_FoldsConceptIntoSpecificNamesake(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	put := func(name, typ string) string {
+		e := &Entity{Name: name, Type: "placeholder_" + typ} // distinct rows per type
+		if err := c.PutEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.db.ExecContext(ctx, `UPDATE entities SET type = ? WHERE id = ?`, typ, e.ID); err != nil {
+			t.Fatal(err)
+		}
+		return e.ID
+	}
+	loose := put("FileSG", "concept")
+	sys := put("FileSG", "System")
+	// Two specific namesakes keep a concept namesake apart.
+	put("Mercury", "concept")
+	put("Mercury", "place")
+	put("Mercury", "product")
+	if err := c.PutMemory(ctx, &Memory{Content: "FileSG stores documents", EntityIDs: []string{loose}}); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := c.NormalizeGraph(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Merged) != 1 {
+		t.Fatalf("merged = %+v, want only the FileSG pair", rep.Merged)
+	}
+	survivor := rep.Merged[0].KeepID
+	e, err := c.GetEntity(ctx, survivor)
+	if err != nil || e.Type != TypeProduct {
+		t.Fatalf("FileSG survivor = %+v %v, want typed product", e, err)
+	}
+	if survivor != loose && survivor != sys {
+		t.Fatalf("unexpected survivor %s", survivor)
+	}
+	for _, r := range rep.Retyped {
+		if r.ID == survivor && r.To != TypeProduct {
+			t.Errorf("retyped report says %s → %s", r.From, r.To)
+		}
+	}
+	mercury, _ := c.FindEntities(ctx, EntityFilter{NameLike: "Mercury"})
+	if len(mercury) != 3 {
+		t.Errorf("Mercury entities = %d, want 3 kept apart", len(mercury))
+	}
+}
+
+func TestRemember_ConceptNamesakeIsReused(t *testing.T) {
+	c := openTestDB(t)
+	ctx := context.Background()
+	loose := &Entity{Name: "FileSG", Type: "concept"}
+	if err := c.PutEntity(ctx, loose); err != nil {
+		t.Fatal(err)
+	}
+	c.SetExtractor(&mockExtractor{extractFn: func(context.Context, string, string) (*Extraction, error) {
+		return &Extraction{Entities: []Entity{{Name: "FileSG", Type: "software"}}}, nil
+	}})
+	if err := c.Remember(ctx, "FileSG"); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := c.FindEntities(ctx, EntityFilter{NameLike: "FileSG"})
+	if len(all) != 1 || all[0].ID != loose.ID {
+		t.Errorf("FileSG entities = %+v, want the concept one reused", all)
+	}
+}

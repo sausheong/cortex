@@ -90,7 +90,9 @@ func (c *Cortex) findSameEntity(ctx context.Context, name, typ string) (*Entity,
 
 // kindMatches reports whether a stored entity type is the same kind as typ:
 // equal after normalisation, or mapping to the same curated type. An empty
-// typ matches everything.
+// typ matches everything, and so does concept on either side: it is the
+// catch-all, so a concept and a product of the same name are one thing typed
+// loosely once.
 func kindMatches(stored, typ string) bool {
 	if typ == "" {
 		return true
@@ -101,7 +103,7 @@ func kindMatches(stored, typ string) bool {
 	}
 	sc, _ := CanonicalEntityType(st)
 	tc, _ := CanonicalEntityType(typ)
-	return sc == tc
+	return sc == tc || sc == TypeConcept || tc == TypeConcept
 }
 
 // absorbIntoEntity folds an extracted entity into the stored one it matched:
