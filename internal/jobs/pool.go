@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Job is one queued unit of background work.
@@ -16,6 +19,9 @@ type Job struct {
 	ID, UserID, Kind string
 	// Payload is the job's input text, loaded when a worker claims the job.
 	Payload string
+	// Key is the user's key for a job of an encrypted user, supplied by the
+	// pool's key source for the duration of the run and zeroed afterwards.
+	Key *keys.UK
 }
 
 // RememberKind is the kind of a background "remember" job (see remember.go).
@@ -37,6 +43,9 @@ type Pool struct {
 	n   int
 	run func(ctx context.Context, j Job) error
 	db  *sql.DB
+	// keyFor returns a clone of the user's key, or nil when none is held. A
+	// job whose payload is sealed and has no key stays queued (parked).
+	keyFor func(userID string) *keys.UK
 
 	queue  chan Job
 	mu     sync.Mutex
@@ -59,6 +68,13 @@ func (p *Pool) WithDB(db *sql.DB) *Pool {
 	return p
 }
 
+// WithKeyFunc sets the source of user keys for jobs of encrypted users. The
+// function returns a clone the pool zeroes after the job.
+func (p *Pool) WithKeyFunc(f func(userID string) *keys.UK) *Pool {
+	p.keyFor = f
+	return p
+}
+
 func newJobID() string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
@@ -74,14 +90,39 @@ func (p *Pool) Enqueue(ctx context.Context, userID, kind string) (string, error)
 }
 
 // EnqueueWith is Enqueue for a job that carries an input payload, stored in
-// the jobs row so the job survives a restart.
+// the jobs row so the job survives a restart. A non-empty payload of an
+// encrypted user needs a key: use EnqueueWithKey.
 func (p *Pool) EnqueueWith(ctx context.Context, userID, kind, payload string) (string, error) {
+	return p.EnqueueWithKey(ctx, userID, kind, payload, nil)
+}
+
+// EnqueueWithKey is EnqueueWith for a caller holding the user's key. For an
+// encrypted user the payload is sealed into payload_ct (AAD column payload);
+// without a key it fails with model.ErrLocked and nothing is queued.
+func (p *Pool) EnqueueWithKey(ctx context.Context, userID, kind, payload string, uk *keys.UK) (string, error) {
 	if p.db == nil {
 		return "", errors.New("jobs: pool has no database")
 	}
 	id := newJobID()
+	plain, ct, enc := payload, []byte(nil), false
+	if payload != "" {
+		var state string
+		if err := p.db.QueryRowContext(ctx, `SELECT encryption_state FROM users WHERE id = $1`, userID).Scan(&state); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("jobs: enqueue: %w", err)
+		} else if err == nil && state != "none" {
+			if uk == nil {
+				return "", model.ErrLocked
+			}
+			sealed, err := uk.Seal(userID, "jobs", id, "payload", []byte(payload))
+			if err != nil {
+				return "", err
+			}
+			plain, ct, enc = "", sealed, true
+		}
+	}
 	if _, err := p.db.ExecContext(ctx,
-		`INSERT INTO jobs (id, user_id, kind, status, payload) VALUES ($1,$2,$3,'queued',$4)`, id, userID, kind, payload); err != nil {
+		`INSERT INTO jobs (id, user_id, kind, status, payload, payload_ct, enc) VALUES ($1,$2,$3,'queued',$4,$5,$6)`,
+		id, userID, kind, plain, ct, enc); err != nil {
 		return "", fmt.Errorf("jobs: enqueue: %w", err)
 	}
 	select {
@@ -154,18 +195,7 @@ func (p *Pool) sweep(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		rows, err := p.db.QueryContext(ctx, `SELECT id, user_id, kind FROM jobs WHERE status='queued' AND run_after <= now() ORDER BY created_at LIMIT 100`)
-		if err != nil {
-			continue
-		}
-		var pending []Job
-		for rows.Next() {
-			var j Job
-			if rows.Scan(&j.ID, &j.UserID, &j.Kind) == nil {
-				pending = append(pending, j)
-			}
-		}
-		rows.Close()
+		pending := p.sweepBatch(ctx)
 		for _, j := range pending {
 			select {
 			case p.queue <- j:
@@ -173,6 +203,33 @@ func (p *Pool) sweep(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// sweepBatch lists the queued jobs that are due. The select takes row locks
+// (SKIP LOCKED) so a migration or another sweeper rewriting a row's payload
+// form is never raced; the payload itself is read, in either form, when the
+// job runs.
+func (p *Pool) sweepBatch(ctx context.Context) []Job {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id, user_id, kind FROM jobs WHERE status='queued' AND run_after <= now()
+		ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED`)
+	if err != nil {
+		return nil
+	}
+	var pending []Job
+	for rows.Next() {
+		var j Job
+		if rows.Scan(&j.ID, &j.UserID, &j.Kind) == nil {
+			pending = append(pending, j)
+		}
+	}
+	rows.Close()
+	_ = tx.Commit()
+	return pending
 }
 
 // Stop cancels running jobs and waits for the workers to exit.
@@ -209,7 +266,7 @@ func (p *Pool) setStatus(j Job, status, msg string) {
 	// A finished job no longer needs its input text.
 	clear := ""
 	if status == "done" {
-		clear = ", payload=''"
+		clear = ", payload='', payload_ct=NULL, enc=FALSE"
 	}
 	p.db.ExecContext(c, `UPDATE jobs SET status=$2, error=$3, updated_at=now()`+clear+` WHERE id=$1`, j.ID, status, msg)
 }
@@ -230,14 +287,63 @@ func (p *Pool) retryLater(j Job, attempts int, msg string) bool {
 	return err == nil
 }
 
+// jobErrText is what a failed job records. For an encrypted user it is a
+// fixed text: provider and handler errors can echo content.
+func jobErrText(encUser bool, err error) string {
+	if !encUser {
+		return err.Error()
+	}
+	if errors.Is(err, model.ErrLocked) {
+		return "locked"
+	}
+	return "job failed"
+}
+
 func (p *Pool) exec(ctx context.Context, j Job) {
+	encUser := false
+	attempts := 0
 	if p.db != nil {
 		var deleted bool
+		var state string
 		err := p.db.QueryRowContext(ctx,
-			`SELECT deleted_at IS NOT NULL FROM users WHERE id = $1`, j.UserID).Scan(&deleted)
+			`SELECT deleted_at IS NOT NULL, encryption_state FROM users WHERE id = $1`, j.UserID).Scan(&deleted, &state)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && deleted) {
 			p.setStatus(j, "skipped", "")
 			return
+		}
+		encUser = err == nil && state != "none"
+		// Read the payload (either form) before claiming: a sealed payload
+		// without a key leaves the job queued for a later keyed pass.
+		var ct []byte
+		var enc bool
+		if err := p.db.QueryRowContext(ctx, `SELECT payload, payload_ct, enc, attempts FROM jobs WHERE id=$1 AND status='queued'`, j.ID).
+			Scan(&j.Payload, &ct, &enc, &attempts); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return // already claimed or finished
+			}
+			return
+		}
+		if enc {
+			var uk *keys.UK
+			if p.keyFor != nil {
+				uk = p.keyFor(j.UserID)
+			}
+			if uk == nil {
+				return // parked
+			}
+			defer uk.Zero()
+			b, err := uk.Open(j.UserID, "jobs", j.ID, "payload", ct)
+			if err != nil {
+				p.setStatus(j, "failed", jobErrText(true, err))
+				return
+			}
+			j.Payload = string(b)
+			j.Key = uk
+		} else if encUser && p.keyFor != nil {
+			if uk := p.keyFor(j.UserID); uk != nil {
+				defer uk.Zero()
+				j.Key = uk
+			}
 		}
 		// Claim atomically: a job may be in the channel and swept twice, and
 		// a retry waits out its backoff even if a stale copy is still queued.
@@ -249,13 +355,9 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 			}
 		}
 	}
-	attempts := 0
-	if p.db != nil {
-		// A missing row (never for a real job) just means no payload.
-		_ = p.db.QueryRowContext(ctx, `SELECT payload, attempts FROM jobs WHERE id=$1`, j.ID).Scan(&j.Payload, &attempts)
-	}
 	if err := p.run(ctx, j); err != nil {
-		if ctx.Err() == nil && p.retryLater(j, attempts, err.Error()) {
+		msg := jobErrText(encUser, err)
+		if ctx.Err() == nil && p.retryLater(j, attempts, msg) {
 			return
 		}
 		if ctx.Err() != nil {
@@ -263,7 +365,7 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 			p.setStatus(j, "queued", "")
 			return
 		}
-		p.setStatus(j, "failed", err.Error())
+		p.setStatus(j, "failed", msg)
 		return
 	}
 	p.setStatus(j, "done", "")

@@ -74,3 +74,13 @@ func (c *Cortex) Release() { c.h.Release() }
 
 // Encrypted reports whether this handle's user is enrolled in encryption.
 func (c *Cortex) Encrypted() bool { return c.h.Encrypted() }
+
+// CloneKey returns a copy of this handle's user key for a caller that must
+// seal data outside the handle (for example a queued job payload). The caller
+// zeroes it. Nil when the handle holds no key.
+func (c *Cortex) CloneKey() *keys.UK {
+	if c.h.Key == nil {
+		return nil
+	}
+	return c.h.Key.Clone()
+}

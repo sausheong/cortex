@@ -79,11 +79,11 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 	var pool *jobs.Pool
 	pool = jobs.NewPool(2, func(ctx context.Context, j jobs.Job) error {
 		if id, ok := strings.CutPrefix(j.Kind, jobs.CompactKindPrefix); ok {
-			return jobs.CompactJob(ctx, root, st, j.UserID, id)
+			return jobs.CompactJobKey(ctx, root, st, j.UserID, id, j.Key)
 		}
 		switch j.Kind {
 		case jobs.RememberKind:
-			return jobs.RememberJob(ctx, root, st, j.UserID, j.Payload)
+			return jobs.RememberJobKey(ctx, root, st, j.UserID, j.Payload, j.Key)
 		case "index":
 			return jobs.IndexJob(ctx, root, st, j.UserID)
 		case "reembed":
@@ -113,8 +113,10 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 	s := server.NewMCPServer("cortex", "1.0.0", server.WithToolCapabilities(false))
 	mcpserver.RegisterToolsFor(s, nil, publicURL, mcpserver.WithBackgroundRemember(
 		func(ctx context.Context, cx *cortex.Cortex, content, source, speaker string) error {
+			uk := cx.CloneKey()
+			defer uk.Zero()
 			_, err := jobs.EnqueueRemember(ctx, pool, cx.UserID(), jobs.RememberPayload{
-				Content: content, Source: source, Speaker: speaker, ConnID: cx.ConnectionID()})
+				Content: content, Source: source, Speaker: speaker, ConnID: cx.ConnectionID()}, uk)
 			return err
 		}))
 	mcpHandler := mcpserver.NewHTTPHandler(s, resolve, publicURL, accounts.NewLimiter(30, 30, nil))

@@ -161,7 +161,7 @@ func (c Ops) NormalizeGraph(ctx context.Context, opts ...model.NormalizeOption) 
 		if keep.typ == keep.orig && !keep.labelled {
 			continue
 		}
-		if err := recordChanges(ctx, tx, mo, c.UserID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keep.id, c.UserID); err != nil {
+		if err := c.recordChanges(ctx, tx, mo, c.UserID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keep.id, c.UserID); err != nil {
 			return report, err
 		}
 		// Re-read attributes: the merges above may have added provenance.
@@ -249,7 +249,7 @@ func (c Ops) NormalizeGraph(ctx context.Context, opts ...model.NormalizeOption) 
 			   AND source_id = ? AND target_id = ? AND type = ? AND id <> ?`,
 			c.UserID, src, tgt, verb, r.id).Scan(&twin)
 		if err == nil {
-			if err := recordChanges(ctx, tx, mo, c.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", twin, c.UserID); err != nil {
+			if err := c.recordChanges(ctx, tx, mo, c.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", twin, c.UserID); err != nil {
 				return report, err
 			}
 			if _, err := tx.ExecContext(ctx,
@@ -269,7 +269,7 @@ func (c Ops) NormalizeGraph(ctx context.Context, opts ...model.NormalizeOption) 
 		if err != nil {
 			return report, fmt.Errorf("cortex: marshal relationship attributes: %w", err)
 		}
-		if err := recordChanges(ctx, tx, mo, c.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", r.id, c.UserID); err != nil {
+		if err := c.recordChanges(ctx, tx, mo, c.UserID, "relationships", "update", "{}", "t.id = ? AND t.user_id = ?", r.id, c.UserID); err != nil {
 			return report, err
 		}
 		if _, err := tx.ExecContext(ctx,

@@ -8,6 +8,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 )
 
 // Large remembers run in the background so the MCP call returns at once
@@ -38,22 +39,29 @@ type RememberPayload struct {
 	ConnID  string `json:"conn,omitempty"`
 }
 
-// EnqueueRemember queues a background remember for userID.
-func EnqueueRemember(ctx context.Context, p *Pool, userID string, rp RememberPayload) (string, error) {
+// EnqueueRemember queues a background remember for userID. uk is the user's
+// key (nil for an unencrypted user); the payload is sealed when the user is
+// encrypted.
+func EnqueueRemember(ctx context.Context, p *Pool, userID string, rp RememberPayload, uk *keys.UK) (string, error) {
 	b, err := json.Marshal(rp)
 	if err != nil {
 		return "", err
 	}
-	return p.EnqueueWith(ctx, userID, RememberKind, string(b))
+	return p.EnqueueWithKey(ctx, userID, RememberKind, string(b), uk)
 }
 
 // RememberJob is the body of a "remember" job.
 func RememberJob(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID, payload string) error {
+	return RememberJobKey(ctx, root, st, userID, payload, nil)
+}
+
+// RememberJobKey is RememberJob for a job holding the user's key.
+func RememberJobKey(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID, payload string, uk *keys.UK) error {
 	var rp RememberPayload
 	if err := json.Unmarshal([]byte(payload), &rp); err != nil || rp.Content == "" {
 		return errors.New("jobs: remember job has no content")
 	}
-	cx, err := st.ResolveUser(ctx, root, userID, rp.ConnID, nil)
+	cx, err := st.ResolveUser(ctx, root, userID, rp.ConnID, uk)
 	if err != nil {
 		return err
 	}

@@ -5,12 +5,12 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // compactKindPrefix must match jobs.CompactKindPrefix.
@@ -89,27 +89,21 @@ type compactionRow struct {
 
 // load returns the caller's own compaction; a foreign or absent ID is
 // sql.ErrNoRows.
-func (h *compactionHandlers) load(ctx context.Context, userID, id string) (*compactionRow, error) {
-	var row compactionRow
-	var proposal, batch sql.NullString
-	err := h.d.Accounts.DB.QueryRowContext(ctx,
-		`SELECT status, proposal_json::text, batch_id FROM compactions WHERE id = $1 AND user_id = $2`, id, userID).
-		Scan(&row.status, &proposal, &batch)
+func (h *compactionHandlers) load(ctx context.Context, u SessionUser, id string) (*compactionRow, error) {
+	r, err := h.d.Accounts.LoadCompaction(ctx, u.UserID, id, u.Key)
 	if err != nil {
 		return nil, err
 	}
-	row.batchID = batch.String
-	if proposal.Valid && proposal.String != "" {
-		if err := json.Unmarshal([]byte(proposal.String), &row.changes); err != nil {
-			return nil, err
-		}
-	}
-	return &row, nil
+	return &compactionRow{status: r.Status, batchID: r.BatchID, changes: r.Changes}, nil
 }
 
 func (h *compactionHandlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		http.NotFound(w, r)
+		return
+	}
+	if errors.Is(err, model.ErrLocked) {
+		http.Error(w, "your memory is locked; unlock it to see this compaction", http.StatusLocked)
 		return
 	}
 	h.d.Cfg.Logger.Error("compaction", "err", err)
@@ -143,7 +137,7 @@ func (h *compactionHandlers) start(w http.ResponseWriter, r *http.Request, u Ses
 }
 
 func (h *compactionHandlers) show(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	row, err := h.load(r.Context(), u.UserID, r.PathValue("id"))
+	row, err := h.load(r.Context(), u, r.PathValue("id"))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -165,7 +159,7 @@ func (h *compactionHandlers) handle(ctx context.Context, userID string) (*cortex
 func (h *compactionHandlers) apply(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	row, err := h.load(ctx, u.UserID, id)
+	row, err := h.load(ctx, u, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -262,7 +256,7 @@ func (h *compactionHandlers) apply(w http.ResponseWriter, r *http.Request, u Ses
 func (h *compactionHandlers) undo(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	row, err := h.load(ctx, u.UserID, id)
+	row, err := h.load(ctx, u, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return

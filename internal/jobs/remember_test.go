@@ -67,7 +67,7 @@ func TestRememberJobStoresWithConnectionProvenance(t *testing.T) {
 		return RememberJob(ctx, e.root, e.st, j.UserID, j.Payload)
 	}).WithDB(e.db)
 	text := strings.Repeat("Maria Lopez leads the billing team at Acme Corp. ", 300)
-	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, Source: "doc.md", Speaker: "maria", ConnID: conn.ID})
+	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, Source: "doc.md", Speaker: "maria", ConnID: conn.ID}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestRememberJobRetriesAndResumesAfterRestart(t *testing.T) {
 	}
 	pool := NewPool(1, run).WithDB(e.db)
 	text := strings.Repeat("Maria Lopez leads the billing team at Acme Corp. ", 300)
-	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, ConnID: conn.ID})
+	id, err := EnqueueRemember(t.Context(), pool, uid, RememberPayload{Content: text, ConnID: conn.ID}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

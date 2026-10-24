@@ -292,7 +292,7 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 
 	// 1. Undo recorded changes, newest first.
 	rows, err := tx.QueryContext(ctx,
-		`SELECT table_name, op, row_json::text FROM delete_batch_changes
+		`SELECT table_name, op, row_json::text, row_ct, enc FROM delete_batch_changes
 		 WHERE batch_id = ? AND user_id = ? ORDER BY id DESC`, batchID, c.UserID)
 	if err != nil {
 		return fmt.Errorf("cortex: load batch changes: %w", err)
@@ -300,9 +300,28 @@ func (c Ops) RestoreBatch(ctx context.Context, batchID string) error {
 	var changes []batchChange
 	for rows.Next() {
 		var ch batchChange
-		if err := rows.Scan(&ch.table, &ch.op, &ch.row); err != nil {
+		var rowJSON sql.NullString
+		var ct []byte
+		var enc bool
+		if err := rows.Scan(&ch.table, &ch.op, &rowJSON, &ct, &enc); err != nil {
 			rows.Close()
 			return fmt.Errorf("cortex: scan batch change: %w", err)
+		}
+		if enc {
+			// The sealed snapshot is the row as stored (ciphertext columns
+			// included), so restoring it rewrites the encrypted row as it was.
+			j, err := c.OpenStr("delete_batch_changes", batchID, "row_json", ct)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			ch.row = j
+		} else {
+			if err := c.CheckRowForm(false); err != nil {
+				rows.Close()
+				return err
+			}
+			ch.row = rowJSON.String
 		}
 		changes = append(changes, ch)
 	}
@@ -444,12 +463,16 @@ func (c Ops) undoChange(ctx context.Context, tx *store.Tx, ch batchChange) error
 	case "update":
 		switch ch.table {
 		case "entities":
-			q = `UPDATE entities t SET attributes = r.attributes, updated_at = r.updated_at, type = r.type, name = r.name
+			q = `UPDATE entities t SET attributes = r.attributes, updated_at = r.updated_at, type = r.type, name = r.name,
+			       attributes_ct = r.attributes_ct, type_ct = r.type_ct, name_ct = r.name_ct, source_ct = r.source_ct,
+			       name_blind = r.name_blind, type_blind = r.type_blind, enc = COALESCE(r.enc, FALSE)
 			     FROM jsonb_populate_record(NULL::entities, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
 		case "relationships":
 			q = `UPDATE relationships t SET type = r.type, source_id = r.source_id, target_id = r.target_id,
-			       attributes = r.attributes, evidence_count = r.evidence_count
+			       attributes = r.attributes, evidence_count = r.evidence_count,
+			       type_ct = r.type_ct, type_blind = r.type_blind, source_ct = r.source_ct,
+			       attributes_ct = r.attributes_ct, enc = COALESCE(r.enc, FALSE)
 			     FROM jsonb_populate_record(NULL::relationships, ?::jsonb) r
 			     WHERE t.id = r.id AND t.user_id = ?`
 		default:

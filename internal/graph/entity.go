@@ -225,15 +225,52 @@ type mergeOpts struct {
 // recordChanges snapshots the rows of table matching where into the batch's
 // change records, before the caller modifies or deletes them. extra is a JSON
 // object merged into each snapshot (e.g. the retarget destination).
-func recordChanges(ctx context.Context, tx *store.Tx, mo mergeOpts, userID, table, op, extra, where string, args ...any) error {
+func (c Ops) recordChanges(ctx context.Context, tx *store.Tx, mo mergeOpts, userID, table, op, extra, where string, args ...any) error {
 	if mo.batchID == "" {
 		return nil
 	}
-	all := append([]any{mo.batchID, userID, table, op, extra}, args...)
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json)
-		 SELECT ?, ?, ?, ?, to_jsonb(t) || ?::jsonb FROM `+table+` t WHERE `+where, all...); err != nil {
+	if !c.Encrypted() {
+		all := append([]any{mo.batchID, userID, table, op, extra}, args...)
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json)
+			 SELECT ?, ?, ?, ?, to_jsonb(t) || ?::jsonb FROM `+table+` t WHERE `+where, all...); err != nil {
+			return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+		}
+		return nil
+	}
+	// Encrypted user: the snapshot is sealed whole (AAD column row_json, row
+	// id = the batch id) so the undo log holds no readable row content.
+	if err := c.RequireKey(); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT (to_jsonb(t) || ?::jsonb)::text FROM `+table+` t WHERE `+where, append([]any{extra}, args...)...)
+	if err != nil {
 		return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+	}
+	var snaps []string
+	for rows.Next() {
+		var j string
+		if err := rows.Scan(&j); err != nil {
+			rows.Close()
+			return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+		}
+		snaps = append(snaps, j)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+	}
+	for _, j := range snaps {
+		ct, err := c.SealStr("delete_batch_changes", mo.batchID, "row_json", j)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_json, row_ct, enc)
+			 VALUES (?, ?, ?, ?, NULL, ?, TRUE)`, mo.batchID, userID, table, op, ct); err != nil {
+			return fmt.Errorf("cortex: record %s %s: %w", table, op, err)
+		}
 	}
 	return nil
 }
@@ -280,12 +317,12 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	}
 
 	// Snapshot the keeper so an undo can put its row back exactly.
-	if err := recordChanges(ctx, tx, mo, userID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keepID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "entities", "update", "{}", "t.id = ? AND t.user_id = ?", keepID, userID); err != nil {
 		return stats, err
 	}
 
 	// Re-target chunks (no collision possible).
-	if err := recordChanges(ctx, tx, mo, userID, "chunks", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "chunks", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err
 	}
 	res, err := tx.ExecContext(ctx,
@@ -298,7 +335,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	}
 
 	// Re-target memory_entities, with dedup on (memory_id, entity_id) PK.
-	if err := recordChanges(ctx, tx, mo, userID, "memory_entities", "delete", "{}",
+	if err := c.recordChanges(ctx, tx, mo, userID, "memory_entities", "delete", "{}",
 		`t.entity_id = ? AND t.user_id = ? AND t.memory_id IN (SELECT memory_id FROM memory_entities WHERE entity_id = ? AND user_id = ?)`,
 		dropID, userID, keepID, userID); err != nil {
 		return stats, err
@@ -314,7 +351,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	if n, _ := res.RowsAffected(); n > 0 {
 		stats.DupesDropped += int(n)
 	}
-	if err := recordChanges(ctx, tx, mo, userID, "memory_entities", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "memory_entities", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err
 	}
 	res, err = tx.ExecContext(ctx,
@@ -327,7 +364,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	}
 
 	// Re-target relationships source_id with dedup on (source, target, type).
-	if err := recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}",
+	if err := c.recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}",
 		`t.source_id = ? AND t.user_id = ? AND EXISTS (SELECT 1 FROM relationships k WHERE k.source_id = ? AND k.user_id = ? AND k.target_id = t.target_id AND `+sameRelType("k", "t")+`)`,
 		dropID, userID, keepID, userID); err != nil {
 		return stats, err
@@ -348,7 +385,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	if n, _ := res.RowsAffected(); n > 0 {
 		stats.DupesDropped += int(n)
 	}
-	if err := recordChanges(ctx, tx, mo, userID, "relationships", "retarget", extraTo, "t.source_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "relationships", "retarget", extraTo, "t.source_id = ? AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err
 	}
 	res, err = tx.ExecContext(ctx,
@@ -361,7 +398,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	}
 
 	// Same for target_id.
-	if err := recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}",
+	if err := c.recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}",
 		`t.target_id = ? AND t.user_id = ? AND EXISTS (SELECT 1 FROM relationships k WHERE k.target_id = ? AND k.user_id = ? AND k.source_id = t.source_id AND `+sameRelType("k", "t")+`)`,
 		dropID, userID, keepID, userID); err != nil {
 		return stats, err
@@ -382,7 +419,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	if n, _ := res.RowsAffected(); n > 0 {
 		stats.DupesDropped += int(n)
 	}
-	if err := recordChanges(ctx, tx, mo, userID, "relationships", "retarget", extraTo, "t.target_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "relationships", "retarget", extraTo, "t.target_id = ? AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err
 	}
 	res, err = tx.ExecContext(ctx,
@@ -395,7 +432,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	}
 
 	// Drop self-loops created by the merge.
-	if err := recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}", "t.source_id = ? AND t.target_id = ? AND t.user_id = ?", keepID, keepID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "relationships", "delete", "{}", "t.source_id = ? AND t.target_id = ? AND t.user_id = ?", keepID, keepID, userID); err != nil {
 		return stats, err
 	}
 	res, err = tx.ExecContext(ctx,
@@ -410,7 +447,7 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 	// Re-target aliases (an alias value names one entity, so none collide),
 	// then keep the dropped entity's name as an alias of the keeper so later
 	// mentions of it resolve here.
-	if err := recordChanges(ctx, tx, mo, userID, "entity_aliases", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "entity_aliases", "retarget", extraTo, "t.entity_id = ? AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err
 	}
 	res, err = tx.ExecContext(ctx,
@@ -431,14 +468,14 @@ func (c Ops) mergeEntitiesTx(ctx context.Context, tx *store.Tx, keepID, dropID s
 			if c.Encrypted() {
 				where, wargs = "t.user_id = ? AND t.kind = 'name' AND t.enc AND t.value_blind = ?", []any{userID, c.Blind(norm)}
 			}
-			if err := recordChanges(ctx, tx, mo, userID, "entity_aliases", "insert", "{}", where, wargs...); err != nil {
+			if err := c.recordChanges(ctx, tx, mo, userID, "entity_aliases", "insert", "{}", where, wargs...); err != nil {
 				return stats, err
 			}
 		}
 	}
 
 	// Drop the stale entity embedding.
-	if err := recordChanges(ctx, tx, mo, userID, "embeddings", "delete", "{}", "t.ref_id = ? AND t.ref_type = 'entity' AND t.user_id = ?", dropID, userID); err != nil {
+	if err := c.recordChanges(ctx, tx, mo, userID, "embeddings", "delete", "{}", "t.ref_id = ? AND t.ref_type = 'entity' AND t.user_id = ?", dropID, userID); err != nil {
 		return stats, err
 	}
 	res, err = tx.ExecContext(ctx,
