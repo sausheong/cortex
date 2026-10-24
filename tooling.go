@@ -7,7 +7,7 @@ import "database/sql"
 func (c *Cortex) DB() *sql.DB { return c.db.DB }
 
 // Embedder returns the configured embedder, or nil. Intended for tooling.
-func (c *Cortex) Embedder() Embedder { return c.cfg.embedder }
+func (c *Cortex) Embedder() Embedder { return c.cfg.Embedder }
 
 // AugmentForEmbedding builds the text embedded for a memory: its content
 // prefixed with the names of the entities it concerns. Intended for tooling.

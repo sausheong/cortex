@@ -1,4 +1,4 @@
-package cortex
+package model
 
 import (
 	"context"
@@ -48,16 +48,16 @@ type Chunk struct {
 }
 
 type Memory struct {
-	ID         string    `json:"id"`
-	Content    string    `json:"content"`
-	EntityIDs  []string  `json:"entity_ids,omitempty"`
+	ID        string   `json:"id"`
+	Content   string   `json:"content"`
+	EntityIDs []string `json:"entity_ids,omitempty"`
 	// About names the extracted entities this memory is about. It is set by
 	// extractors and used only during Remember to link the memory to those
 	// entities; it is not stored.
-	About      []string  `json:"about,omitempty"`
-	Source     string    `json:"source,omitempty"`
-	Speaker    string    `json:"speaker,omitempty"`
-	WrittenBy  string    `json:"written_by,omitempty"`
+	About     []string `json:"about,omitempty"`
+	Source    string   `json:"source,omitempty"`
+	Speaker   string   `json:"speaker,omitempty"`
+	WrittenBy string   `json:"written_by,omitempty"`
 	// Static marks an identity/preference fact (vs. an episodic one). Static
 	// memories are exempt from confidence decay and surface in a profile's
 	// static[] section; non-static memories decay and feed dynamic[]. Set by
@@ -186,20 +186,20 @@ type Graph struct {
 	Relationships []Relationship `json:"relationships"`
 }
 
-type Option func(*config)
+type Option func(*Config)
 
-type config struct {
-	llm       LLM
-	embedder  Embedder
-	extractor Extractor
-	logf      func(format string, args ...any) // optional diagnostic sink; nil = silent
+type Config struct {
+	LLM       LLM
+	Embedder  Embedder
+	Extractor Extractor
+	Logf      func(format string, args ...any) // optional diagnostic sink; nil = silent
 
-	migrationTimeout time.Duration // 0 = default (60s)
+	MigrationTimeout time.Duration // 0 = default (60s)
 }
 
 // WithMigrationTimeout bounds how long Open waits for migrations (default 60s).
 func WithMigrationTimeout(d time.Duration) Option {
-	return func(c *config) { c.migrationTimeout = d }
+	return func(c *Config) { c.MigrationTimeout = d }
 }
 
 type LLM interface {
@@ -289,9 +289,9 @@ type RelationReport struct {
 }
 
 // RelateOption configures a BuildMemoryEdges run.
-type RelateOption func(*relateConfig)
+type RelateOption func(*RelateConfig)
 
-type relateConfig struct{}
+type RelateConfig struct{}
 
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
@@ -318,16 +318,16 @@ type StructuredQuery struct {
 	Params map[string]any `json:"params"`
 }
 
-type RememberOption func(*rememberConfig)
-type rememberConfig struct {
-	source       string
-	speaker      string
-	contentType  string
-	maxChunkSize int // max characters per chunk before splitting (0 = no split)
+type RememberOption func(*RememberConfig)
+type RememberConfig struct {
+	Source       string
+	Speaker      string
+	ContentType  string
+	MaxChunkSize int // max characters per chunk before splitting (0 = no split)
 }
 
 func WithSource(source string) RememberOption {
-	return func(c *rememberConfig) { c.source = source }
+	return func(c *RememberConfig) { c.Source = source }
 }
 
 // WithSpeaker stamps a speaker/provenance label (e.g. "user", "assistant",
@@ -335,11 +335,11 @@ func WithSource(source string) RememberOption {
 // the extractor already set one. Records who asserted the fact, so
 // attribution questions and assistant-statement recall work.
 func WithSpeaker(speaker string) RememberOption {
-	return func(c *rememberConfig) { c.speaker = speaker }
+	return func(c *RememberConfig) { c.Speaker = speaker }
 }
 
 func WithContentType(ct string) RememberOption {
-	return func(c *rememberConfig) { c.contentType = ct }
+	return func(c *RememberConfig) { c.ContentType = ct }
 }
 
 // WithMaxChunkChars caps each stored chunk to roughly n characters.
@@ -348,19 +348,19 @@ func WithContentType(ct string) RememberOption {
 // embedded independently. The default is DefaultMaxChunkChars; pass 0 to
 // disable splitting.
 func WithMaxChunkChars(n int) RememberOption {
-	return func(c *rememberConfig) { c.maxChunkSize = n }
+	return func(c *RememberConfig) { c.MaxChunkSize = n }
 }
 
-type RecallOption func(*recallConfig)
-type recallConfig struct {
-	limit          int
-	source         string
-	minConfidence  float64
-	asOf           *time.Time // non-nil → recall as the graph was valid at this time
-	includeInvalid bool       // true → no validity filter (include retired memories)
-	rerank         bool       // true → post-fusion MMR diversity rerank (default off; see WithRerank)
-	noGraph        bool       // true → skip graph seeds and proximity boost (see WithGraph)
-	trackAccess    bool       // true → count returned memories as accessed (see WithTrackAccess)
+type RecallOption func(*RecallConfig)
+type RecallConfig struct {
+	Limit          int
+	Source         string
+	MinConfidence  float64
+	AsOf           *time.Time // non-nil → recall as the graph was valid at this time
+	IncludeInvalid bool       // true → no validity filter (include retired memories)
+	Rerank         bool       // true → post-fusion MMR diversity rerank (default off; see WithRerank)
+	NoGraph        bool       // true → skip graph seeds and proximity boost (see WithGraph)
+	TrackAccess    bool       // true → count returned memories as accessed (see WithTrackAccess)
 }
 
 // RerankLambda is the MMR tradeoff: relevance weight vs. diversity weight.
@@ -368,31 +368,31 @@ type recallConfig struct {
 const RerankLambda = 0.7
 
 func WithLimit(n int) RecallOption {
-	return func(c *recallConfig) { c.limit = n }
+	return func(c *RecallConfig) { c.Limit = n }
 }
 
 func WithSourceFilter(source string) RecallOption {
-	return func(c *recallConfig) { c.source = source }
+	return func(c *RecallConfig) { c.Source = source }
 }
 
 // WithMinConfidence filters out recall results below the given threshold.
 // Default 0.0 (no filtering). Applied as a hard >= threshold after RRF
 // merge, before the limit cap.
 func WithMinConfidence(c float64) RecallOption {
-	return func(cfg *recallConfig) { cfg.minConfidence = c }
+	return func(cfg *RecallConfig) { cfg.MinConfidence = c }
 }
 
 // WithAsOf recalls memories as they were valid at time t (point-in-time
 // history). Mutually exclusive with WithIncludeInvalid, which takes
 // precedence if both are set.
 func WithAsOf(t time.Time) RecallOption {
-	return func(c *recallConfig) { c.asOf = &t }
+	return func(c *RecallConfig) { c.AsOf = &t }
 }
 
 // WithIncludeInvalid includes retired/invalidated memories in recall
 // (no validity filtering). Takes precedence over WithAsOf.
 func WithIncludeInvalid() RecallOption {
-	return func(c *recallConfig) { c.includeInvalid = true }
+	return func(c *RecallConfig) { c.IncludeInvalid = true }
 }
 
 // WithRerank toggles the post-fusion MMR diversity rerank. It is OFF by
@@ -403,7 +403,7 @@ func WithIncludeInvalid() RecallOption {
 // the single best fact first. The pure relevance (confidence-weighted fusion)
 // order is the default.
 func WithRerank(on bool) RecallOption {
-	return func(c *recallConfig) { c.rerank = on }
+	return func(c *RecallConfig) { c.Rerank = on }
 }
 
 // WithGraph turns graph-aware recall on or off (default on). When on, the
@@ -411,7 +411,7 @@ func WithRerank(on bool) RecallOption {
 // fusion as one more ranked list, and results linked to entities within two
 // hops of a seed are boosted, closer ones more.
 func WithGraph(on bool) RecallOption {
-	return func(c *recallConfig) { c.noGraph = !on }
+	return func(c *RecallConfig) { c.NoGraph = !on }
 }
 
 // WithTrackAccess records the memories this recall returns as accessed
@@ -419,65 +419,65 @@ func WithGraph(on bool) RecallOption {
 // person, not for benchmarks: access lifts ranking slightly and restarts a
 // memory's decay clock.
 func WithTrackAccess() RecallOption {
-	return func(c *recallConfig) { c.trackAccess = true }
+	return func(c *RecallConfig) { c.TrackAccess = true }
 }
 
-type RelFilter func(*relFilterConfig)
-type relFilterConfig struct {
-	relType        string
-	asOf           *time.Time
-	includeInvalid bool
+type RelFilter func(*RelFilterConfig)
+type RelFilterConfig struct {
+	RelType        string
+	AsOf           *time.Time
+	IncludeInvalid bool
 }
 
 func RelTypeFilter(t string) RelFilter {
-	return func(c *relFilterConfig) { c.relType = t }
+	return func(c *RelFilterConfig) { c.RelType = t }
 }
 
 // RelAsOf returns the relationships as they held at t instead of now.
 func RelAsOf(t time.Time) RelFilter {
-	return func(c *relFilterConfig) { c.asOf = &t }
+	return func(c *RelFilterConfig) { c.AsOf = &t }
 }
 
 // RelIncludeInvalid returns ended relationships as well as current ones.
 func RelIncludeInvalid() RelFilter {
-	return func(c *relFilterConfig) { c.includeInvalid = true }
+	return func(c *RelFilterConfig) { c.IncludeInvalid = true }
 }
 
-type TraverseOption func(*traverseConfig)
-type traverseConfig struct {
-	depth      int
-	edgeTypes  []string
-	relFilters []RelFilter
+type TraverseOption func(*TraverseConfig)
+type TraverseConfig struct {
+	Depth      int
+	EdgeTypes  []string
+	RelFilters []RelFilter
 }
 
 // WithTraverseAsOf walks the relationships as they held at t.
 func WithTraverseAsOf(t time.Time) TraverseOption {
-	return func(c *traverseConfig) { c.relFilters = append(c.relFilters, RelAsOf(t)) }
+	return func(c *TraverseConfig) { c.RelFilters = append(c.RelFilters, RelAsOf(t)) }
 }
 
 // WithTraverseIncludeInvalid walks ended relationships as well.
 func WithTraverseIncludeInvalid() TraverseOption {
-	return func(c *traverseConfig) { c.relFilters = append(c.relFilters, RelIncludeInvalid()) }
+	return func(c *TraverseConfig) { c.RelFilters = append(c.RelFilters, RelIncludeInvalid()) }
 }
 
 func WithDepth(d int) TraverseOption {
-	return func(c *traverseConfig) { c.depth = d }
+	return func(c *TraverseConfig) { c.Depth = d }
 }
 
 func WithEdgeTypes(types ...string) TraverseOption {
-	return func(c *traverseConfig) { c.edgeTypes = types }
+	return func(c *TraverseConfig) { c.EdgeTypes = types }
 }
 
 func WithLLM(l LLM) Option {
-	return func(c *config) { c.llm = l }
+	return func(c *Config) { c.LLM = l }
 }
 
 func WithEmbedder(e Embedder) Option {
-	return func(c *config) { c.embedder = e }
+	return func(c *Config) { c.Embedder = e }
 }
 
 func WithExtractor(e Extractor) Option {
-	return func(c *config) { c.extractor = e }
+	return func(c *Config) { c.Extractor = e }
 }
 
 // WithLogger installs an optional diagnostic sink. Cortex uses it to surface
@@ -487,10 +487,10 @@ func WithExtractor(e Extractor) Option {
 // results". The default is nil (silent), preserving prior behavior. Pass e.g.
 // WithLogger(log.Printf) or a custom func.
 func WithLogger(logf func(format string, args ...any)) Option {
-	return func(c *config) { c.logf = logf }
+	return func(c *Config) { c.Logf = logf }
 }
 
-// coerceConfidence enforces the [0, 1] invariant for confidence values.
+// CoerceConfidence enforces the [0, 1] invariant for confidence values.
 // Zero (the Go zero value, indistinguishable from "unset") is coerced to
 // 1.0 — this is what preserves backward compatibility: callers that did
 // not specify confidence (deterministic extractor, manual API use, legacy
@@ -498,7 +498,7 @@ func WithLogger(logf func(format string, args ...any)) Option {
 // confident." Out-of-range values are clamped silently rather than
 // errored: failing an entire ingest because of one bad number from an LLM
 // is worse UX than clamping and continuing.
-func coerceConfidence(c float64) float64 {
+func CoerceConfidence(c float64) float64 {
 	if math.IsNaN(c) || c == 0 {
 		return 1.0
 	}
@@ -560,13 +560,13 @@ type ReconcileReport struct {
 }
 
 // ReconcileOption configures a Reconcile run.
-type ReconcileOption func(*reconcileConfig)
+type ReconcileOption func(*ReconcileConfig)
 
-type reconcileConfig struct{}
+type ReconcileConfig struct{}
 
-// mergeRecord is one entry in an entity's `merged_from` attribute array.
+// MergeRecord is one entry in an entity's `merged_from` attribute array.
 // It snapshots the dropped entity so a merge is recoverable in principle.
-type mergeRecord struct {
+type MergeRecord struct {
 	ID       string         `json:"id"`
 	Name     string         `json:"name"`
 	Type     string         `json:"type"`
@@ -618,25 +618,25 @@ type MemoryRef struct {
 }
 
 // LintOption configures Lint behavior.
-type LintOption func(*lintConfig)
+type LintOption func(*LintConfig)
 
-type lintConfig struct {
-	lowConfidence          bool
-	lowConfidenceThreshold float64
+type LintConfig struct {
+	LowConfidence          bool
+	LowConfidenceThreshold float64
 }
 
 // WithLowConfidence enables the low-confidence memories section
 // (skipped by default).
 func WithLowConfidence() LintOption {
-	return func(c *lintConfig) { c.lowConfidence = true }
+	return func(c *LintConfig) { c.LowConfidence = true }
 }
 
 // WithLowConfidenceThreshold sets the cutoff for "low confidence"
 // (default 0.3) and implicitly enables the section.
 func WithLowConfidenceThreshold(t float64) LintOption {
-	return func(c *lintConfig) {
-		c.lowConfidence = true
-		c.lowConfidenceThreshold = t
+	return func(c *LintConfig) {
+		c.LowConfidence = true
+		c.LowConfidenceThreshold = t
 	}
 }
 
@@ -656,23 +656,23 @@ type DecayReport struct {
 	Changes []DecayChange `json:"changes"`
 }
 
-type DecayOption func(*decayConfig)
+type DecayOption func(*DecayConfig)
 
-type decayConfig struct {
-	halfLife time.Duration
-	floor    float64
-	dryRun   bool
+type DecayConfig struct {
+	HalfLife time.Duration
+	Floor    float64
+	DryRun   bool
 }
 
 // WithHalfLife sets the decay half-life (default 90 days).
-func WithHalfLife(d time.Duration) DecayOption { return func(c *decayConfig) { c.halfLife = d } }
+func WithHalfLife(d time.Duration) DecayOption { return func(c *DecayConfig) { c.HalfLife = d } }
 
 // WithFloor sets the confidence floor below which a memory is auto-pruned
 // (default 0.05).
-func WithFloor(f float64) DecayOption { return func(c *decayConfig) { c.floor = f } }
+func WithFloor(f float64) DecayOption { return func(c *DecayConfig) { c.Floor = f } }
 
 // WithDecayDryRun computes the decay report without writing anything.
-func WithDecayDryRun() DecayOption { return func(c *decayConfig) { c.dryRun = true } }
+func WithDecayDryRun() DecayOption { return func(c *DecayConfig) { c.DryRun = true } }
 
 // MaintainReport summarizes a Maintain reconsolidation pass — the collected
 // sub-reports from reconcile, relate, and decay. A nil sub-report means that
@@ -703,42 +703,42 @@ func (r MaintainReport) SkippedItems() int {
 	return n
 }
 
-type MaintainOption func(*maintainConfig)
+type MaintainOption func(*MaintainConfig)
 
-type maintainConfig struct {
-	dryRun        bool
-	skipReconcile bool
-	skipRelate    bool
-	skipDecay     bool
-	skipExpire    bool
-	skipProfile   bool
-	decayOpts     []DecayOption
+type MaintainConfig struct {
+	DryRun        bool
+	SkipReconcile bool
+	SkipRelate    bool
+	SkipDecay     bool
+	SkipExpire    bool
+	SkipProfile   bool
+	DecayOpts     []DecayOption
 }
 
 // WithMaintainDryRun runs Maintain without writing anything: reconcile uses its
 // dry-run path, relate is skipped (it has no dry-run mode), and decay uses
 // WithDecayDryRun.
-func WithMaintainDryRun() MaintainOption { return func(c *maintainConfig) { c.dryRun = true } }
+func WithMaintainDryRun() MaintainOption { return func(c *MaintainConfig) { c.DryRun = true } }
 
 // WithoutReconcile skips the reconcile pass.
-func WithoutReconcile() MaintainOption { return func(c *maintainConfig) { c.skipReconcile = true } }
+func WithoutReconcile() MaintainOption { return func(c *MaintainConfig) { c.SkipReconcile = true } }
 
 // WithoutRelate skips the relate pass.
-func WithoutRelate() MaintainOption { return func(c *maintainConfig) { c.skipRelate = true } }
+func WithoutRelate() MaintainOption { return func(c *MaintainConfig) { c.SkipRelate = true } }
 
 // WithoutDecay skips the decay pass.
-func WithoutDecay() MaintainOption { return func(c *maintainConfig) { c.skipDecay = true } }
+func WithoutDecay() MaintainOption { return func(c *MaintainConfig) { c.SkipDecay = true } }
 
 // WithMaintainDecayOptions forwards decay options to the decay pass.
 func WithMaintainDecayOptions(o ...DecayOption) MaintainOption {
-	return func(c *maintainConfig) { c.decayOpts = o }
+	return func(c *MaintainConfig) { c.DecayOpts = o }
 }
 
 // WithoutProfile skips the profile-refresh pass in Maintain.
-func WithoutProfile() MaintainOption { return func(c *maintainConfig) { c.skipProfile = true } }
+func WithoutProfile() MaintainOption { return func(c *MaintainConfig) { c.SkipProfile = true } }
 
 // WithoutExpire skips the expire pass in Maintain.
-func WithoutExpire() MaintainOption { return func(c *maintainConfig) { c.skipExpire = true } }
+func WithoutExpire() MaintainOption { return func(c *MaintainConfig) { c.SkipExpire = true } }
 
 // --- Profile ---
 
@@ -776,45 +776,45 @@ const (
 	ProfileDefaultStaticCap = 60 // max static candidates handed to the distiller
 )
 
-type ProfileOption func(*profileConfig)
+type ProfileOption func(*ProfileConfig)
 
-type profileConfig struct {
-	ttl       time.Duration
-	recentK   int
-	window    time.Duration
-	staticCap int
+type ProfileConfig struct {
+	TTL       time.Duration
+	RecentK   int
+	Window    time.Duration
+	StaticCap int
 }
 
-func defaultProfileConfig() profileConfig {
-	return profileConfig{
-		ttl:       ProfileDefaultTTL,
-		recentK:   ProfileDefaultRecentK,
-		window:    ProfileDefaultWindow,
-		staticCap: ProfileDefaultStaticCap,
+func DefaultProfileConfig() ProfileConfig {
+	return ProfileConfig{
+		TTL:       ProfileDefaultTTL,
+		RecentK:   ProfileDefaultRecentK,
+		Window:    ProfileDefaultWindow,
+		StaticCap: ProfileDefaultStaticCap,
 	}
 }
 
 // WithProfileTTL sets how long a cached profile is served before a rebuild
 // (default 24h).
 func WithProfileTTL(d time.Duration) ProfileOption {
-	return func(c *profileConfig) { c.ttl = d }
+	return func(c *ProfileConfig) { c.TTL = d }
 }
 
 // WithProfileRecentK sets how many recent memories form the dynamic section
 // (default 7).
 func WithProfileRecentK(n int) ProfileOption {
-	return func(c *profileConfig) { c.recentK = n }
+	return func(c *ProfileConfig) { c.RecentK = n }
 }
 
 // WithProfileWindow sets the recency window for dynamic memories (default 30d).
 func WithProfileWindow(d time.Duration) ProfileOption {
-	return func(c *profileConfig) { c.window = d }
+	return func(c *ProfileConfig) { c.Window = d }
 }
 
 // WithProfileStaticCap caps how many memories feed the static section
 // (default 60).
 func WithProfileStaticCap(n int) ProfileOption {
-	return func(c *profileConfig) { c.staticCap = n }
+	return func(c *ProfileConfig) { c.StaticCap = n }
 }
 
 // --- Expire (TTL) ---
@@ -835,11 +835,11 @@ type ExpireReport struct {
 	Changes []ExpireChange `json:"changes"`
 }
 
-type ExpireOption func(*expireConfig)
+type ExpireOption func(*ExpireConfig)
 
-type expireConfig struct {
-	dryRun bool
+type ExpireConfig struct {
+	DryRun bool
 }
 
 // WithExpireDryRun computes the expire report without writing anything.
-func WithExpireDryRun() ExpireOption { return func(c *expireConfig) { c.dryRun = true } }
+func WithExpireDryRun() ExpireOption { return func(c *ExpireConfig) { c.DryRun = true } }

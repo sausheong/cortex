@@ -1,4 +1,4 @@
-package cortex
+package model
 
 import (
 	"context"
@@ -41,7 +41,7 @@ func TestCoerceConfidence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := coerceConfidence(tc.in)
+			got := CoerceConfidence(tc.in)
 			if got != tc.want {
 				t.Errorf("coerceConfidence(%v) = %v, want %v", tc.in, got, tc.want)
 			}
@@ -50,23 +50,23 @@ func TestCoerceConfidence(t *testing.T) {
 }
 
 func TestProfileConfigDefaults(t *testing.T) {
-	cfg := defaultProfileConfig()
-	if cfg.ttl != ProfileDefaultTTL {
-		t.Errorf("ttl = %v, want %v", cfg.ttl, ProfileDefaultTTL)
+	cfg := DefaultProfileConfig()
+	if cfg.TTL != ProfileDefaultTTL {
+		t.Errorf("ttl = %v, want %v", cfg.TTL, ProfileDefaultTTL)
 	}
-	if cfg.recentK != ProfileDefaultRecentK {
-		t.Errorf("recentK = %d, want %d", cfg.recentK, ProfileDefaultRecentK)
+	if cfg.RecentK != ProfileDefaultRecentK {
+		t.Errorf("recentK = %d, want %d", cfg.RecentK, ProfileDefaultRecentK)
 	}
-	if cfg.window != ProfileDefaultWindow {
-		t.Errorf("window = %v, want %v", cfg.window, ProfileDefaultWindow)
+	if cfg.Window != ProfileDefaultWindow {
+		t.Errorf("window = %v, want %v", cfg.Window, ProfileDefaultWindow)
 	}
-	if cfg.staticCap != ProfileDefaultStaticCap {
-		t.Errorf("staticCap = %d, want %d", cfg.staticCap, ProfileDefaultStaticCap)
+	if cfg.StaticCap != ProfileDefaultStaticCap {
+		t.Errorf("staticCap = %d, want %d", cfg.StaticCap, ProfileDefaultStaticCap)
 	}
 }
 
 func TestProfileOptionsOverride(t *testing.T) {
-	cfg := defaultProfileConfig()
+	cfg := DefaultProfileConfig()
 	for _, o := range []ProfileOption{
 		WithProfileTTL(time.Hour),
 		WithProfileRecentK(3),
@@ -75,15 +75,15 @@ func TestProfileOptionsOverride(t *testing.T) {
 	} {
 		o(&cfg)
 	}
-	if cfg.ttl != time.Hour || cfg.recentK != 3 || cfg.window != 48*time.Hour || cfg.staticCap != 5 {
+	if cfg.TTL != time.Hour || cfg.RecentK != 3 || cfg.Window != 48*time.Hour || cfg.StaticCap != 5 {
 		t.Errorf("options did not apply: %+v", cfg)
 	}
 }
 
 func TestWithoutProfileSkips(t *testing.T) {
-	var mc maintainConfig
+	var mc MaintainConfig
 	WithoutProfile()(&mc)
-	if !mc.skipProfile {
+	if !mc.SkipProfile {
 		t.Error("WithoutProfile did not set skipProfile")
 	}
 }

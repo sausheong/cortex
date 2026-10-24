@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // vectorResult holds a reference ID and its cosine similarity score.
@@ -92,11 +94,11 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 // performs a brute-force vector search over chunk embeddings and returns
 // the matching chunks ordered by similarity.
 func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]Chunk, error) {
-	if c.cfg.embedder == nil {
+	if c.cfg.Embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
 
-	vecs, err := c.cfg.embedder.Embed(ctx, []string{query})
+	vecs, err := c.cfg.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: embed query: %w", err)
 	}
@@ -143,18 +145,18 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 // memories ordered by cosine similarity. These embeddings are written at
 // ingest by Remember but were previously never searched.
 func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int) ([]Memory, error) {
-	return c.searchMemoryVectorMode(ctx, query, limit, temporalMode{})
+	return c.searchMemoryVectorMode(ctx, query, limit, model.TemporalMode{})
 }
 
 // searchMemoryVectorMode is the temporal-mode-aware backing for
 // SearchMemoryVector. The per-row resolve query's validity predicate is
 // derived from mode (default = currently-valid).
-func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit int, mode temporalMode) ([]Memory, error) {
-	if c.cfg.embedder == nil {
+func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]Memory, error) {
+	if c.cfg.Embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
 
-	vecs, err := c.cfg.embedder.Embed(ctx, []string{query})
+	vecs, err := c.cfg.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: embed query: %w", err)
 	}
@@ -167,7 +169,7 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 		return nil, err
 	}
 
-	clause, targs := mode.clause("")
+	clause, targs := mode.Clause("")
 
 	memories := make([]Memory, 0, len(results))
 	for _, r := range results {

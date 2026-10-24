@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // augmentForEmbedding prepends a memory's linked-entity context to its
@@ -47,7 +49,7 @@ func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...R
 	// which actually discriminates relevant from irrelevant top hits (the RRF
 	// top score is ~constant and cannot). On any embed failure we log and fall
 	// through to the RRF fallback so a dead embedder degrades, never errors.
-	if c.cfg.embedder != nil {
+	if c.cfg.Embedder != nil {
 		if s, ok := c.cosineStrength(ctx, query, results); ok {
 			out.Strength = s
 			out.Abstain = s < AbstainRelevanceThreshold
@@ -76,7 +78,7 @@ func (c *Cortex) cosineStrength(ctx context.Context, query string, results []Res
 		contents[i] = results[i].Content
 	}
 
-	vecs, err := c.cfg.embedder.Embed(ctx, append([]string{query}, contents...))
+	vecs, err := c.cfg.Embedder.Embed(ctx, append([]string{query}, contents...))
 	if err != nil {
 		c.logf("cortex: abstention cosine embed failed: %v", err)
 		return 0, false
@@ -106,13 +108,13 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// *similar* and MMR's diversity penalty wrongly demotes them as redundant.
 	// Diversity is the wrong objective for "find the specific fact". Opt in via
 	// WithRerank(true) for browse/explore use cases that want spread.
-	cfg := &recallConfig{limit: 20, rerank: false}
+	cfg := &model.RecallConfig{Limit: 20, Rerank: false}
 	for _, o := range opts {
 		o(cfg)
 	}
 
 	// Resolve the temporal mode once; it governs the memory read paths.
-	mode := temporalMode{includeInvalid: cfg.includeInvalid, asOf: cfg.asOf}
+	mode := model.TemporalMode{IncludeInvalid: cfg.IncludeInvalid, AsOf: cfg.AsOf}
 
 	// Decompose the query into sub-queries.
 	subQueries := c.decomposeQuery(ctx, query)
@@ -126,10 +128,10 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 			continue
 		}
 		if fromStr, ok := sq.Params["from"].(string); ok {
-			mode.rangeFrom = ParseEventTime(fromStr)
+			mode.RangeFrom = ParseEventTime(fromStr)
 		}
 		if toStr, ok := sq.Params["to"].(string); ok {
-			mode.rangeTo = ParseEventTime(toStr)
+			mode.RangeTo = ParseEventTime(toStr)
 		}
 	}
 
@@ -146,7 +148,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			items, results := c.executeSubQuery(ctx, sq, cfg.limit, mode)
+			items, results := c.executeSubQuery(ctx, sq, cfg.Limit, mode)
 			mu.Lock()
 			defer mu.Unlock()
 			if len(items) > 0 {
@@ -161,9 +163,9 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 
 	// Graph-aware recall: seed from the entities the query names.
 	var graph graphContext
-	if !cfg.noGraph {
+	if !cfg.NoGraph {
 		graph = c.buildGraphContext(ctx, query, mode)
-		if items, results := c.recallSeedMemories(ctx, graph, cfg.limit, mode); len(items) > 0 {
+		if items, results := c.recallSeedMemories(ctx, graph, cfg.Limit, mode); len(items) > 0 {
 			lists = append(lists, items)
 			for k, v := range results {
 				if existing, ok := resultMap[k]; ok {
@@ -224,7 +226,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// ~15-20pts on FTS-only) and rescues nothing, so we keep the fusion order.
 	// This also makes a dead vector path (e.g. embedder over quota → empty
 	// list) degrade cleanly to keyword order rather than a worse reranked one.
-	if cfg.rerank && c.cfg.embedder != nil && len(lists) > 1 && len(merged) > 1 {
+	if cfg.Rerank && c.cfg.Embedder != nil && len(lists) > 1 && len(merged) > 1 {
 		cands := make([]mmrCandidate, 0, len(merged))
 		for _, item := range merged {
 			r, ok := resultMap[item.id]
@@ -261,10 +263,10 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	}
 
 	// Apply min-confidence filter (post-RRF, pre-limit).
-	if cfg.minConfidence > 0 {
+	if cfg.MinConfidence > 0 {
 		filtered := final[:0]
 		for _, r := range final {
-			if r.Confidence >= cfg.minConfidence {
+			if r.Confidence >= cfg.MinConfidence {
 				filtered = append(filtered, r)
 			}
 		}
@@ -272,11 +274,11 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	}
 
 	// Apply limit.
-	if len(final) > cfg.limit {
-		final = final[:cfg.limit]
+	if len(final) > cfg.Limit {
+		final = final[:cfg.Limit]
 	}
 
-	if cfg.trackAccess {
+	if cfg.TrackAccess {
 		c.markAccessed(ctx, final)
 	}
 	return final, nil
@@ -316,8 +318,8 @@ func rrfScore(merged []rankedItem, key string) float64 {
 // Falls back to keyword_search + memory_lookup if no LLM is configured
 // or if decomposition returns no results.
 func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQuery {
-	if c.cfg.llm != nil {
-		sqs, err := c.cfg.llm.Decompose(ctx, query)
+	if c.cfg.LLM != nil {
+		sqs, err := c.cfg.LLM.Decompose(ctx, query)
 		if err == nil && len(sqs) > 0 {
 			return sqs
 		}
@@ -334,7 +336,7 @@ func (c *Cortex) decomposeQuery(ctx context.Context, query string) []StructuredQ
 
 // executeSubQuery runs a single sub-query and returns ranked items plus
 // a map of prefixed-ID to Result for later lookup.
-func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
 	query, _ := sq.Params["query"].(string)
 	if query == "" {
 		return nil, nil
@@ -358,7 +360,7 @@ func (c *Cortex) executeSubQuery(ctx context.Context, sq StructuredQuery, limit 
 	}
 }
 
-func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
 	mems, err := c.searchMemoriesMode(ctx, query, limit, mode)
 	if err != nil || len(mems) == 0 {
 		return nil, nil
@@ -391,13 +393,13 @@ func (c *Cortex) recallMemories(ctx context.Context, query string, limit int, mo
 // otherwise swallows, so a dead embedding endpoint doesn't masquerade as
 // "no results".
 func (c *Cortex) logf(format string, args ...any) {
-	if c.cfg.logf != nil {
-		c.cfg.logf(format, args...)
+	if c.cfg.Logf != nil {
+		c.cfg.Logf(format, args...)
 	}
 }
 
-func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
-	if c.cfg.embedder == nil {
+func (c *Cortex) recallMemoryVector(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
+	if c.cfg.Embedder == nil {
 		return nil, nil
 	}
 	mems, err := c.searchMemoryVectorMode(ctx, query, limit, mode)
@@ -460,7 +462,7 @@ func (c *Cortex) recallKeyword(ctx context.Context, query string, limit int) ([]
 }
 
 func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
-	if c.cfg.embedder == nil {
+	if c.cfg.Embedder == nil {
 		return nil, nil
 	}
 
@@ -498,7 +500,7 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
 	// Seed from the entities the sub-query names, then list each seed and
 	// its neighbours, nearest first, summarised with their relationships.
-	g := c.buildGraphContext(ctx, query, temporalMode{})
+	g := c.buildGraphContext(ctx, query, model.TemporalMode{})
 	if len(g.seeds) == 0 {
 		return nil, nil
 	}

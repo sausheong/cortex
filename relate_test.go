@@ -70,8 +70,8 @@ func TestBuildMemoryEdges_GateRejectsSelfLoopAndBadType(t *testing.T) {
 	c.SetLLM(&mockLLM{
 		detectRelationsFn: func(_ context.Context, mems []Memory) ([]MemoryRelation, error) {
 			return []MemoryRelation{
-				{SourceID: m1.ID, TargetID: m1.ID, Type: EdgeExtends, Reason: "self"},        // self-loop
-				{SourceID: m1.ID, TargetID: m2.ID, Type: "supersedes", Reason: "wrong type"}, // unsupported type
+				{SourceID: m1.ID, TargetID: m1.ID, Type: EdgeExtends, Reason: "self"},         // self-loop
+				{SourceID: m1.ID, TargetID: m2.ID, Type: "supersedes", Reason: "wrong type"},  // unsupported type
 				{SourceID: m1.ID, TargetID: "ghost", Type: EdgeDerives, Reason: "unknown id"}, // not in set
 			}, nil
 		},

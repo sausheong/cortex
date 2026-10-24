@@ -5,25 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Remember extracts entities, relationships, memories, and chunks from the
 // provided content and stores them in the knowledge graph.
 func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberOption) error {
-	cfg := &rememberConfig{maxChunkSize: DefaultMaxChunkChars}
+	cfg := &model.RememberConfig{MaxChunkSize: DefaultMaxChunkChars}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	if c.cfg.extractor == nil {
+	if c.cfg.Extractor == nil {
 		return fmt.Errorf("cortex: no extractor configured")
 	}
 
 	// 1. Extract structured data from content. Long content is extracted
 	// per chunk and merged; a failing chunk does not discard the others, the
 	// caller gets an *ExtractPartialError after everything else is stored.
-	parts := splitContent(content, cfg.maxChunkSize)
-	extraction, err := c.extractParts(ctx, content, parts, cfg.contentType)
+	parts := splitContent(content, cfg.MaxChunkSize)
+	extraction, err := c.extractParts(ctx, content, parts, cfg.ContentType)
 	var extractPartial error
 	if err != nil {
 		if extraction == nil || !IsExtractPartial(err) {
@@ -37,11 +39,11 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// for resolving relationships and memory links.
 	nameToID := make(map[string]string)
 	var entityIDs []string // distinct, in extraction order
-	rc := &resolveContext{content: truncateRunes(content, 2000), ownerSpeaks: ownerVoice(cfg.speaker, cfg.source)}
+	rc := &resolveContext{content: truncateRunes(content, 2000), ownerSpeaks: ownerVoice(cfg.Speaker, cfg.Source)}
 	for i := range extraction.Entities {
 		e := &extraction.Entities[i]
-		if cfg.source != "" && e.Source == "" {
-			e.Source = cfg.source
+		if cfg.Source != "" && e.Source == "" {
+			e.Source = cfg.Source
 		}
 		extracted := e.Name
 		if err := c.ingestEntity(ctx, e, rc); err != nil {
@@ -82,8 +84,8 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 				r.Attributes["label"] = label
 			}
 		}
-		if cfg.source != "" && r.Source == "" {
-			r.Source = cfg.source
+		if cfg.Source != "" && r.Source == "" {
+			r.Source = cfg.Source
 		}
 		if err := c.PutRelationship(ctx, r); err != nil {
 			return fmt.Errorf("cortex: store relationship: %w", err)
@@ -98,13 +100,13 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// Embedding failures do not abort the save: everything is stored, the
 	// missing vectors are backfilled by nightly maintenance, and the caller
 	// gets an *EmbedPartialError saying how many items are waiting.
-	var unembedded embedFailures
+	var unembedded model.EmbedFailures
 	var chunkTargets []embedTarget
 	for i, part := range parts {
 		ch := &Chunk{Content: part}
 		md := map[string]any{}
-		if cfg.source != "" {
-			md["source"] = cfg.source
+		if cfg.Source != "" {
+			md["source"] = cfg.Source
 		}
 		if len(parts) > 1 {
 			md["part"] = i + 1
@@ -118,8 +120,8 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		}
 		chunkTargets = append(chunkTargets, embedTarget{ch.ID, "chunk", ch.Content})
 	}
-	if c.cfg.embedder != nil {
-		unembedded.merge(c.embedAndStoreBatch(ctx, chunkTargets))
+	if c.cfg.Embedder != nil {
+		unembedded.Merge(c.embedAndStoreBatch(ctx, chunkTargets))
 	}
 
 	// 5. Store memories, linking each to the entities it is about.
@@ -137,11 +139,11 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		for _, id := range m.EntityIDs {
 			entityNames = append(entityNames, idToName[id])
 		}
-		if cfg.source != "" && m.Source == "" {
-			m.Source = cfg.source
+		if cfg.Source != "" && m.Source == "" {
+			m.Source = cfg.Source
 		}
-		if cfg.speaker != "" && m.Speaker == "" {
-			m.Speaker = cfg.speaker
+		if cfg.Speaker != "" && m.Speaker == "" {
+			m.Speaker = cfg.Speaker
 		}
 		if err := c.PutMemory(ctx, m); err != nil {
 			return fmt.Errorf("cortex: store memory: %w", err)
@@ -151,11 +153,11 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		// The stored content and FTS index keep the original text.
 		memTargets = append(memTargets, embedTarget{m.ID, "memory", augmentForEmbedding(m.Content, entityNames)})
 	}
-	if c.cfg.embedder != nil {
-		unembedded.merge(c.embedAndStoreBatch(ctx, memTargets))
+	if c.cfg.Embedder != nil {
+		unembedded.Merge(c.embedAndStoreBatch(ctx, memTargets))
 	}
 
-	return errors.Join(extractPartial, unembedded.err())
+	return errors.Join(extractPartial, unembedded.Err())
 }
 
 // ownerVoice reports whether text remembered with this speaker and source is

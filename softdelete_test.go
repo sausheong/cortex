@@ -34,7 +34,7 @@ func sdCount(t *testing.T, c *Cortex, q string, args ...any) int {
 
 func sdEmbed(t *testing.T, c *Cortex, id, typ, text string) {
 	t.Helper()
-	vecs, _ := c.cfg.embedder.Embed(context.Background(), []string{text})
+	vecs, _ := c.cfg.Embedder.Embed(context.Background(), []string{text})
 	if err := c.putEmbedding(context.Background(), id, typ, vecs[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestPurgeRemovesEmbeddingsAndLinks(t *testing.T) {
 		}
 		sdEmbed(t, c, m.ID, "memory", m.Content)
 		// A second generation row for the same memory.
-		vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+		vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
 		if err := c.PutEmbeddingGen(ctx, m.ID, "memory", 2, vecs[0]); err != nil {
 			t.Fatal(err)
 		}

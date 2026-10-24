@@ -2,9 +2,10 @@ package cortex
 
 import (
 	"context"
-	"github.com/sausheong/cortex/internal/pgtest"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 func TestRecallFindsMemories(t *testing.T) {
@@ -166,7 +167,7 @@ func TestRecallVectorSearch(t *testing.T) {
 		t.Fatalf("PutChunk(2): %v", err)
 	}
 
-	vecs, err := c.cfg.embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
+	vecs, err := c.cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
@@ -272,7 +273,7 @@ func TestRecall_MMRRerankReordersForDiversity(t *testing.T) {
 		if err := c.PutMemory(ctx, m); err != nil {
 			t.Fatal(err)
 		}
-		vecs, _ := c.cfg.embedder.Embed(ctx, []string{content})
+		vecs, _ := c.cfg.Embedder.Embed(ctx, []string{content})
 		if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 			t.Fatal(err)
 		}
@@ -333,7 +334,7 @@ func TestRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
 		if err := c.PutMemory(ctx, m); err != nil {
 			t.Fatal(err)
 		}
-		vecs, _ := c.cfg.embedder.Embed(ctx, []string{content})
+		vecs, _ := c.cfg.Embedder.Embed(ctx, []string{content})
 		if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 			t.Fatal(err)
 		}
@@ -530,7 +531,7 @@ func TestRecall_UsesMemoryVector(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}
@@ -736,7 +737,7 @@ func TestRecallWithStrength_CosineStrengthFromEmbedder(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}
@@ -794,7 +795,7 @@ func TestRecallWithStrength_AbstainMatchesCosineThreshold(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, _ := c.cfg.embedder.Embed(ctx, []string{m.Content})
+	vecs, _ := c.cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}

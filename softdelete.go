@@ -7,30 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
-// DeleteFilter selects memories for SoftDeleteMemories. Set fields combine
-// with AND; at least one must be set. All matches every live memory.
-type DeleteFilter struct {
-	IDs       []string
-	WrittenBy string
-	OlderThan *time.Time
-	Query     string
-	All       bool
-}
-
-// DeleteBatch describes one recoverable soft delete (or merge).
-type DeleteBatch struct {
-	ID            string    `json:"id"`
-	Kind          string    `json:"kind"`
-	CreatedAt     time.Time `json:"created_at"`
-	Memories      int       `json:"memories"`
-	Entities      int       `json:"entities"`
-	Relationships int       `json:"relationships"`
-	Chunks        int       `json:"chunks"`
-}
-
-func errBatchNotFound() error { return notFound("cortex: delete batch not found") }
+func errBatchNotFound() error { return model.NotFound("cortex: delete batch not found") }
 
 // newBatch inserts a delete_batches row for userID and returns its ID.
 func newBatch(ctx context.Context, tx *dbTx, userID, kind string) (string, error) {

@@ -3,6 +3,8 @@ package cortex
 import (
 	"context"
 	"fmt"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // BuildMemoryEdges scans the graph per-entity for non-contradicting relations
@@ -13,13 +15,13 @@ import (
 // gate here, not by the LLM. Edge writes are idempotent (PutMemoryEdge), so
 // re-running does not stack edges. This never modifies or deletes memories.
 func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (RelationReport, error) {
-	cfg := &relateConfig{}
+	cfg := &model.RelateConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	det, ok := c.cfg.llm.(RelationDetector)
-	if c.cfg.llm == nil || !ok {
+	det, ok := c.cfg.LLM.(RelationDetector)
+	if c.cfg.LLM == nil || !ok {
 		return RelationReport{
 			Skipped:    true,
 			SkipReason: "no RelationDetector-capable LLM configured",
@@ -56,8 +58,8 @@ func (c *Cortex) BuildMemoryEdges(ctx context.Context, opts ...RelateOption) (Re
 			}
 			report.EntitiesSkipped++
 			addReportError(&report.Errors, "detect relations for entity %s: %v", eid, err)
-			if c.cfg.logf != nil {
-				c.cfg.logf("cortex: relate: skipping entity %s: %v", eid, err)
+			if c.cfg.Logf != nil {
+				c.cfg.Logf("cortex: relate: skipping entity %s: %v", eid, err)
 			}
 			continue
 		}

@@ -6,52 +6,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/sausheong/cortex/internal/model"
 )
-
-// NormalizeReport describes what NormalizeGraph changed (or, in a dry run,
-// would change).
-type NormalizeReport struct {
-	DryRun bool `json:"dry_run"`
-	// BatchID identifies the batch that RestoreBatch uses to undo the run.
-	BatchID string `json:"batch_id,omitempty"`
-	// Retyped lists entities whose type label moved onto the curated set.
-	Retyped []RetypedEntity `json:"retyped"`
-	// Merged lists entities folded into another of the same name and kind,
-	// including duplicates of the owner.
-	Merged []MergedEntity `json:"merged"`
-	// RelationshipsRetyped counts edges whose verb moved onto the curated set
-	// (possibly swapping ends); RelationshipsFolded counts edges absorbed into
-	// an identical live edge.
-	RelationshipsRetyped int `json:"relationships_retyped"`
-	RelationshipsFolded  int `json:"relationships_folded"`
-	// UnmappedVerbs counts verbs with no curated equivalent, now stored as
-	// related_to with the original kept as the "label" attribute.
-	UnmappedVerbs map[string]int `json:"unmapped_verbs,omitempty"`
-}
-
-// RetypedEntity is one entity whose type changed.
-type RetypedEntity struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
-// MergedEntity is one entity merged into another.
-type MergedEntity struct {
-	KeepID   string `json:"keep_id"`
-	DropID   string `json:"drop_id"`
-	Name     string `json:"name"`
-	DropName string `json:"drop_name"`
-	Type     string `json:"type"`
-}
-
-type NormalizeOption func(*normalizeConfig)
-type normalizeConfig struct{ dryRun bool }
-
-// WithNormalizeDryRun reports what NormalizeGraph would change without
-// writing anything.
-func WithNormalizeDryRun() NormalizeOption { return func(c *normalizeConfig) { c.dryRun = true } }
 
 // NormalizeGraph brings an existing graph onto the curated vocabulary, in one
 // transaction recorded as a single undoable batch:
@@ -65,11 +22,11 @@ func WithNormalizeDryRun() NormalizeOption { return func(c *normalizeConfig) { c
 //
 // RestoreBatch with the report's BatchID undoes the whole run.
 func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (NormalizeReport, error) {
-	cfg := &normalizeConfig{}
+	cfg := &model.NormalizeConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
-	report := NormalizeReport{DryRun: cfg.dryRun, UnmappedVerbs: map[string]int{}}
+	report := NormalizeReport{DryRun: cfg.DryRun, UnmappedVerbs: map[string]int{}}
 
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -324,7 +281,7 @@ func (c *Cortex) NormalizeGraph(ctx context.Context, opts ...NormalizeOption) (N
 	if len(report.UnmappedVerbs) == 0 {
 		report.UnmappedVerbs = nil
 	}
-	if cfg.dryRun {
+	if cfg.DryRun {
 		return report, nil // deferred Rollback discards everything
 	}
 	if err := tx.Commit(); err != nil {

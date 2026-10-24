@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 const defaultLowConfidenceThreshold = 0.3
@@ -12,7 +14,7 @@ const defaultLowConfidenceThreshold = 0.3
 // Lint scans the graph and returns a structured report of cleanup
 // candidates. Pure read operation — never mutates the graph.
 func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, error) {
-	cfg := &lintConfig{lowConfidenceThreshold: defaultLowConfidenceThreshold}
+	cfg := &model.LintConfig{LowConfidenceThreshold: defaultLowConfidenceThreshold}
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -45,8 +47,8 @@ func (c *Cortex) Lint(ctx context.Context, opts ...LintOption) (LintReport, erro
 	if r.UnlinkedMemories, err = findUnlinkedMemories(ctx, c.db, c.userID); err != nil {
 		return r, fmt.Errorf("cortex: lint: unlinked-memories: %w", err)
 	}
-	if cfg.lowConfidence {
-		if r.LowConfidenceMemories, err = findLowConfidenceMemories(ctx, c.db, c.userID, cfg.lowConfidenceThreshold); err != nil {
+	if cfg.LowConfidence {
+		if r.LowConfidenceMemories, err = findLowConfidenceMemories(ctx, c.db, c.userID, cfg.LowConfidenceThreshold); err != nil {
 			return r, fmt.Errorf("cortex: lint: low-confidence: %w", err)
 		}
 	}

@@ -11,15 +11,6 @@ import (
 	"time"
 )
 
-// Usage is a user's storage footprint.
-type Usage struct {
-	Bytes    int64 `json:"bytes"`
-	Memories int   `json:"memories"`
-	Entities int   `json:"entities"`
-	Chunks   int   `json:"chunks"`
-	Deleted  int   `json:"deleted"`
-}
-
 // ComputeUsage measures this user's rows now. Bytes is the sum of
 // pg_column_size over every row the user owns, including embeddings of all
 // generations and soft-deleted rows (they still occupy space until purged).
@@ -85,13 +76,6 @@ func (c *Cortex) Usage(ctx context.Context) (Usage, error) {
 	return c.ComputeUsage(ctx)
 }
 
-// ConnectionNew is a connection's memories created after a point in time.
-type ConnectionNew struct {
-	ConnectionID string // "" for memories no connection wrote
-	Count        int
-	Latest       []Memory // newest first, at most the requested number
-}
-
 // NewMemoriesSince groups this user's live memories created after since by
 // the connection that wrote them, with each group's newest perGroup
 // memories. Groups are ordered by their newest memory, newest first. It is
@@ -154,25 +138,6 @@ func (c *Cortex) WrittenSince(ctx context.Context, since time.Time) (map[string]
 	}
 	return out, rows.Err()
 }
-
-// MemoryListFilter narrows ListMemories. Zero fields are ignored.
-type MemoryListFilter struct {
-	Query string
-	// WrittenBy keeps memories written by this connection ID; NoConnection
-	// keeps those no connection wrote (added directly).
-	WrittenBy string
-	// EntityID keeps memories linked to this entity (a foreign ID matches none).
-	EntityID string
-	From, To *time.Time // created_at in [From, To)
-	// Since keeps memories created strictly after this instant. It composes
-	// with From and To, and matches NewMemoriesSince.
-	Since  *time.Time
-	Oldest bool // oldest first; the default is newest first. Ties break on id.
-}
-
-// NoConnection is the MemoryListFilter.WrittenBy value for memories that no
-// connection wrote.
-const NoConnection = "none"
 
 // ListMemories pages this user's live memories, newest first unless
 // f.Oldest, and returns the

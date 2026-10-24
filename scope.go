@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // rowQuerier is satisfied by dbConn and *dbTx.
@@ -14,8 +16,8 @@ type rowQuerier interface {
 
 // errEntityNotFound and errMemoryNotFound carry no ID, so a foreign ID and an
 // absent ID produce byte-identical errors.
-func errEntityNotFound() error { return notFound("cortex: entity not found") }
-func errMemoryNotFound() error { return notFound("cortex: memory not found") }
+func errEntityNotFound() error { return model.NotFound("cortex: entity not found") }
+func errMemoryNotFound() error { return model.NotFound("cortex: memory not found") }
 
 // requireEntity returns ErrNotFound unless a live entity with this ID belongs
 // to userID.

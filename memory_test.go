@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 func TestPutAndSearchMemory(t *testing.T) {
@@ -448,7 +450,7 @@ func TestSearchMemoriesMode_EventTimeWindow(t *testing.T) {
 	// Window covering only Q1 (Jan–Feb).
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	mode := temporalMode{rangeFrom: &from, rangeTo: &to}
+	mode := model.TemporalMode{RangeFrom: &from, RangeTo: &to}
 
 	got, err := c.searchMemoriesMode(ctx, "budget", 10, mode)
 	if err != nil {

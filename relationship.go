@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // PutRelationship upserts a relationship keyed on (source, target, type),
@@ -21,7 +23,7 @@ func (c *Cortex) PutRelationship(ctx context.Context, r *Relationship) error {
 		return err
 	}
 	r.Type = NormalizeType(r.Type)
-	r.Confidence = coerceConfidence(r.Confidence)
+	r.Confidence = model.CoerceConfidence(r.Confidence)
 	now := time.Now().UTC()
 
 	attrs := r.Attributes
@@ -100,7 +102,7 @@ func (c *Cortex) InvalidateRelationship(ctx context.Context, id string, t time.T
 		return fmt.Errorf("cortex: invalidate relationship: %w", err)
 	}
 	if rowsAffected(res) == 0 {
-		return notFound("cortex: relationship not found")
+		return model.NotFound("cortex: relationship not found")
 	}
 	return nil
 }
@@ -114,11 +116,11 @@ func edgeValidityClause(alias string, includeInvalid bool, asOf *time.Time) (str
 		return "TRUE", nil
 	case asOf != nil:
 		return fmt.Sprintf("(%s <= ? AND (%s IS NULL OR %s <= ?) AND (%s IS NULL OR %s > ?))",
-			qualify(alias, "created_at"),
-			qualify(alias, "valid_at"), qualify(alias, "valid_at"),
-			qualify(alias, "invalid_at"), qualify(alias, "invalid_at")), []any{*asOf, *asOf, *asOf}
+			model.Qualify(alias, "created_at"),
+			model.Qualify(alias, "valid_at"), model.Qualify(alias, "valid_at"),
+			model.Qualify(alias, "invalid_at"), model.Qualify(alias, "invalid_at")), []any{*asOf, *asOf, *asOf}
 	default:
-		return fmt.Sprintf("(%s IS NULL OR %s > now())", qualify(alias, "invalid_at"), qualify(alias, "invalid_at")), nil
+		return fmt.Sprintf("(%s IS NULL OR %s > now())", model.Qualify(alias, "invalid_at"), model.Qualify(alias, "invalid_at")), nil
 	}
 }
 
@@ -127,7 +129,7 @@ func edgeValidityClause(alias string, includeInvalid bool, asOf *time.Time) (str
 // narrow the results (e.g. by relationship type) or change the time
 // (RelAsOf, RelIncludeInvalid).
 func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters ...RelFilter) ([]Relationship, error) {
-	cfg := &relFilterConfig{}
+	cfg := &model.RelFilterConfig{}
 	for _, f := range filters {
 		f(cfg)
 	}
@@ -135,15 +137,15 @@ func (c *Cortex) GetRelationships(ctx context.Context, entityID string, filters 
 		return nil, err
 	}
 
-	validity, vargs := edgeValidityClause("", cfg.includeInvalid, cfg.asOf)
+	validity, vargs := edgeValidityClause("", cfg.IncludeInvalid, cfg.AsOf)
 	query := `SELECT id, source_id, target_id, type, attributes, source, confidence, created_at, evidence_count, last_seen_at, valid_at, invalid_at
 		FROM relationships
 		WHERE user_id = ? AND deleted_at IS NULL AND (source_id = ? OR target_id = ?) AND ` + validity
 	args := append([]any{c.userID, entityID, entityID}, vargs...)
 
-	if cfg.relType != "" {
+	if cfg.RelType != "" {
 		query += " AND type = ?"
-		args = append(args, NormalizeType(cfg.relType))
+		args = append(args, NormalizeType(cfg.RelType))
 	}
 
 	rows, err := c.db.QueryContext(ctx, query, args...)

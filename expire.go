@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // ExpireMemories soft-retires currently-valid memories whose ForgetAfter has
@@ -13,18 +15,18 @@ import (
 // is a stronger, more specific signal than the static classification, so TTL
 // wins. Dry-run computes the report without writing.
 func (c *Cortex) ExpireMemories(ctx context.Context, opts ...ExpireOption) (ExpireReport, error) {
-	cfg := &expireConfig{}
+	cfg := &model.ExpireConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
 	now := time.Now().UTC()
-	report := ExpireReport{DryRun: cfg.dryRun}
+	report := ExpireReport{DryRun: cfg.DryRun}
 
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT id, content, forget_after
 		 FROM memories
-		 WHERE user_id = ? AND deleted_at IS NULL AND `+currentlyValidClause("")+` AND forget_after IS NOT NULL AND forget_after <= ?`,
+		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND forget_after IS NOT NULL AND forget_after <= ?`,
 		c.userID, now,
 	)
 	if err != nil {
@@ -58,7 +60,7 @@ func (c *Cortex) ExpireMemories(ctx context.Context, opts ...ExpireOption) (Expi
 			ID: cd.id, Content: cd.content, ForgetAfter: cd.fa,
 		})
 		report.Expired++
-		if cfg.dryRun {
+		if cfg.DryRun {
 			continue
 		}
 		if err := c.InvalidateMemory(ctx, cd.id, nil); err != nil {

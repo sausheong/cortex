@@ -4,36 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 )
-
-// Alias kinds. A name alias is another name for the entity; the others are
-// identifiers that name exactly one entity regardless of its type.
-const (
-	AliasName   = "name"
-	AliasEmail  = "email"
-	AliasPhone  = "phone"
-	AliasHandle = "handle"
-)
-
-// ErrAliasTaken is returned by AddAlias when the alias already belongs to a
-// different entity.
-var ErrAliasTaken = errors.New("cortex: alias already belongs to another entity")
-
-// Alias is one stable identifier of an entity.
-type Alias struct {
-	EntityID  string    `json:"entity_id"`
-	Kind      string    `json:"kind"`
-	Value     string    `json:"value"`
-	Source    string    `json:"source,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-}
 
 var (
 	emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
@@ -174,54 +150,6 @@ func (c *Cortex) RemoveAlias(ctx context.Context, kind, value string) error {
 	return nil
 }
 
-// Resolution methods, in the order ingest tries them.
-const (
-	ResolvedByAlias = "alias"
-	ResolvedByOwner = "owner"
-	ResolvedByExact = "exact"
-	ResolvedByFuzzy = "fuzzy"
-	ResolvedByLLM   = "llm"
-)
-
-// Resolution is the outcome of resolving a mention to a stored entity.
-// Entity is nil when no candidate was confident enough; Candidates then
-// holds the closest stored entities, best first.
-type Resolution struct {
-	Entity     *Entity        `json:"entity,omitempty"`
-	Method     string         `json:"method,omitempty"`
-	Score      float64        `json:"score"`
-	Candidates []ScoredEntity `json:"candidates,omitempty"`
-}
-
-// ScoredEntity is a resolution candidate with its match score in [0, 1].
-type ScoredEntity struct {
-	Entity Entity  `json:"entity"`
-	Score  float64 `json:"score"`
-}
-
-// EntityMention is what an EntityDisambiguator sees: the extracted name and
-// type, and the text it came from.
-type EntityMention struct {
-	Name    string
-	Type    string
-	Context string
-}
-
-// EntityChoice is a disambiguator's verdict: the chosen candidate's ID, or
-// empty for "none of these — it is a new entity", with a confidence in [0, 1].
-type EntityChoice struct {
-	ID         string  `json:"id"`
-	Confidence float64 `json:"confidence"`
-	Reason     string  `json:"reason"`
-}
-
-// EntityDisambiguator is an optional LLM capability: given a mention and a
-// short list of plausible stored entities, pick the one it refers to.
-// Resolution asks it only when name similarity alone is inconclusive.
-type EntityDisambiguator interface {
-	DisambiguateEntity(ctx context.Context, mention EntityMention, candidates []Entity) (EntityChoice, error)
-}
-
 // Resolution thresholds. A fuzzy match links automatically at or above
 // fuzzyAutoLink when it also leads the runner-up by fuzzyMargin; between
 // fuzzyAsk and fuzzyAutoLink an EntityDisambiguator (if configured) decides,
@@ -356,8 +284,8 @@ func (c *Cortex) resolve(ctx context.Context, mention, typ string, attrs map[str
 	if !useLLM || best.Score < fuzzyAsk {
 		return res, nil
 	}
-	dis, ok := c.cfg.llm.(EntityDisambiguator)
-	if c.cfg.llm == nil || !ok {
+	dis, ok := c.cfg.LLM.(EntityDisambiguator)
+	if c.cfg.LLM == nil || !ok {
 		return res, nil
 	}
 	top := cands

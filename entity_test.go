@@ -3,11 +3,12 @@ package cortex
 import (
 	"context"
 	"fmt"
-	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 func openTestDB(t *testing.T) *Cortex {

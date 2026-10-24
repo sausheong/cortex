@@ -2,10 +2,11 @@ package cortex
 
 import (
 	"context"
-	"github.com/sausheong/cortex/internal/pgtest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 func TestRemember(t *testing.T) {

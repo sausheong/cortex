@@ -13,12 +13,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Cortex is the main knowledge graph store backed by Postgres.
 type Cortex struct {
 	db     dbConn
-	cfg    config
+	cfg    model.Config
 	userID string // the user this handle is bound to
 	// pinnedGen, when > 0, pins embedding writes to that generation.
 	pinnedGen int
@@ -73,7 +74,7 @@ func Open(dsn string, opts ...Option) (*Cortex, error) {
 	for _, o := range opts {
 		o(&c.cfg)
 	}
-	mt := c.cfg.migrationTimeout
+	mt := c.cfg.MigrationTimeout
 	if mt <= 0 {
 		mt = 60 * time.Second
 	}
@@ -117,13 +118,13 @@ func (c *Cortex) Close() error {
 }
 
 // SetExtractor sets the extractor on the Cortex instance.
-func (c *Cortex) SetExtractor(e Extractor) { c.cfg.extractor = e }
+func (c *Cortex) SetExtractor(e Extractor) { c.cfg.Extractor = e }
 
 // SetLLM sets the LLM on the Cortex instance.
-func (c *Cortex) SetLLM(l LLM) { c.cfg.llm = l }
+func (c *Cortex) SetLLM(l LLM) { c.cfg.LLM = l }
 
 // SetEmbedder sets the embedder on the Cortex instance.
-func (c *Cortex) SetEmbedder(e Embedder) { c.cfg.embedder = e }
+func (c *Cortex) SetEmbedder(e Embedder) { c.cfg.Embedder = e }
 
 // GetSyncState returns the last-known sync state for a connector.
 func (c *Cortex) GetSyncState(ctx context.Context, connector string) (string, error) {

@@ -6,36 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
-
-// BootstrapUserID is the user that single-user library use and every
-// pre-multi-user row belongs to.
-const BootstrapUserID = "u_bootstrap"
-
-// ErrNotFound is returned for an absent ID and, identically, for an ID that
-// belongs to another user.
-var ErrNotFound = errors.New("cortex: not found")
-
-type notFoundError struct{ msg string }
-
-func (e *notFoundError) Error() string        { return e.msg }
-func (e *notFoundError) Is(target error) bool { return target == ErrNotFound }
-
-func notFound(format string, args ...any) error {
-	return &notFoundError{msg: fmt.Sprintf(format, args...)}
-}
-
-// User is an account that owns a private graph.
-type User struct {
-	ID            string
-	GoogleSub     string
-	Email         string
-	Name          string
-	EmailVerified bool
-	CreatedAt     time.Time
-	DeletedAt     *time.Time
-}
 
 // UserID returns the ID of the user this handle is bound to.
 func (c *Cortex) UserID() string { return c.userID }

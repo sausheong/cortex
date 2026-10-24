@@ -44,7 +44,7 @@ func rememberDoc(t *testing.T, emb *limitEmbedder) (*Cortex, error) {
 			return &Extraction{Memories: []Memory{{Content: "the doc says hello"}}}, nil
 		},
 	})
-	para := strings.Repeat("word ", 400) // ~2 KB paragraph
+	para := strings.Repeat("word ", 400)   // ~2 KB paragraph
 	doc := strings.Repeat(para+"\n\n", 70) // ~140 KB, like a long Markdown file
 	return c, c.Remember(context.Background(), doc, WithSource("doc.md"))
 }

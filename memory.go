@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // nullTimePtr converts a sql.NullTime to a *time.Time (nil when not valid).
@@ -21,7 +23,7 @@ func nullTimePtr(nt sql.NullTime) *time.Time {
 // The operation is wrapped in a transaction. The memory's ID, CreatedAt,
 // and UpdatedAt are set on the passed struct.
 func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
-	m.Confidence = coerceConfidence(m.Confidence)
+	m.Confidence = model.CoerceConfidence(m.Confidence)
 	m.ID = newID()
 	now := time.Now().UTC()
 	m.CreatedAt = now
@@ -74,17 +76,17 @@ func (c *Cortex) PutMemory(ctx context.Context, m *Memory) error {
 // FTS5 MATCH expression. Entity links are loaded from memory_entities for
 // each result.
 func (c *Cortex) SearchMemories(ctx context.Context, query string, limit int) ([]Memory, error) {
-	return c.searchMemoriesMode(ctx, query, limit, temporalMode{})
+	return c.searchMemoriesMode(ctx, query, limit, model.TemporalMode{})
 }
 
 // searchMemoriesMode is the temporal-mode-aware backing for SearchMemories.
 // The validity predicate is derived from mode (default = currently-valid).
-func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int, mode temporalMode) ([]Memory, error) {
+func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]Memory, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
 
-	clause, targs := mode.clause("m")
+	clause, targs := mode.Clause("m")
 	// Arg order: temporal args, limit, then the tsquery tokens. The '?'
 	// placeholders are numbered 1..n by rebind; the tsquery expression uses
 	// explicit $n numbers that start after them.
@@ -162,17 +164,17 @@ func (c *Cortex) searchMemoriesMode(ctx context.Context, query string, limit int
 // GetMemoriesByEntity returns all memories linked to the given entity.
 // Entity links are loaded from memory_entities for each result.
 func (c *Cortex) GetMemoriesByEntity(ctx context.Context, entityID string) ([]Memory, error) {
-	return c.getMemoriesByEntityMode(ctx, entityID, temporalMode{})
+	return c.getMemoriesByEntityMode(ctx, entityID, model.TemporalMode{})
 }
 
 // getMemoriesByEntityMode is the temporal-mode-aware backing for
 // GetMemoriesByEntity. The validity predicate is derived from mode
 // (default = currently-valid).
-func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, mode temporalMode) ([]Memory, error) {
+func (c *Cortex) getMemoriesByEntityMode(ctx context.Context, entityID string, mode model.TemporalMode) ([]Memory, error) {
 	if err := requireEntity(ctx, c.db, c.userID, entityID); err != nil {
 		return nil, err
 	}
-	clause, targs := mode.clause("m")
+	clause, targs := mode.Clause("m")
 	// Arg order: user id, entity_id, then temporal args.
 	args := []any{c.userID, entityID}
 	args = append(args, targs...)

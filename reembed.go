@@ -9,14 +9,6 @@ import (
 // maxReembedChars caps the text sent to an embedder for one row.
 const maxReembedChars = 8000
 
-// EmbedItem is one row that needs an embedding: the text to embed and the
-// ref it belongs to. Intended for the re-embed job.
-type EmbedItem struct {
-	ID      string
-	RefType string // "entity", "memory" or "chunk"
-	Text    string
-}
-
 type rowsQuerier interface {
 	QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row

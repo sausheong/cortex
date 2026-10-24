@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"testing"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 func TestQueryNgrams(t *testing.T) {
@@ -111,7 +113,7 @@ func TestNeighbourhood_DoesNotWalkThroughOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := c.neighbourhood(ctx, []string{a.ID}, 2, temporalMode{})
+	got, err := c.neighbourhood(ctx, []string{a.ID}, 2, model.TemporalMode{})
 	if err != nil {
 		t.Fatal(err)
 	}

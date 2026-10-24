@@ -59,7 +59,7 @@ func seedIso(t *testing.T, cx *Cortex, tag string) (e, e2 *Entity, m, m2 *Memory
 		if err := cx.PutMemory(ctx, x); err != nil {
 			t.Fatal(err)
 		}
-		vecs, _ := cx.cfg.embedder.Embed(ctx, []string{x.Content})
+		vecs, _ := cx.cfg.Embedder.Embed(ctx, []string{x.Content})
 		if err := cx.putEmbedding(ctx, x.ID, "memory", vecs[0]); err != nil {
 			t.Fatal(err)
 		}
@@ -71,7 +71,7 @@ func seedIso(t *testing.T, cx *Cortex, tag string) (e, e2 *Entity, m, m2 *Memory
 	if err := cx.PutChunk(ctx, ch); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := cx.cfg.embedder.Embed(ctx, []string{ch.Content})
+	vecs, _ := cx.cfg.Embedder.Embed(ctx, []string{ch.Content})
 	if err := cx.putEmbedding(ctx, ch.ID, "chunk", vecs[0]); err != nil {
 		t.Fatal(err)
 	}

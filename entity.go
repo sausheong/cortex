@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // PutEntity upserts an entity by (name, type), with the type normalised by
@@ -20,7 +22,7 @@ import (
 // normalises to the same type, so a read-modify-write never forks a row
 // whose type predates normalisation.
 func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
-	e.Confidence = coerceConfidence(e.Confidence)
+	e.Confidence = model.CoerceConfidence(e.Confidence)
 	e.Type = NormalizeType(e.Type)
 
 	attrsJSON, err := json.Marshal(e.Attributes)
@@ -257,14 +259,14 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID strin
 	keep, err := getEntityTx(ctx, tx, userID, keepID, false)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return stats, notFound("cortex: keep entity not found")
+			return stats, model.NotFound("cortex: keep entity not found")
 		}
 		return stats, fmt.Errorf("cortex: load keep entity: %w", err)
 	}
 	drop, err := getEntityTx(ctx, tx, userID, dropID, !soft)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return stats, notFound("cortex: drop entity not found")
+			return stats, model.NotFound("cortex: drop entity not found")
 		}
 		return stats, fmt.Errorf("cortex: load drop entity: %w", err)
 	}
@@ -457,7 +459,7 @@ func mergeEntitiesTx(ctx context.Context, tx *dbTx, userID, keepID, dropID strin
 		keep.Attributes[k] = v
 	}
 	mergeTime := time.Now().UTC()
-	record := mergeRecord{
+	record := model.MergeRecord{
 		ID:       drop.ID,
 		Name:     drop.Name,
 		Type:     drop.Type,

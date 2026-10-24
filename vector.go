@@ -3,10 +3,11 @@ package cortex
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // checkPgvectorVersion returns an error if v is older than 0.8.0.
@@ -71,10 +72,6 @@ func parseVectorLiteral(s string) ([]float32, error) {
 	return out, nil
 }
 
-// ErrStaleGeneration is returned when a handle pinned to an embedding
-// generation writes after the user's active generation has moved on.
-var ErrStaleGeneration = errors.New("cortex: embedding generation is stale")
-
 const reembedLockSQL = `hashtextextended('reembed:' || ?::text, 0)`
 
 // WithGeneration returns a handle pinned to embedding generation g for
@@ -92,7 +89,7 @@ func (c *Cortex) ActiveGeneration(ctx context.Context) (int, error) {
 	err := c.db.QueryRowContext(ctx,
 		`SELECT active_embedding_generation FROM users WHERE id = ?`, c.userID).Scan(&g)
 	if err == sql.ErrNoRows {
-		return 0, notFound("cortex: user not found")
+		return 0, model.NotFound("cortex: user not found")
 	}
 	if err != nil {
 		return 0, fmt.Errorf("cortex: active generation: %w", err)
@@ -108,7 +105,7 @@ func (c *Cortex) SetActiveGeneration(ctx context.Context, g int) error {
 		return fmt.Errorf("cortex: set active generation: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return notFound("cortex: user not found")
+		return model.NotFound("cortex: user not found")
 	}
 	return nil
 }
@@ -217,7 +214,7 @@ func (c *Cortex) FlipGeneration(ctx context.Context, newGen int,
 		return fmt.Errorf("cortex: flip generation: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return notFound("cortex: user not found")
+		return model.NotFound("cortex: user not found")
 	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM embeddings WHERE user_id = ? AND generation <> ?`, c.userID, newGen); err != nil {

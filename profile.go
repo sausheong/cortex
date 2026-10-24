@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Reserved entity attribute keys for profiles.
@@ -80,8 +82,8 @@ func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
 // window, newest first, capped at recentK. Static = everything else, ranked
 // by confidence then recency, capped at staticCap. A memory in the recent
 // window is only ever dynamic (dynamic wins); statics are drawn from the rest.
-func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static, dynamic []Memory) {
-	cutoff := now.Add(-cfg.window)
+func partitionMemories(mems []Memory, cfg model.ProfileConfig, now time.Time) (static, dynamic []Memory) {
+	cutoff := now.Add(-cfg.Window)
 
 	var recent, rest []Memory
 	for _, m := range mems {
@@ -101,9 +103,9 @@ func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static,
 	sort.SliceStable(recent, func(i, j int) bool {
 		return recent[i].CreatedAt.After(recent[j].CreatedAt)
 	})
-	if len(recent) > cfg.recentK {
-		rest = append(rest, recent[cfg.recentK:]...)
-		recent = recent[:cfg.recentK]
+	if len(recent) > cfg.RecentK {
+		rest = append(rest, recent[cfg.RecentK:]...)
+		recent = recent[:cfg.RecentK]
 	}
 	dynamic = recent
 
@@ -114,8 +116,8 @@ func partitionMemories(mems []Memory, cfg profileConfig, now time.Time) (static,
 		}
 		return rest[i].CreatedAt.After(rest[j].CreatedAt)
 	})
-	if len(rest) > cfg.staticCap {
-		rest = rest[:cfg.staticCap]
+	if len(rest) > cfg.StaticCap {
+		rest = rest[:cfg.StaticCap]
 	}
 	static = rest
 	return static, dynamic
@@ -155,15 +157,15 @@ func (c *Cortex) distillBucketErr(ctx context.Context, name, instruction string,
 		raw[i] = m.Content
 	}
 
-	if c.cfg.llm == nil {
+	if c.cfg.LLM == nil {
 		return raw, false, nil
 	}
 
 	texts := append([]string{fmt.Sprintf(instruction, name)}, raw...)
-	out, err := retryLLM(ctx, func() (string, error) { return c.cfg.llm.Summarize(ctx, texts) })
+	out, err := retryLLM(ctx, func() (string, error) { return c.cfg.LLM.Summarize(ctx, texts) })
 	if err != nil {
-		if c.cfg.logf != nil {
-			c.cfg.logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
+		if c.cfg.Logf != nil {
+			c.cfg.Logf("cortex: profile distill (%s): %v; falling back to raw", name, err)
 		}
 		return raw, false, err
 	}
@@ -208,7 +210,7 @@ type cachedProfile struct {
 // when there is no cache, the cache is older than the TTL, or the entity's
 // current valid-memory count differs from the cached count.
 func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOption) (Profile, error) {
-	cfg := defaultProfileConfig()
+	cfg := model.DefaultProfileConfig()
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -225,7 +227,7 @@ func (c *Cortex) Profile(ctx context.Context, entityID string, opts ...ProfileOp
 	}
 
 	// A cached undistilled digest is rebuilt once an LLM is available.
-	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.cfg.llm == nil) {
+	if cp, ok := readCachedProfile(e); ok && isFresh(cp, len(mems), cfg, now) && (cp.Distilled || c.cfg.LLM == nil) {
 		return Profile{
 			EntityID:  e.ID,
 			Name:      e.Name,
@@ -268,7 +270,7 @@ func (c *Cortex) CachedProfile(ctx context.Context) (Profile, bool, error) {
 
 // buildProfileFromMemories partitions + distills the given memories, persists
 // the digest to the entity's attributes, and returns it with Cached=false.
-func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems []Memory, cfg profileConfig, now time.Time) (Profile, error) {
+func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems []Memory, cfg model.ProfileConfig, now time.Time) (Profile, error) {
 	p, _, err := c.buildProfile(ctx, e, mems, cfg, now)
 	return p, err
 }
@@ -276,11 +278,11 @@ func (c *Cortex) buildProfileFromMemories(ctx context.Context, e *Entity, mems [
 // buildProfile is buildProfileFromMemories plus the first distill error.
 // The static half is built from a diverse candidate selection (see
 // selectStaticCandidates) rather than the N highest-confidence memories.
-func (c *Cortex) buildProfile(ctx context.Context, e *Entity, mems []Memory, cfg profileConfig, now time.Time) (p Profile, distillErr, err error) {
+func (c *Cortex) buildProfile(ctx context.Context, e *Entity, mems []Memory, cfg model.ProfileConfig, now time.Time) (p Profile, distillErr, err error) {
 	poolCfg := cfg
-	poolCfg.staticCap = len(mems) + 1 // partition keeps the whole static pool; diversity trims it
+	poolCfg.StaticCap = len(mems) + 1 // partition keeps the whole static pool; diversity trims it
 	staticPool, dynamicMems := partitionMemories(mems, poolCfg, now)
-	staticMems := selectStaticCandidates(staticPool, e.ID, cfg.staticCap)
+	staticMems := selectStaticCandidates(staticPool, e.ID, cfg.StaticCap)
 	staticLines, sDist, sErr := c.distillBucketErr(ctx, e.Name, profileStaticPrompt, staticMems)
 	dynamicLines, dDist, dErr := c.distillBucketErr(ctx, e.Name, profileDynamicPrompt, dynamicMems)
 	distilled := sDist && dDist
@@ -338,11 +340,11 @@ func readCachedProfile(e *Entity) (cachedProfile, bool) {
 }
 
 // isFresh reports whether a cached profile may be served without rebuilding.
-func isFresh(cp cachedProfile, currentCount int, cfg profileConfig, now time.Time) bool {
+func isFresh(cp cachedProfile, currentCount int, cfg model.ProfileConfig, now time.Time) bool {
 	if cp.MemoryCount != currentCount {
 		return false
 	}
-	if now.Sub(cp.BuiltAt) > cfg.ttl {
+	if now.Sub(cp.BuiltAt) > cfg.TTL {
 		return false
 	}
 	return true
@@ -360,7 +362,7 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 	rep := ProfileReport{Scanned: len(ids)}
 	// Force a rebuild each run by collapsing the TTL; caller opts still apply
 	// after this (so an explicit WithProfileTTL would override, which is fine).
-	cfg := defaultProfileConfig()
+	cfg := model.DefaultProfileConfig()
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -371,8 +373,8 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 				return rep, ctx.Err()
 			}
 			rep.Skipped = append(rep.Skipped, id)
-			if c.cfg.logf != nil {
-				c.cfg.logf("cortex: refresh profile %s: %v", id, err)
+			if c.cfg.Logf != nil {
+				c.cfg.Logf("cortex: refresh profile %s: %v", id, err)
 			}
 			continue
 		}
@@ -386,7 +388,7 @@ func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (Pr
 }
 
 // rebuildProfile forces a rebuild of one entity's digest, ignoring the cache.
-func (c *Cortex) rebuildProfile(ctx context.Context, entityID string, cfg profileConfig) (p Profile, distillErr, err error) {
+func (c *Cortex) rebuildProfile(ctx context.Context, entityID string, cfg model.ProfileConfig) (p Profile, distillErr, err error) {
 	e, err := c.GetEntity(ctx, entityID)
 	if err != nil {
 		return Profile{}, nil, err

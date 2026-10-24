@@ -6,13 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-// Compaction change kinds.
-const (
-	CompactMerge   = "merge"
-	CompactCombine = "combine"
-	CompactRollup  = "rollup"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 const (
@@ -24,16 +19,6 @@ const (
 	compactMinRollup   = 3
 	compactSourcePrefx = "compaction:"
 )
-
-// Change is one proposed compaction: Result replaces SourceIDs.
-type Change struct {
-	Kind      string   `json:"kind"` // "merge" | "combine" | "rollup"
-	SourceIDs []string `json:"source_ids"`
-	Result    string   `json:"result"`
-	Static    bool     `json:"static"`
-	// Sources holds the source memory contents for display in a preview.
-	Sources []string `json:"sources,omitempty"`
-}
 
 type compactCand struct {
 	id, content string
@@ -52,7 +37,7 @@ var compactPrompts = map[string]string{
 // live memories using the user's LLM. Only the active embedding generation is
 // read. Nothing is written.
 func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
-	if c.cfg.llm == nil {
+	if c.cfg.LLM == nil {
 		return nil, fmt.Errorf("cortex: no LLM configured")
 	}
 	cands, err := c.compactCandidates(ctx)
@@ -211,7 +196,7 @@ func (c *Cortex) ProposeCompaction(ctx context.Context) ([]Change, error) {
 
 func (c *Cortex) compactSummarize(ctx context.Context, kind string, texts []string) (string, error) {
 	in := append([]string{compactPrompts[kind]}, texts...)
-	out, err := c.cfg.llm.Summarize(ctx, in)
+	out, err := c.cfg.LLM.Summarize(ctx, in)
 	if err != nil {
 		return "", fmt.Errorf("cortex: compaction summarize: %w", err)
 	}
@@ -291,12 +276,12 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 	}
 	// Embed results first so a failure writes nothing.
 	var vecs [][]float32
-	if c.cfg.embedder != nil {
+	if c.cfg.Embedder != nil {
 		texts := make([]string, len(changes))
 		for i, ch := range changes {
 			texts[i] = ch.Result
 		}
-		v, err := c.cfg.embedder.Embed(ctx, texts)
+		v, err := c.cfg.Embedder.Embed(ctx, texts)
 		if err != nil {
 			return "", fmt.Errorf("cortex: embed compaction results: %w", err)
 		}
@@ -325,7 +310,7 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 		return "", fmt.Errorf("cortex: check compaction sources: %w", err)
 	}
 	if live != len(all) {
-		return "", notFound("cortex: compaction source not found")
+		return "", model.NotFound("cortex: compaction source not found")
 	}
 
 	batchID, err := newBatch(ctx, tx, c.userID, "compaction")

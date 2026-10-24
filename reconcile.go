@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Reconcile scans the graph per-entity for contradicting memories and returns
@@ -16,13 +18,13 @@ import (
 //
 // Use ApplyReconcile to actually invalidate the proposed stale memories.
 func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (ReconcileReport, error) {
-	cfg := &reconcileConfig{}
+	cfg := &model.ReconcileConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	rec, ok := c.cfg.llm.(Reconciler)
-	if c.cfg.llm == nil || !ok {
+	rec, ok := c.cfg.LLM.(Reconciler)
+	if c.cfg.LLM == nil || !ok {
 		return ReconcileReport{
 			Skipped:    true,
 			SkipReason: "no Reconciler-capable LLM configured",
@@ -60,8 +62,8 @@ func (c *Cortex) Reconcile(ctx context.Context, opts ...ReconcileOption) (Reconc
 			// A provider failure for one entity must not abort the run.
 			report.EntitiesSkipped++
 			addReportError(&report.Errors, "detect conflicts for entity %s: %v", eid, err)
-			if c.cfg.logf != nil {
-				c.cfg.logf("cortex: reconcile: skipping entity %s: %v", eid, err)
+			if c.cfg.Logf != nil {
+				c.cfg.Logf("cortex: reconcile: skipping entity %s: %v", eid, err)
 			}
 			continue
 		}

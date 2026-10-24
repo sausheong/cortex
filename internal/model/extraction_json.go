@@ -1,4 +1,4 @@
-package cortex
+package model
 
 import (
 	"encoding/json"

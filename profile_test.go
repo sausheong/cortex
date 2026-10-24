@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 func TestTrackProfile_SetsMarker(t *testing.T) {
@@ -90,7 +92,7 @@ func TestProfileEligibleIDs_OwnerAndTracked(t *testing.T) {
 
 func TestPartitionMemories_RecencyAndCaps(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
-	cfg := profileConfig{recentK: 2, window: 30 * 24 * time.Hour, staticCap: 3}
+	cfg := model.ProfileConfig{RecentK: 2, Window: 30 * 24 * time.Hour, StaticCap: 3}
 
 	mk := func(content string, daysAgo int, conf float64) Memory {
 		return Memory{
@@ -100,9 +102,9 @@ func TestPartitionMemories_RecencyAndCaps(t *testing.T) {
 		}
 	}
 	mems := []Memory{
-		mk("recent-1", 1, 0.5),  // dynamic candidate (newest)
-		mk("recent-2", 2, 0.5),  // dynamic candidate
-		mk("recent-3", 3, 0.5),  // in window but beyond recentK -> static
+		mk("recent-1", 1, 0.5), // dynamic candidate (newest)
+		mk("recent-2", 2, 0.5), // dynamic candidate
+		mk("recent-3", 3, 0.5), // in window but beyond recentK -> static
 		mk("old-high", 100, 0.9),
 		mk("old-mid", 200, 0.7),
 		mk("old-low", 300, 0.1), // should be dropped by staticCap=3
@@ -131,7 +133,7 @@ func TestPartitionMemories_RecencyAndCaps(t *testing.T) {
 }
 
 func TestPartitionMemories_Empty(t *testing.T) {
-	s, d := partitionMemories(nil, defaultProfileConfig(), time.Now())
+	s, d := partitionMemories(nil, model.DefaultProfileConfig(), time.Now())
 	if len(s) != 0 || len(d) != 0 {
 		t.Errorf("expected empty partitions, got static=%d dynamic=%d", len(s), len(d))
 	}
@@ -340,15 +342,15 @@ func TestRefreshProfiles_BuildsEligible(t *testing.T) {
 
 func TestPartitionMemories_StaticAlwaysStatic(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
-	cfg := profileConfig{recentK: 5, window: 30 * 24 * time.Hour, staticCap: 15}
+	cfg := model.ProfileConfig{RecentK: 5, Window: 30 * 24 * time.Hour, StaticCap: 15}
 
 	mk := func(content string, daysAgo int, static bool) Memory {
 		return Memory{Content: content, Confidence: 0.9, CreatedAt: now.AddDate(0, 0, -daysAgo), Static: static}
 	}
 	mems := []Memory{
-		mk("identity-today", 0, true),   // static, created TODAY -> must be static[]
-		mk("episode-today", 1, false),   // non-static, recent -> dynamic[]
-		mk("identity-old", 200, true),   // static, old -> static[]
+		mk("identity-today", 0, true), // static, created TODAY -> must be static[]
+		mk("episode-today", 1, false), // non-static, recent -> dynamic[]
+		mk("identity-old", 200, true), // static, old -> static[]
 	}
 
 	static, dynamic := partitionMemories(mems, cfg, now)

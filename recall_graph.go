@@ -6,6 +6,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Graph-aware recall. A query that names entities (by name or alias) gets
@@ -115,13 +117,13 @@ func queryNgrams(query string) []string {
 // distance, over the relationships that hold under mode (now by default).
 // The owner is not walked through unless it is itself a seed: it touches
 // nearly everything, so expanding it would boost the whole graph.
-func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mode temporalMode) (map[string]int, error) {
+func (c *Cortex) neighbourhood(ctx context.Context, seeds []string, hops int, mode model.TemporalMode) (map[string]int, error) {
 	dist := map[string]int{}
 	if len(seeds) == 0 {
 		return dist, nil
 	}
 	ownerID, _ := c.OwnerEntityID(ctx)
-	validity, vargs := edgeValidityClause("r", mode.includeInvalid, mode.asOf)
+	validity, vargs := edgeValidityClause("r", mode.IncludeInvalid, mode.AsOf)
 	args := append([]any{seeds, c.userID}, vargs...)
 	args = append(args, hops, ownerID, c.userID)
 	rows, err := c.db.QueryContext(ctx,
@@ -158,7 +160,7 @@ type graphContext struct {
 	dist  map[string]int
 }
 
-func (c *Cortex) buildGraphContext(ctx context.Context, query string, mode temporalMode) graphContext {
+func (c *Cortex) buildGraphContext(ctx context.Context, query string, mode model.TemporalMode) graphContext {
 	seeds, err := c.querySeeds(ctx, query)
 	if err != nil {
 		c.logf("cortex: recall graph seeds: %v", err)
@@ -194,11 +196,11 @@ func (g graphContext) boost(entityIDs []string) float64 {
 // recallSeedMemories ranks the memories linked directly to the seed
 // entities, honouring the temporal mode: memories linked to more seeds
 // first, then higher confidence, then newer.
-func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit int, mode temporalMode) ([]rankedItem, map[string]Result) {
+func (c *Cortex) recallSeedMemories(ctx context.Context, g graphContext, limit int, mode model.TemporalMode) ([]rankedItem, map[string]Result) {
 	if len(g.seeds) == 0 {
 		return nil, nil
 	}
-	clause, targs := mode.clause("m")
+	clause, targs := mode.Clause("m")
 	args := []any{c.userID, g.seeds}
 	args = append(args, targs...)
 	args = append(args, limit)

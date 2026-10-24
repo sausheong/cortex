@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 const (
@@ -24,18 +26,18 @@ const (
 // system-retired, not marked false; it stays reachable via as_of /
 // include_invalid. Dry-run computes the report without writing anything.
 func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (DecayReport, error) {
-	cfg := &decayConfig{halfLife: defaultDecayHalfLife, floor: defaultDecayFloor}
+	cfg := &model.DecayConfig{HalfLife: defaultDecayHalfLife, Floor: defaultDecayFloor}
 	for _, o := range opts {
 		o(cfg)
 	}
 
 	now := time.Now().UTC()
-	report := DecayReport{DryRun: cfg.dryRun}
+	report := DecayReport{DryRun: cfg.DryRun}
 
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT id, content, confidence, created_at, last_decay_at, last_accessed_at
 		 FROM memories
-		 WHERE user_id = ? AND deleted_at IS NULL AND `+currentlyValidClause("")+` AND NOT static`,
+		 WHERE user_id = ? AND deleted_at IS NULL AND `+model.CurrentlyValidClause("")+` AND NOT static`,
 		c.userID,
 	)
 	if err != nil {
@@ -78,11 +80,11 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 	for _, cd := range cands {
 		report.Scanned++
 		elapsed := now.Sub(cd.anchor)
-		newConf := decayedConfidence(cd.conf, elapsed, cfg.halfLife)
+		newConf := decayedConfidence(cd.conf, elapsed, cfg.HalfLife)
 		if newConf == cd.conf {
 			continue // no measurable change
 		}
-		pruned := newConf < cfg.floor
+		pruned := newConf < cfg.Floor
 		report.Changes = append(report.Changes, DecayChange{
 			ID: cd.id, Content: cd.content,
 			OldConfidence: cd.conf, NewConfidence: newConf, Pruned: pruned,
@@ -92,7 +94,7 @@ func (c *Cortex) DecayConfidence(ctx context.Context, opts ...DecayOption) (Deca
 			report.Pruned++
 		}
 
-		if cfg.dryRun {
+		if cfg.DryRun {
 			continue
 		}
 

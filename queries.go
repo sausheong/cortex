@@ -9,36 +9,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Curated graph queries: the questions agents ask most, answered in one call
 // each, so an agent does not have to chain traversals.
-
-// EntityCard is everything WhoIs knows about one entity, without an LLM.
-type EntityCard struct {
-	Entity        Entity         `json:"entity"`
-	Resolution    *Resolution    `json:"resolution,omitempty"`
-	Aliases       []Alias        `json:"aliases"`
-	Relationships []NamedEdge    `json:"relationships"`
-	Memories      []Memory       `json:"memories"`
-	Candidates    []ScoredEntity `json:"candidates,omitempty"`
-}
-
-// NamedEdge is a relationship with both ends' names, read source-type-target.
-type NamedEdge struct {
-	Relationship
-	SourceName string `json:"source_name"`
-	TargetName string `json:"target_name"`
-}
-
-// String renders the edge as "Source type Target".
-func (e NamedEdge) String() string {
-	s := e.SourceName + " " + e.Type + " " + e.TargetName
-	if l, ok := e.Attributes["label"].(string); ok && l != "" && l != e.Type {
-		s += " (" + l + ")"
-	}
-	return s
-}
 
 const whoIsMemories = 20
 
@@ -230,14 +206,6 @@ func (c *Cortex) getRelationship(ctx context.Context, id string) (*Relationship,
 	return &r, nil
 }
 
-// TimelineEvent is one dated thing that happened to an entity.
-type TimelineEvent struct {
-	At   time.Time `json:"at"`
-	Kind string    `json:"kind"` // memory, relationship_started, relationship_ended
-	Text string    `json:"text"`
-	ID   string    `json:"id"`
-}
-
 // Timeline returns an entity's history, oldest first: its memories (dated by
 // when they became true, else when they were recorded), and the start and
 // end of its relationships. since, when non-zero, drops earlier events;
@@ -247,7 +215,7 @@ func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time,
 	if limit <= 0 {
 		limit = 100
 	}
-	mems, err := c.getMemoriesByEntityMode(ctx, entityID, temporalMode{includeInvalid: true})
+	mems, err := c.getMemoriesByEntityMode(ctx, entityID, model.TemporalMode{IncludeInvalid: true})
 	if err != nil {
 		return nil, err
 	}
@@ -302,16 +270,6 @@ func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time,
 		out = []TimelineEvent{}
 	}
 	return out, nil
-}
-
-// Changes is what WhatChanged found since a point in time.
-type Changes struct {
-	Since              time.Time   `json:"since"`
-	NewEntities        []Entity    `json:"new_entities"`
-	NewMemories        []Memory    `json:"new_memories"`
-	RetiredMemories    []Memory    `json:"retired_memories"`
-	NewRelationships   []NamedEdge `json:"new_relationships"`
-	EndedRelationships []NamedEdge `json:"ended_relationships"`
 }
 
 // WhatChanged lists what was added to or retired from the graph since t:
@@ -416,15 +374,6 @@ func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*
 		ch.RetiredMemories = []Memory{}
 	}
 	return ch, nil
-}
-
-// LinkRequest is an explicit relationship to record: ends by entity ID or by
-// name/identifier, with the types to use if an end must be created.
-type LinkRequest struct {
-	Source, SourceType string
-	Target, TargetType string
-	Type               string
-	Provenance         string
 }
 
 // Link records a relationship known for certain (from structured data such

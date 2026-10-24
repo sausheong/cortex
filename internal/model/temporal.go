@@ -1,4 +1,4 @@
-package cortex
+package model
 
 import (
 	"fmt"
@@ -6,42 +6,42 @@ import (
 	"time"
 )
 
-// qualify prefixes a column with the table alias and a dot, or returns the
+// Qualify prefixes a column with the table alias and a dot, or returns the
 // bare column when alias is empty.
-func qualify(alias, col string) string {
+func Qualify(alias, col string) string {
 	if alias == "" {
 		return col
 	}
 	return alias + "." + col
 }
 
-// currentlyValidClause returns a SQL boolean fragment (no leading AND) that
+// CurrentlyValidClause returns a SQL boolean fragment (no leading AND) that
 // is true for memories that are currently valid: not retired by the system
 // (expired_at IS NULL) and not event-invalidated (invalid_at IS NULL).
 // Memories written by the standard ingest path have both NULL and so are
 // always current. alias is the table alias (e.g. "m"); "" yields unqualified
 // column names.
-func currentlyValidClause(alias string) string {
+func CurrentlyValidClause(alias string) string {
 	return fmt.Sprintf("(%s IS NULL AND %s IS NULL)",
-		qualify(alias, "expired_at"), qualify(alias, "invalid_at"))
+		Qualify(alias, "expired_at"), Qualify(alias, "invalid_at"))
 }
 
-// validAsOfClause returns a SQL boolean fragment (no leading AND) plus its
+// ValidAsOfClause returns a SQL boolean fragment (no leading AND) plus its
 // bound args, selecting memories valid as of time t: known to the system by
 // t, not retired by t, and whose event-validity window contains t. The four
 // args are all t, in placeholder order.
-func validAsOfClause(alias string, t time.Time) (string, []any) {
+func ValidAsOfClause(alias string, t time.Time) (string, []any) {
 	clause := fmt.Sprintf(
 		"(%s <= ? AND (%s IS NULL OR %s > ?) AND (%s IS NULL OR %s <= ?) AND (%s IS NULL OR %s > ?))",
-		qualify(alias, "created_at"),
-		qualify(alias, "expired_at"), qualify(alias, "expired_at"),
-		qualify(alias, "valid_at"), qualify(alias, "valid_at"),
-		qualify(alias, "invalid_at"), qualify(alias, "invalid_at"),
+		Qualify(alias, "created_at"),
+		Qualify(alias, "expired_at"), Qualify(alias, "expired_at"),
+		Qualify(alias, "valid_at"), Qualify(alias, "valid_at"),
+		Qualify(alias, "invalid_at"), Qualify(alias, "invalid_at"),
 	)
 	return clause, []any{t, t, t, t}
 }
 
-// validInRangeClause returns a SQL boolean fragment (no leading AND) plus its
+// ValidInRangeClause returns a SQL boolean fragment (no leading AND) plus its
 // args, selecting memories whose event-validity window [valid_at, invalid_at)
 // overlaps the half-open query window [from, to). NULL valid_at means
 // "valid since the beginning"; NULL invalid_at means "still valid". A nil
@@ -51,19 +51,21 @@ func validAsOfClause(alias string, t time.Time) (string, []any) {
 // separately via the currently-valid predicate.
 //
 // Overlap of [valid_at, invalid_at) with [from, to):
-//   (valid_at IS NULL OR valid_at < to) AND (invalid_at IS NULL OR invalid_at > from)
+//
+//	(valid_at IS NULL OR valid_at < to) AND (invalid_at IS NULL OR invalid_at > from)
+//
 // Placeholders appear in the order: to, then from.
-func validInRangeClause(alias string, from, to *time.Time) (string, []any) {
+func ValidInRangeClause(alias string, from, to *time.Time) (string, []any) {
 	var parts []string
 	var args []any
 	if to != nil {
 		parts = append(parts, fmt.Sprintf("(%s IS NULL OR %s < ?)",
-			qualify(alias, "valid_at"), qualify(alias, "valid_at")))
+			Qualify(alias, "valid_at"), Qualify(alias, "valid_at")))
 		args = append(args, *to)
 	}
 	if from != nil {
 		parts = append(parts, fmt.Sprintf("(%s IS NULL OR %s > ?)",
-			qualify(alias, "invalid_at"), qualify(alias, "invalid_at")))
+			Qualify(alias, "invalid_at"), Qualify(alias, "invalid_at")))
 		args = append(args, *from)
 	}
 	if len(parts) == 0 {
@@ -72,37 +74,37 @@ func validInRangeClause(alias string, from, to *time.Time) (string, []any) {
 	return "(" + strings.Join(parts, " AND ") + ")", args
 }
 
-// temporalMode selects which validity predicate a memory read applies, and
+// TemporalMode selects which validity predicate a memory read applies, and
 // optionally an event-time window to narrow by.
-type temporalMode struct {
-	includeInvalid bool
-	asOf           *time.Time
-	rangeFrom      *time.Time // optional event-time window start (3.2)
-	rangeTo        *time.Time // optional event-time window end (3.2)
+type TemporalMode struct {
+	IncludeInvalid bool
+	AsOf           *time.Time
+	RangeFrom      *time.Time // optional event-time window start (3.2)
+	RangeTo        *time.Time // optional event-time window end (3.2)
 }
 
-// clause returns the SQL fragment (no leading AND) and its args for this
+// Clause returns the SQL fragment (no leading AND) and its args for this
 // mode. Base predicate by precedence: includeInvalid → "1=1"; asOf →
 // validAsOfClause; else currentlyValidClause. When an event-time window
-// (rangeFrom/rangeTo) is set, the window overlap clause is AND-ed onto the
+// (rangeFrom/rangeTo) is set, the window overlap Clause is AND-ed onto the
 // base predicate so a time-scoped question narrows by event-time while still
 // honoring retirement (unless includeInvalid/asOf already governs).
-func (m temporalMode) clause(alias string) (string, []any) {
+func (m TemporalMode) Clause(alias string) (string, []any) {
 	var base string
 	var args []any
 	switch {
-	case m.includeInvalid:
+	case m.IncludeInvalid:
 		base = "1=1"
-	case m.asOf != nil:
-		base, args = validAsOfClause(alias, *m.asOf)
+	case m.AsOf != nil:
+		base, args = ValidAsOfClause(alias, *m.AsOf)
 	default:
-		base = currentlyValidClause(alias)
+		base = CurrentlyValidClause(alias)
 	}
 
-	if m.rangeFrom == nil && m.rangeTo == nil {
+	if m.RangeFrom == nil && m.RangeTo == nil {
 		return base, args
 	}
-	rClause, rArgs := validInRangeClause(alias, m.rangeFrom, m.rangeTo)
+	rClause, rArgs := ValidInRangeClause(alias, m.RangeFrom, m.RangeTo)
 	args = append(args, rArgs...)
 	return "(" + base + " AND " + rClause + ")", args
 }

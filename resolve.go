@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // ingestEntity stores an extracted entity, reusing the stored entity it
@@ -123,7 +125,7 @@ func (c *Cortex) absorbIntoEntity(ctx context.Context, stored, e *Entity) error 
 	if err != nil {
 		return fmt.Errorf("cortex: marshal attributes: %w", err)
 	}
-	conf := coerceConfidence(e.Confidence)
+	conf := model.CoerceConfidence(e.Confidence)
 	if stored.Confidence > conf {
 		conf = stored.Confidence
 	}

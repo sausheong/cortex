@@ -3,29 +3,12 @@ package cortex
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 )
 
 // extractConcurrency bounds how many chunk extractions run at once.
 const extractConcurrency = 4
-
-// ExtractPartialError reports that Remember stored what it could but the
-// extractor failed on some sections of a long document. The raw text of every
-// section is still saved and keyword-searchable; only the entities,
-// relationships and memories drawn from the failed sections are missing.
-type ExtractPartialError struct {
-	Failed int
-	Total  int
-	Err    error // the first extraction failure
-}
-
-func (e *ExtractPartialError) Error() string {
-	return fmt.Sprintf("cortex: saved, but %d of %d section(s) could not be analysed for entities and facts: %v", e.Failed, e.Total, e.Err)
-}
-
-func (e *ExtractPartialError) Unwrap() error { return e.Err }
 
 // IsExtractPartial reports whether err only means some sections were not
 // analysed.
@@ -41,7 +24,7 @@ func IsExtractPartial(err error) bool {
 // (nil extraction).
 func (c *Cortex) extractParts(ctx context.Context, content string, parts []string, contentType string) (*Extraction, error) {
 	if len(parts) <= 1 {
-		return c.cfg.extractor.Extract(ctx, content, contentType)
+		return c.cfg.Extractor.Extract(ctx, content, contentType)
 	}
 	results := make([]*Extraction, len(parts))
 	errs := make([]error, len(parts))
@@ -53,7 +36,7 @@ func (c *Cortex) extractParts(ctx context.Context, content string, parts []strin
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i], errs[i] = c.cfg.extractor.Extract(ctx, p, contentType)
+			results[i], errs[i] = c.cfg.Extractor.Extract(ctx, p, contentType)
 		}()
 	}
 	wg.Wait()

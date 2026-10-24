@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // MemoriesByEntityAll returns every currently-valid memory grouped by the
@@ -13,7 +15,7 @@ import (
 // otherwise make one round trip per entity plus one per memory. Memories are
 // ordered oldest first; EntityIDs is filled from the same links.
 func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, error) {
-	clause, targs := temporalMode{}.clause("m")
+	clause, targs := model.TemporalMode{}.Clause("m")
 	args := append([]any{c.userID}, targs...)
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT me.entity_id, m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')

@@ -5,38 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 )
-
-// GraphNode is one entity in a graph neighbourhood.
-type GraphNode struct {
-	ID, Type, Name string
-	Center         bool
-	Rels           int // relationships joining it to the centre
-}
-
-// GraphEdge is one live relationship between two nodes of a neighbourhood.
-type GraphEdge struct {
-	ID, SourceID, TargetID, Type string
-}
-
-// GraphFilter narrows a neighbourhood. Zero fields are ignored. The centre is
-// always kept, whatever the filter.
-type GraphFilter struct {
-	Types []string
-	// Since keeps only entities mentioned by a live memory created at or
-	// after this time.
-	Since *time.Time
-	Limit int // total nodes including the centre; clamped to 1..500
-}
-
-// Neighbourhood is a centre plus its nearest neighbours.
-type Neighbourhood struct {
-	Nodes []GraphNode
-	Edges []GraphEdge
-	// Truncated is set when more neighbours matched than the cap allowed.
-	Truncated bool
-}
 
 // GraphNeighbourhood returns the centre entity with up to Limit-1 of its
 // direct neighbours, ranked by how many relationships join them to the centre
@@ -118,14 +87,6 @@ func (c *Cortex) GraphNeighbourhood(ctx context.Context, centerID string, f Grap
 		g.Edges = append(g.Edges, e)
 	}
 	return g, erows.Err()
-}
-
-// ErrEntityNameTaken is returned by RenameEntity when another live entity of
-// the same type already has the name. ConflictID is that entity.
-type ErrEntityNameTaken struct{ ConflictID string }
-
-func (e *ErrEntityNameTaken) Error() string {
-	return "cortex: an entity with that name and type exists"
 }
 
 // RenameEntity renames a live entity of this user. A name already used by
@@ -231,17 +192,6 @@ func (c *Cortex) EntityTypes(ctx context.Context) ([]string, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
-}
-
-// EntityRelation is one live relationship of an entity, with the other end
-// named. Outgoing means the entity is the source.
-type EntityRelation struct {
-	ID, Type  string
-	Outgoing  bool
-	OtherID   string
-	OtherName string
-	OtherType string
-	CreatedAt time.Time
 }
 
 // EntityRelations returns up to limit live relationships touching the entity
