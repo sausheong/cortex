@@ -332,11 +332,11 @@ func TestAccountDeleteCutsAccessImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
 		t.Fatal(err)
 	}
 	deleteAccount(t, e, 0)
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("token still valid")
 	}
 	if r, _ := e.get("/memories"); r.StatusCode != http.StatusFound || !strings.HasPrefix(r.Header.Get("Location"), "/auth/google/start") {
@@ -367,7 +367,7 @@ func TestAccountDeleteThenSigninRestores(t *testing.T) {
 	if strings.Contains(body, "/revoke") {
 		t.Fatalf("connection came back: %s", body)
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("old token valid again")
 	}
 }

@@ -20,7 +20,7 @@ type NightlyOptions struct {
 	Enqueue func(ctx context.Context, userID, kind string) (string, error)
 	// MaintainOpts are passed to every user's Maintain.
 	MaintainOpts []cortex.MaintainOption
-	// Resolve builds a user's handle. Nil means st.ResolveUser(root, userID, "").
+	// Resolve builds a user's handle. Nil means st.ResolveUser(root, userID, "", nil).
 	Resolve func(ctx context.Context, userID string) (*cortex.Cortex, error)
 	// PurgeAfter is the retention window (default PurgeWindow).
 	PurgeAfter time.Duration
@@ -112,7 +112,7 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 	resolve := o.Resolve
 	if resolve == nil {
 		resolve = func(ctx context.Context, id string) (*cortex.Cortex, error) {
-			return st.ResolveUser(ctx, root, id, "")
+			return st.ResolveUser(ctx, root, id, "", nil)
 		}
 	}
 	record := func(msg string) {

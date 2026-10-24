@@ -89,7 +89,7 @@ func openUserCortex(ctx context.Context, dsn, ref string, env map[string]string)
 		root.Close()
 		return nil, err
 	}
-	cx, err := st.ResolveUser(ctx, root, u.ID, "")
+	cx, err := st.ResolveUser(ctx, root, u.ID, "", nil)
 	if err != nil {
 		db.Close()
 		root.Close()

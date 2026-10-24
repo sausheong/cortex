@@ -2,7 +2,10 @@ package accounts
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 	"net/http"
 
 	oai "github.com/sashabaranov/go-openai"
@@ -133,7 +136,14 @@ type genPinner interface {
 // ResolveUser is the one factory for a per-user handle: chat settings from
 // GetSettings, the embedder from GetActiveEmbed, then
 // root.ForUser(...).WithConnection(connID).WithGeneration(active).
-func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, connID string) (*cortex.Cortex, error) {
+func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, connID string, uk *keys.UK) (*cortex.Cortex, error) {
+	state, err := st.encState(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if state != "none" && uk == nil {
+		return nil, model.ErrLocked
+	}
 	chat, err := st.GetSettings(ctx, userID)
 	if errors.Is(err, ErrNoSettings) {
 		return nil, ErrNoProvider
@@ -164,7 +174,22 @@ func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, c
 	if !ok2 {
 		return nil, errNeedPinning
 	}
-	return gp.WithGeneration(active), nil
+	cx = gp.WithGeneration(active)
+	if state != "none" {
+		cx = cx.WithKey(uk, state)
+	}
+	return cx, nil
+}
+
+// encState reads users.encryption_state; an unknown user counts as "none"
+// so the existing no-settings errors still apply.
+func (st *Store) encState(ctx context.Context, userID string) (string, error) {
+	var state string
+	err := st.DB.QueryRowContext(ctx, `SELECT encryption_state FROM users WHERE id = $1`, userID).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "none", nil
+	}
+	return state, err
 }
 
 var errNeedPinning = errors.New("accounts: cortex handle lacks WithConnection/WithGeneration (Tasks 3 and 5)")

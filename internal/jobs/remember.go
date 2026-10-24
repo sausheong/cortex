@@ -53,7 +53,7 @@ func RememberJob(ctx context.Context, root *cortex.Cortex, st *accounts.Store, u
 	if err := json.Unmarshal([]byte(payload), &rp); err != nil || rp.Content == "" {
 		return errors.New("jobs: remember job has no content")
 	}
-	cx, err := st.ResolveUser(ctx, root, userID, rp.ConnID)
+	cx, err := st.ResolveUser(ctx, root, userID, rp.ConnID, nil)
 	if err != nil {
 		return err
 	}

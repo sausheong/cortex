@@ -103,11 +103,11 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 	pool.Start(ctx)
 
 	resolve := func(ctx context.Context, bearer string) (*cortex.Cortex, error) {
-		userID, connID, err := st.ResolveBearer(ctx, bearer)
+		userID, connID, _, err := st.ResolveBearer(ctx, bearer)
 		if err != nil {
 			return nil, err
 		}
-		return st.ResolveUser(ctx, root, userID, connID)
+		return st.ResolveUser(ctx, root, userID, connID, nil)
 	}
 	s := server.NewMCPServer("cortex", "1.0.0", server.WithToolCapabilities(false))
 	mcpserver.RegisterToolsFor(s, nil, publicURL, mcpserver.WithBackgroundRemember(

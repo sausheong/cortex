@@ -86,11 +86,11 @@ func newMUEnvOpts(t *testing.T, opts ...ToolOption) *muEnv {
 	st := &accounts.Store{DB: db, Sealer: sl, AllowPrivate: true}
 	e := &muEnv{root: root, st: st, limiter: accounts.NewLimiter(30, 30, nil)}
 	resolve := func(ctx context.Context, bearer string) (*cortex.Cortex, error) {
-		uid, cid, err := st.ResolveBearer(ctx, bearer)
+		uid, cid, _, err := st.ResolveBearer(ctx, bearer)
 		if err != nil {
 			return nil, err
 		}
-		return st.ResolveUser(ctx, root, uid, cid)
+		return st.ResolveUser(ctx, root, uid, cid, nil)
 	}
 	s := server.NewMCPServer("cortex-test", "0.0.0", server.WithToolCapabilities(false))
 	RegisterToolsFor(s, nil, testPublicURL, opts...)

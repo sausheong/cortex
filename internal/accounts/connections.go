@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -197,9 +199,9 @@ func (st *Store) CreateAgentToken(ctx context.Context, userID, name string) (str
 
 // ResolveBearer maps an agent token or OAuth access token to (user,
 // connection). Revoked connections, expired tokens and deleted users fail.
-func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connID string, err error) {
+func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connID string, uk *keys.UK, err error) {
 	if token == "" {
-		return "", "", ErrInvalidToken
+		return "", "", nil, ErrInvalidToken
 	}
 	h := HashToken(token)
 	now := st.now()
@@ -218,13 +220,20 @@ func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connI
 		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", ErrInvalidToken
+		return "", "", nil, ErrInvalidToken
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("accounts: resolve token: %w", err)
+		return "", "", nil, fmt.Errorf("accounts: resolve token: %w", err)
 	}
 	_, _ = st.DB.ExecContext(ctx, `UPDATE connections SET last_used = $2 WHERE id = $1`, connID, now)
-	return userID, connID, nil
+	// Token wraps arrive with Tasks 6 and 7; until then an enrolled user's
+	// token cannot yield a key.
+	if state, serr := st.encState(ctx, userID); serr != nil {
+		return "", "", nil, serr
+	} else if state != "none" {
+		return "", "", nil, model.ErrNeedsReconnect
+	}
+	return userID, connID, nil, nil
 }
 
 // DeleteAccount cuts access at once: it revokes every connection, deletes

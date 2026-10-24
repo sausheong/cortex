@@ -68,7 +68,7 @@ func newEnv(t *testing.T, o Options) *env {
 	e.st = &accounts.Store{DB: db, Sealer: sl, Now: func() time.Time { return e.now }}
 	mcp := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if _, _, err := e.st.ResolveBearer(r.Context(), tok); err != nil {
+		if _, _, _, err := e.st.ResolveBearer(r.Context(), tok); err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

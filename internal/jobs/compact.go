@@ -31,7 +31,7 @@ func CompactJob(ctx context.Context, root *cortex.Cortex, st *accounts.Store, us
 	if n == 0 {
 		return nil
 	}
-	cx, err := st.ResolveUser(ctx, root, userID, "")
+	cx, err := st.ResolveUser(ctx, root, userID, "", nil)
 	if err != nil {
 		return err
 	}

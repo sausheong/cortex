@@ -157,7 +157,7 @@ func (h *compactionHandlers) handle(ctx context.Context, userID string) (*cortex
 	if h.resolve != nil {
 		return h.resolve(ctx, userID)
 	}
-	return h.d.Accounts.ResolveUser(ctx, h.d.Root, userID, "")
+	return h.d.Accounts.ResolveUser(ctx, h.d.Root, userID, "", nil)
 }
 
 // apply takes the selected indexes only; the changes come from the stored

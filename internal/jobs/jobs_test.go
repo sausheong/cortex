@@ -327,7 +327,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 	if _, err := e.st.PutSettings(ctx, uid, s); err != nil {
 		t.Fatal(err)
 	}
-	cx, err := e.st.ResolveUser(ctx, e.root, uid, "")
+	cx, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 	<-reached
 
 	newBefore := es.count("new")
-	h, err := e.st.ResolveUser(ctx, e.root, uid, "")
+	h, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h2, err := e.st.ResolveUser(ctx, e.root, uid, "")
+	h2, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

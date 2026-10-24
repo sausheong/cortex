@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -30,6 +31,59 @@ type Handle struct {
 	PinnedGen int
 	// ConnID, when set, is stamped on every row this handle writes.
 	ConnID string
+	// Key is this handle's own copy of the user key, nil when the user is
+	// unencrypted or the handle is locked. Never shared between handles.
+	Key *keys.UK
+	// EncState is the user's encryption_state: "", "none", "migrating" or
+	// "encrypted". "" is treated as "none".
+	EncState string
+}
+
+// WithKey returns a copy of the handle holding its own clone of uk (nil uk,
+// or a zeroed one, leaves the copy locked). The caller keeps ownership of uk.
+func (h *Handle) WithKey(uk *keys.UK, state string) *Handle {
+	h2 := *h
+	h2.EncState = state
+	h2.Key = nil
+	if uk != nil {
+		h2.Key = uk.Clone()
+	}
+	return &h2
+}
+
+// Encrypted reports whether the user's rows are (or are being) encrypted.
+func (h *Handle) Encrypted() bool { return h.EncState != "" && h.EncState != "none" }
+
+// Seal encrypts plain bound to this handle's user, table, row and column.
+func (h *Handle) Seal(table, rowID, col string, plain []byte) ([]byte, error) {
+	if h.Key == nil {
+		return nil, model.ErrLocked
+	}
+	return h.Key.Seal(h.UserID, table, rowID, col, plain)
+}
+
+// Open decrypts a Seal output for this handle's user.
+func (h *Handle) Open(table, rowID, col string, ct []byte) ([]byte, error) {
+	if h.Key == nil {
+		return nil, model.ErrLocked
+	}
+	return h.Key.Open(h.UserID, table, rowID, col, ct)
+}
+
+// Blind returns the keyed equality index of a normalised value, nil when the
+// handle has no usable key.
+func (h *Handle) Blind(norm string) []byte {
+	if h.Key == nil {
+		return nil
+	}
+	return h.Key.Blind(norm)
+}
+
+// Release zeroes this handle's own key copy. Other handles are unaffected.
+func (h *Handle) Release() {
+	if h.Key != nil {
+		h.Key.Zero()
+	}
 }
 
 // Logf logs through the configured logger, if any.

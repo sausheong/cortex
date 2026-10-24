@@ -67,3 +67,13 @@ func (e *ExtractPartialError) Error() string {
 }
 
 func (e *ExtractPartialError) Unwrap() error { return e.Err }
+
+// Encryption errors. One wording each, shared by every layer.
+var (
+	ErrLocked              = errors.New("cortex: locked; unlock with your passkey")
+	ErrNeedsReconnect      = errors.New("cortex is now encrypted; reconnect this assistant in Connections")
+	ErrTokenExpired        = errors.New("cortex: token expired; reconnect this assistant in Connections")
+	ErrEnrollRequired      = errors.New("cortex: encryption is required; set up your passkey in Connections")
+	ErrStaticTokenDisabled = errors.New("the static owner token is disabled for encrypted users; mint an agent token in Connections")
+	ErrPlaintextRow        = errors.New("cortex: plaintext row in an encrypted account")
+)

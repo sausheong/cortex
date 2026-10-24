@@ -2,6 +2,7 @@ package cortex
 
 import (
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/store"
 )
@@ -60,3 +61,16 @@ func (c *Cortex) WithConnection(connID string) *Cortex {
 
 // ConnectionID is the connection this handle stamps on its writes, "" when none.
 func (c *Cortex) ConnectionID() string { return c.h.ConnID }
+
+// WithKey returns a copy of the handle holding its own clone of uk, with the
+// user's encryption state. A background goroutine that outlives the request
+// must call WithKey itself before the request ends.
+func (c *Cortex) WithKey(uk *keys.UK, state string) *Cortex {
+	return &Cortex{h: c.h.WithKey(uk, state)}
+}
+
+// Release zeroes this handle's own key copy.
+func (c *Cortex) Release() { c.h.Release() }
+
+// Encrypted reports whether this handle's user is enrolled in encryption.
+func (c *Cortex) Encrypted() bool { return c.h.Encrypted() }

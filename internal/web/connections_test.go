@@ -80,7 +80,7 @@ func TestRevokeAndRemoveSoftDeletes(t *testing.T) {
 		if r.StatusCode == http.StatusSeeOther {
 			t.Fatalf("revoked without a valid confirmation: %v", f)
 		}
-		if _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
+		if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
 			t.Fatalf("token revoked by refused request %v: %v", f, err)
 		}
 	}
@@ -104,12 +104,12 @@ func TestRevokeAndRemoveSoftDeletes(t *testing.T) {
 	if n := len(e.liveContents(ua.ID)); n != 1 {
 		t.Fatalf("undo left %d live memories", n)
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("undo re-enabled the token")
 	}
 	// Redo the delete part for the original assertions below.
 	e.root.ForUser(ua.ID).SoftDeleteByConnection(t.Context(), conn.ID)
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("revoked token still resolves")
 	}
 	conns, _ = e.st.ListConnections(t.Context(), ua.ID)
@@ -134,7 +134,7 @@ func TestRevokeForeignConnectionIs404(t *testing.T) {
 	if r1.StatusCode != 404 || r2.StatusCode != 404 || b1 != b2 {
 		t.Fatalf("foreign %d %q vs absent %d %q", r1.StatusCode, b1, r2.StatusCode, b2)
 	}
-	if uid, cid, err := e.st.ResolveBearer(t.Context(), btok); err != nil || uid != ub.ID || cid != bconn.ID {
+	if uid, cid, _, err := e.st.ResolveBearer(t.Context(), btok); err != nil || uid != ub.ID || cid != bconn.ID {
 		t.Fatalf("bob's token broken: %v", err)
 	}
 }
@@ -153,7 +153,7 @@ func TestNewTokenShownOnce(t *testing.T) {
 	end := strings.IndexByte(body[i:], '<')
 	tok := body[i : i+end]
 	ua := e.userBySub("g-alice")
-	if uid, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil || uid != ua.ID {
+	if uid, _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil || uid != ua.ID {
 		t.Fatalf("shown token does not resolve: %v", err)
 	}
 	_, again := e.get("/connections")
@@ -185,7 +185,7 @@ func TestRevokeKeepLeavesWrittenData(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("token still resolves")
 	}
 	if !e.liveContents(ua.ID)["kept"] {
@@ -297,7 +297,7 @@ func TestRemoveConnection(t *testing.T) {
 	if r.StatusCode != http.StatusConflict || !strings.Contains(body, "Revoke this connection before removing it") {
 		t.Fatalf("active remove: %d", r.StatusCode)
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err != nil {
 		t.Fatal("token stopped working")
 	}
 	if _, page := e.get("/connections"); !strings.Contains(page, "gone-agent") || strings.Contains(page, "Remove from list") {
@@ -322,7 +322,7 @@ func TestRemoveConnection(t *testing.T) {
 	if strings.Contains(page, "gone-agent") {
 		t.Fatal("removed connection still listed")
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("removed connection's token still valid")
 	}
 	// Memories keep the label; filter lists it as removed while it has memories.
@@ -338,7 +338,7 @@ func TestRemoveConnection(t *testing.T) {
 	if !strings.Contains(page, "gone-agent") || !strings.Contains(page, "Revoked") {
 		t.Fatal("undo did not restore")
 	}
-	if _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), tok); err == nil {
 		t.Fatal("undo re-enabled token")
 	}
 }

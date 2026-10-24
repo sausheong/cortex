@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 func TestPutSettingsFirstSaveAndMasking(t *testing.T) {
@@ -113,7 +115,7 @@ func TestAgentTokenResolves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uid, cid, err := e.st.ResolveBearer(ctx, tok)
+	uid, cid, _, err := e.st.ResolveBearer(ctx, tok)
 	if err != nil || uid != u || cid != conn.ID {
 		t.Fatalf("%s %s %v", uid, cid, err)
 	}
@@ -121,7 +123,7 @@ func TestAgentTokenResolves(t *testing.T) {
 	if len(cs) != 1 || cs[0].LastUsed == nil {
 		t.Fatalf("last_used not set: %+v", cs)
 	}
-	if _, _, err := e.st.ResolveBearer(ctx, "nope"); !errors.Is(err, ErrInvalidToken) {
+	if _, _, _, err := e.st.ResolveBearer(ctx, "nope"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal(err)
 	}
 }
@@ -134,7 +136,7 @@ func TestRevokedTokenFails(t *testing.T) {
 	if err := e.st.RevokeConnection(ctx, u, conn.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.st.ResolveBearer(ctx, tok); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(ctx, tok); err == nil {
 		t.Fatal("revoked token resolved")
 	}
 }
@@ -188,14 +190,14 @@ func TestOAuthAccessTokenExpiry(t *testing.T) {
 	c, _ := e.st.CreateConnection(ctx, u, "oauth", "Claude", "client1")
 	addOAuthToken(t, e, u, c.ID, "acc", "access", time.Hour)
 	addOAuthToken(t, e, u, c.ID, "ref", "refresh", time.Hour)
-	if uid, cid, err := e.st.ResolveBearer(ctx, "acc"); err != nil || uid != u || cid != c.ID {
+	if uid, cid, _, err := e.st.ResolveBearer(ctx, "acc"); err != nil || uid != u || cid != c.ID {
 		t.Fatal(err)
 	}
-	if _, _, err := e.st.ResolveBearer(ctx, "ref"); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(ctx, "ref"); err == nil {
 		t.Fatal("refresh token accepted as bearer")
 	}
 	e.now = e.now.Add(2 * time.Hour)
-	if _, _, err := e.st.ResolveBearer(ctx, "acc"); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(ctx, "acc"); err == nil {
 		t.Fatal("expired token accepted")
 	}
 }
@@ -214,7 +216,7 @@ func TestDeletedAccountTokensRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tok := range []string{agent, "acc"} {
-		if _, _, err := e.st.ResolveBearer(ctx, tok); err == nil {
+		if _, _, _, err := e.st.ResolveBearer(ctx, tok); err == nil {
 			t.Fatalf("token %q still resolves", tok)
 		}
 	}
@@ -244,7 +246,7 @@ func TestDeletedAccountTokensRejected(t *testing.T) {
 			t.Fatal("restored account has live connection")
 		}
 	}
-	if _, _, err := e.st.ResolveBearer(ctx, agent); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(ctx, agent); err == nil {
 		t.Fatal("old token works after restore")
 	}
 }
@@ -301,7 +303,7 @@ func TestMigrateBootstrapIdempotent(t *testing.T) {
 	if n != 1 || m != 1 {
 		t.Fatalf("settings %d tokens %d", n, m)
 	}
-	uid, _, err := e.st.ResolveBearer(ctx, "tunnel-token")
+	uid, _, _, err := e.st.ResolveBearer(ctx, "tunnel-token")
 	if err != nil || uid != cortex.BootstrapUserID {
 		t.Fatalf("%s %v", uid, err)
 	}
@@ -327,7 +329,7 @@ func TestMigrateBootstrapNeverResurrects(t *testing.T) {
 	if err := MigrateBootstrap(ctx, e.st, bootEnv()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.st.ResolveBearer(ctx, "tunnel-token"); err == nil {
+	if _, _, _, err := e.st.ResolveBearer(ctx, "tunnel-token"); err == nil {
 		t.Fatal("revoked tunnel token works again")
 	}
 	cs, _ = e.st.ListConnections(ctx, cortex.BootstrapUserID)
@@ -386,7 +388,7 @@ func TestResolveUserNoSettings(t *testing.T) {
 	u := e.user(t, "a")
 	// operator key in env must never be used: no settings means ErrNoProvider.
 	t.Setenv("OPENAI_API_KEY", "sk-operator")
-	_, err := e.st.ResolveUser(context.Background(), e.root, u, "c1")
+	_, err := e.st.ResolveUser(context.Background(), e.root, u, "c1", nil)
 	if !errors.Is(err, ErrNoProvider) || !strings.Contains(err.Error(), "/settings") {
 		t.Fatalf("got %v", err)
 	}
@@ -462,5 +464,52 @@ func TestUserDeleteCascadesAllTables(t *testing.T) {
 		if n != 0 {
 			t.Errorf("%s has %d rows after user delete", tbl, n)
 		}
+	}
+}
+
+func TestResolveUserEncryptedWithoutKeyIsLocked(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	u := e.user(t, "enc")
+	if _, err := e.st.PutSettings(ctx, u, okSettings()); err != nil {
+		t.Fatal(err)
+	}
+	if cx, err := e.st.ResolveUser(ctx, e.root, u, "c1", nil); err != nil || cx.Encrypted() {
+		t.Fatalf("state none: %v", err)
+	}
+	if _, err := e.st.DB.ExecContext(ctx, `UPDATE users SET encryption_state='encrypted' WHERE id=$1`, u); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.ResolveUser(ctx, e.root, u, "c1", nil); !errors.Is(err, model.ErrLocked) {
+		t.Fatalf("no key: %v", err)
+	}
+	uk, _ := keys.NewUK()
+	defer uk.Zero()
+	cx, err := e.st.ResolveUser(ctx, e.root, u, "c1", uk)
+	if err != nil || !cx.Encrypted() {
+		t.Fatalf("with key: %v", err)
+	}
+	cx.Release()
+	if uk.Bytes() == nil {
+		t.Fatal("caller key zeroed")
+	}
+}
+
+func TestResolveBearerEncryptedNeedsReconnect(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	u := e.user(t, "encb")
+	tok, _, err := e.st.CreateAgentToken(ctx, u, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := e.st.ResolveBearer(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.DB.ExecContext(ctx, `UPDATE users SET encryption_state='encrypted' WHERE id=$1`, u); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := e.st.ResolveBearer(ctx, tok); !errors.Is(err, model.ErrNeedsReconnect) {
+		t.Fatalf("got %v", err)
 	}
 }
