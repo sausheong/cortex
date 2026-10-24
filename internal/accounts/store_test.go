@@ -17,14 +17,14 @@ func TestPutSettingsFirstSaveAndMasking(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "a")
-	if _, err := e.st.GetSettings(ctx, u); !errors.Is(err, ErrNoSettings) {
+	if _, err := e.st.GetSettings(ctx, u, nil); !errors.Is(err, ErrNoSettings) {
 		t.Fatalf("got %v", err)
 	}
-	re, err := e.st.PutSettings(ctx, u, okSettings())
+	re, err := e.st.PutSettings(ctx, u, okSettings(), nil)
 	if err != nil || re {
 		t.Fatalf("first save: %v %v", re, err)
 	}
-	g, err := e.st.GetSettings(ctx, u)
+	g, err := e.st.GetSettings(ctx, u, nil)
 	if err != nil || g.APIKey != "sk-secret-3f9a" || g.Masked().APIKey != "••••3f9a" {
 		t.Fatalf("%+v %v", g, err)
 	}
@@ -33,14 +33,14 @@ func TestPutSettingsFirstSaveAndMasking(t *testing.T) {
 	if strings.Contains(raw, "secret") {
 		t.Fatal("key stored in plaintext")
 	}
-	act, err := e.st.GetActiveEmbed(ctx, u)
+	act, err := e.st.GetActiveEmbed(ctx, u, nil)
 	if err != nil || act.EmbedModel != "e" || act.EmbedDims != 512 || act.EmbedAPIKey != "sk-secret-3f9a" {
 		t.Fatalf("%+v %v", act, err)
 	}
 	// private URL refused, nothing saved
 	bad := okSettings()
 	bad.BaseURL = "https://10.0.0.5/v1"
-	if _, err := e.st.PutSettings(ctx, u, bad); err == nil {
+	if _, err := e.st.PutSettings(ctx, u, bad, nil); err == nil {
 		t.Fatal("private URL saved")
 	}
 }
@@ -58,51 +58,51 @@ func TestPutSettingsReembedDecision(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "a")
-	e.st.PutSettings(ctx, u, okSettings())
+	e.st.PutSettings(ctx, u, okSettings(), nil)
 
 	// no data: model/dims change promotes at once
 	s := okSettings()
 	s.EmbedModel, s.EmbedDims = "e2", 1024
-	if re, err := e.st.PutSettings(ctx, u, s); err != nil || re {
+	if re, err := e.st.PutSettings(ctx, u, s, nil); err != nil || re {
 		t.Fatalf("no-data change: %v %v", re, err)
 	}
-	if a, _ := e.st.GetActiveEmbed(ctx, u); a.EmbedModel != "e2" || a.EmbedDims != 1024 {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedModel != "e2" || a.EmbedDims != 1024 {
 		t.Fatalf("not promoted: %+v", a)
 	}
 
 	insertEmbedding(t, e, u)
 	// data present, embed key only: promoted at once with the new key
 	s.EmbedAPIKey = "new-embed-key"
-	if re, err := e.st.PutSettings(ctx, u, s); err != nil || re {
+	if re, err := e.st.PutSettings(ctx, u, s, nil); err != nil || re {
 		t.Fatalf("key-only change: %v %v", re, err)
 	}
-	if a, _ := e.st.GetActiveEmbed(ctx, u); a.EmbedAPIKey != "new-embed-key" {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedAPIKey != "new-embed-key" {
 		t.Fatalf("key not swapped: %+v", a)
 	}
 	// chat-only change: nothing to re-embed
 	s.ChatModel = "other-chat"
-	if re, err := e.st.PutSettings(ctx, u, s); err != nil || re {
+	if re, err := e.st.PutSettings(ctx, u, s, nil); err != nil || re {
 		t.Fatalf("chat change: %v %v", re, err)
 	}
 	// data present, model change: needs re-embed, active untouched
 	s.EmbedModel = "e3"
-	re, err := e.st.PutSettings(ctx, u, s)
+	re, err := e.st.PutSettings(ctx, u, s, nil)
 	if err != nil || !re {
 		t.Fatalf("model change: %v %v", re, err)
 	}
-	if a, _ := e.st.GetActiveEmbed(ctx, u); a.EmbedModel != "e2" {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedModel != "e2" {
 		t.Fatalf("active changed early: %+v", a)
 	}
-	g, _ := e.st.GetSettings(ctx, u)
+	g, _ := e.st.GetSettings(ctx, u, nil)
 	if g.EmbedModel != "e3" {
 		t.Fatal("desired not saved")
 	}
 	tx, _ := e.st.DB.Begin()
-	if err := e.st.PromoteActiveEmbedTx(ctx, tx, u); err != nil {
+	if err := e.st.PromoteActiveEmbedTx(ctx, tx, u, nil); err != nil {
 		t.Fatal(err)
 	}
 	tx.Commit()
-	if a, _ := e.st.GetActiveEmbed(ctx, u); a.EmbedModel != "e3" {
+	if a, _ := e.st.GetActiveEmbed(ctx, u, nil); a.EmbedModel != "e3" {
 		t.Fatalf("promote failed: %+v", a)
 	}
 }
@@ -307,11 +307,11 @@ func TestMigrateBootstrapIdempotent(t *testing.T) {
 	if err != nil || uid != cortex.BootstrapUserID {
 		t.Fatalf("%s %v", uid, err)
 	}
-	s, _ := e.st.GetSettings(ctx, cortex.BootstrapUserID)
+	s, _ := e.st.GetSettings(ctx, cortex.BootstrapUserID, nil)
 	if s.APIKey != "sk-op" || s.ChatModel != "gpt-x" || s.BaseURL != DefaultBaseURL || s.EmbedDims != 512 || s.EmbedModel != DefaultEmbedModel {
 		t.Fatalf("%+v", s)
 	}
-	if a, err := e.st.GetActiveEmbed(ctx, cortex.BootstrapUserID); err != nil || a.EmbedDims != 512 {
+	if a, err := e.st.GetActiveEmbed(ctx, cortex.BootstrapUserID, nil); err != nil || a.EmbedDims != 512 {
 		t.Fatal(err)
 	}
 	cs, _ := e.st.ListConnections(ctx, cortex.BootstrapUserID)
@@ -398,7 +398,7 @@ func TestUserDeleteCascadesAllTables(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "a")
-	e.st.PutSettings(ctx, u, okSettings())
+	e.st.PutSettings(ctx, u, okSettings(), nil)
 	_, conn, _ := e.st.CreateAgentToken(ctx, u, "x", nil)
 	oc, _ := e.st.CreateConnection(ctx, u, "oauth", "C", "cid")
 	exec := func(q string, args ...any) {
@@ -471,7 +471,7 @@ func TestResolveUserEncryptedWithoutKeyIsLocked(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	u := e.user(t, "enc")
-	if _, err := e.st.PutSettings(ctx, u, okSettings()); err != nil {
+	if _, err := e.st.PutSettings(ctx, u, okSettings(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if cx, err := e.st.ResolveUser(ctx, e.root, u, "c1", nil); err != nil || cx.Encrypted() {

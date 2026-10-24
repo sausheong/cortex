@@ -51,7 +51,7 @@ func rememberEnv(t *testing.T, url string) (*env, string, *accounts.Connection) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: url, APIKey: "sk-test", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}); err != nil {
+	if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: url, APIKey: "sk-test", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, nil); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := e.st.CreateConnection(t.Context(), u.ID, "agent", "laptop", "")

@@ -49,6 +49,8 @@ func ReEmbedWith(ctx context.Context, cx *cortex.Cortex, st *accounts.Store, tar
 	if err := EnsureIndexes(ctx, cx, target.Dimensions()); err != nil {
 		return err
 	}
+	uk := cx.CloneKey() // nil for a legacy user
+	defer uk.Zero()
 	active, err := cx.ActiveGeneration(ctx)
 	if err != nil {
 		return err
@@ -120,9 +122,9 @@ func ReEmbedWith(ctx context.Context, cx *cortex.Cortex, st *accounts.Store, tar
 		}
 		inTx := func(tx *sql.Tx) error {
 			if set != nil {
-				return st.PromoteActiveEmbedSettingsTx(ctx, tx, cx.UserID(), *set)
+				return st.PromoteActiveEmbedSettingsTx(ctx, tx, cx.UserID(), *set, uk)
 			}
-			return st.PromoteActiveEmbedTx(ctx, tx, cx.UserID())
+			return st.PromoteActiveEmbedTx(ctx, tx, cx.UserID(), uk)
 		}
 		err := cx.FlipGeneration(ctx, newGen, embedTail, inTx)
 		if errors.Is(err, errTailTooLarge) {

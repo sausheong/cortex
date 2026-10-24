@@ -19,7 +19,7 @@ func (s *server) setupState(ctx context.Context, userID string) *pages.Setup {
 func (s *server) setupRead(ctx context.Context, userID string) (*pages.Setup, bool) {
 	var st pages.Setup
 	var active bool // a live assistant that is in use, in the terms Home uses
-	if set, err := s.st.GetSettings(ctx, userID); err == nil && set.APIKey != "" {
+	if ok, err := s.st.HasSettings(ctx, userID); err == nil && ok {
 		st.Provider = true
 	}
 	if conns, err := s.st.ListConnections(ctx, userID); err == nil {

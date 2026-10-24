@@ -144,14 +144,14 @@ func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, c
 	if state != "none" && uk == nil {
 		return nil, model.ErrLocked
 	}
-	chat, err := st.GetSettings(ctx, userID)
+	chat, err := st.GetSettings(ctx, userID, uk)
 	if errors.Is(err, ErrNoSettings) {
 		return nil, ErrNoProvider
 	}
 	if err != nil {
 		return nil, err
 	}
-	embed, err := st.GetActiveEmbed(ctx, userID)
+	embed, err := st.GetActiveEmbed(ctx, userID, uk)
 	if err != nil {
 		return nil, err
 	}

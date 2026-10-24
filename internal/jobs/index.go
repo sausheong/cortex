@@ -23,7 +23,7 @@ func EnsureIndexes(ctx context.Context, cx *cortex.Cortex, dims int) error {
 // IndexJob is the body of an "index" job: it builds the indexes for the
 // user's active embedding dimensions.
 func IndexJob(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID string) error {
-	active, err := st.GetActiveEmbed(ctx, userID)
+	active, err := st.GetActiveEmbed(ctx, userID, nil)
 	if err != nil {
 		return fmt.Errorf("jobs: active embed: %w", err)
 	}

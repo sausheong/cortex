@@ -274,7 +274,7 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 	}
 	ctx := t.Context()
 	s := accounts.Settings{BaseURL: srv.URL, APIKey: "sk-test-1234", ChatModel: "m", EmbedModel: "model-active", EmbedDims: 256}
-	if _, err := e.st.PutSettings(ctx, u.ID, s); err != nil {
+	if _, err := e.st.PutSettings(ctx, u.ID, s, nil); err != nil {
 		t.Fatal(err)
 	}
 	// An existing embedding makes the settings change non-promoting (re-embed pending).
@@ -287,7 +287,7 @@ func TestNightlyMaintainUsesActiveEmbedder(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.EmbedModel = "model-new"
-	needs, err := e.st.PutSettings(ctx, u.ID, s)
+	needs, err := e.st.PutSettings(ctx, u.ID, s, nil)
 	if err != nil || !needs {
 		t.Fatalf("expected pending re-embed: %v %v", needs, err)
 	}

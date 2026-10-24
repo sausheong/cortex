@@ -61,11 +61,11 @@ func TestSetProviderRightUserOnlyKeyNotLeaked(t *testing.T) {
 	if err := runSetProvider(ctx, &out, st, root, "a@x.test", args, strings.NewReader(spKey+"\n"), map[string]string{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, err := st.GetSettings(ctx, a.ID)
+	got, err := st.GetSettings(ctx, a.ID, nil)
 	if err != nil || got.APIKey != spKey || got.ChatModel != "gpt-x" {
 		t.Fatalf("%+v %v", got, err)
 	}
-	if _, err := st.GetSettings(ctx, b.ID); err != accounts.ErrNoSettings {
+	if _, err := st.GetSettings(ctx, b.ID, nil); err != accounts.ErrNoSettings {
 		t.Fatalf("other user touched: %v", err)
 	}
 	if strings.Contains(out.String(), spKey) || strings.Contains(strings.Join(args, " "), spKey) {
@@ -76,7 +76,7 @@ func TestSetProviderRightUserOnlyKeyNotLeaked(t *testing.T) {
 	if err := runSetProvider(ctx, &out, st, root, a.ID, []string{"--chat-model", "gpt-y"}, nil, map[string]string{"CORTEX_PROVIDER_API_KEY": "sk-env-9999"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = st.GetSettings(ctx, a.ID)
+	got, _ = st.GetSettings(ctx, a.ID, nil)
 	if got.APIKey != "sk-env-9999" || got.ChatModel != "gpt-y" || got.BaseURL != srv.URL+"/v1" || strings.Contains(out.String(), "sk-env-9999") {
 		t.Fatalf("%+v %q", got, out.String())
 	}
@@ -94,7 +94,7 @@ func TestSetProviderAmbiguousEmailRefused(t *testing.T) {
 		t.Fatalf("want ambiguity error: %v", err)
 	}
 	for _, id := range []string{a.ID, b.ID} {
-		if _, err := st.GetSettings(ctx, id); err != accounts.ErrNoSettings {
+		if _, err := st.GetSettings(ctx, id, nil); err != accounts.ErrNoSettings {
 			t.Fatalf("settings written for %s", id)
 		}
 	}
@@ -115,7 +115,7 @@ func TestSetProviderTestFailureLeavesSettingsUnchanged(t *testing.T) {
 	if err == nil || strings.Contains(err.Error()+out.String(), spKey) {
 		t.Fatalf("want failure without key: %v", err)
 	}
-	got, _ := st.GetSettings(ctx, u.ID)
+	got, _ := st.GetSettings(ctx, u.ID, nil)
 	if got.APIKey != "sk-old" || got.BaseURL != good.URL+"/v1" {
 		t.Fatalf("settings changed: %+v", got)
 	}
@@ -123,7 +123,7 @@ func TestSetProviderTestFailureLeavesSettingsUnchanged(t *testing.T) {
 	if err := runSetProvider(ctx, &out, st, root, u.ID, []string{"--skip-test", "--base-url", bad.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = st.GetSettings(ctx, u.ID)
+	got, _ = st.GetSettings(ctx, u.ID, nil)
 	if got.APIKey != spKey {
 		t.Fatal("skip-test did not save")
 	}
@@ -170,5 +170,24 @@ func TestProfileDefaultUserIsDistilledWithBootstrapProviders(t *testing.T) {
 	}
 	if _, ok, _ := openDefaultUserCortex(ctx, dsn, map[string]string{}); ok {
 		t.Fatal("without CORTEX_SECRET_KEY the default handle must not be used")
+	}
+}
+
+func TestSetProviderCLIRefusesEncryptedUser(t *testing.T) {
+	root, dsn := adminRoot(t)
+	st := spStore(t, dsn)
+	ctx := t.Context()
+	u, _ := root.CreateUser(ctx, "s1", "enc@x.test", "E", true)
+	if _, err := st.DB.ExecContext(ctx, `UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	srv := fakeProvider(t, false)
+	err := runSetProvider(ctx, &bytes.Buffer{}, st, root, u.ID, []string{"--base-url", srv.URL + "/v1"}, strings.NewReader(spKey), map[string]string{}, nil)
+	const want = "this user is encrypted; change provider settings from Settings while signed in"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := st.GetSettings(ctx, u.ID, nil); err != accounts.ErrNoSettings {
+		t.Fatalf("settings written: %v", err)
 	}
 }

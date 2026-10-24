@@ -75,12 +75,17 @@ func runSetProvider(ctx context.Context, w io.Writer, st *accounts.Store, root *
 	if err != nil {
 		return err
 	}
+	if state, err := st.EncState(ctx, u.ID); err != nil {
+		return err
+	} else if state != "none" {
+		return errors.New("this user is encrypted; change provider settings from Settings while signed in")
+	}
 	key, embedKey, err := readKeys(stdin, env)
 	if err != nil {
 		return err
 	}
 
-	prev, err := st.GetSettings(ctx, u.ID)
+	prev, err := st.GetSettings(ctx, u.ID, nil)
 	first := errors.Is(err, accounts.ErrNoSettings)
 	if err != nil && !first {
 		return err
@@ -131,7 +136,7 @@ func runSetProvider(ctx context.Context, w io.Writer, st *accounts.Store, root *
 		}
 		fmt.Fprintln(w, "provider test passed")
 	}
-	needsReembed, err := st.PutSettings(ctx, u.ID, in)
+	needsReembed, err := st.PutSettings(ctx, u.ID, in, nil)
 	if err != nil {
 		return err
 	}

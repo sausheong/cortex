@@ -36,7 +36,7 @@ func (l *countLLM) Summarize(context.Context, []string) (string, error) {
 func (e *env) setProvider(uid string) {
 	e.t.Helper()
 	s := accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "gpt-test", EmbedModel: "e", EmbedDims: 512}
-	if _, err := e.st.PutSettings(e.t.Context(), uid, s); err != nil {
+	if _, err := e.st.PutSettings(e.t.Context(), uid, s, nil); err != nil {
 		e.t.Fatal(err)
 	}
 }

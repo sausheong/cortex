@@ -439,7 +439,7 @@ func TestPostWithoutCSRFRejected(t *testing.T) {
 	if r, _ := e.post("/logout", url.Values{}); r.StatusCode != http.StatusForbidden {
 		t.Fatalf("logout without csrf: %d", r.StatusCode)
 	}
-	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID); !errors.Is(err, accounts.ErrNoSettings) {
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil); !errors.Is(err, accounts.ErrNoSettings) {
 		t.Fatal("settings saved without csrf")
 	}
 }
@@ -492,35 +492,35 @@ func TestPutSettingsPromotesWhenNothingToReembed(t *testing.T) {
 	// A user with no data changing model and dims.
 	a, _ := e.root.CreateUser(ctx, "ga", "a@x.test", "A", true)
 	s := accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
-	if need, err := e.st.PutSettings(ctx, a.ID, s); err != nil || need {
+	if need, err := e.st.PutSettings(ctx, a.ID, s, nil); err != nil || need {
 		t.Fatalf("first: %v %v", need, err)
 	}
 	s.EmbedModel, s.EmbedDims = "e2", 768
-	if need, err := e.st.PutSettings(ctx, a.ID, s); err != nil || need {
+	if need, err := e.st.PutSettings(ctx, a.ID, s, nil); err != nil || need {
 		t.Fatalf("no data: need=%v err=%v", need, err)
 	}
-	if act, _ := e.st.GetActiveEmbed(ctx, a.ID); act.EmbedModel != "e2" || act.EmbedDims != 768 {
+	if act, _ := e.st.GetActiveEmbed(ctx, a.ID, nil); act.EmbedModel != "e2" || act.EmbedDims != 768 {
 		t.Fatalf("active %+v", act)
 	}
 	// A user with data changing only the embed key.
 	b, _ := e.root.CreateUser(ctx, "gb", "b@x.test", "B", true)
 	s = accounts.Settings{BaseURL: "https://api.example.com/v1", APIKey: "k1", ChatModel: "m", EmbedModel: "e", EmbedDims: 512}
-	e.st.PutSettings(ctx, b.ID, s)
+	e.st.PutSettings(ctx, b.ID, s, nil)
 	e.insertEmbedding(b.ID)
 	s.EmbedAPIKey = "newkey-9999"
-	if need, err := e.st.PutSettings(ctx, b.ID, s); err != nil || need {
+	if need, err := e.st.PutSettings(ctx, b.ID, s, nil); err != nil || need {
 		t.Fatalf("key only: need=%v err=%v", need, err)
 	}
-	if act, _ := e.st.GetActiveEmbed(ctx, b.ID); act.EmbedAPIKey != "newkey-9999" {
+	if act, _ := e.st.GetActiveEmbed(ctx, b.ID, nil); act.EmbedAPIKey != "newkey-9999" {
 		t.Fatalf("key not swapped: %+v", act)
 	}
 	// A user with data changing the model keeps the old active embedder.
 	s.EmbedModel = "e3"
-	need, err := e.st.PutSettings(ctx, b.ID, s)
+	need, err := e.st.PutSettings(ctx, b.ID, s, nil)
 	if err != nil || !need {
 		t.Fatalf("model change: need=%v err=%v", need, err)
 	}
-	if act, _ := e.st.GetActiveEmbed(ctx, b.ID); act.EmbedModel != "e" {
+	if act, _ := e.st.GetActiveEmbed(ctx, b.ID, nil); act.EmbedModel != "e" {
 		t.Fatalf("active changed early: %+v", act)
 	}
 }
@@ -533,7 +533,7 @@ func TestSettingsProviderFailureSavesNothing(t *testing.T) {
 	if r.StatusCode != 400 || !strings.Contains(body, "provider rejected the key") {
 		t.Fatalf("%d %.300s", r.StatusCode, body)
 	}
-	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID); !errors.Is(err, accounts.ErrNoSettings) {
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil); !errors.Is(err, accounts.ErrNoSettings) {
 		t.Fatal("settings saved after failed test")
 	}
 	if len(e.enq) != 0 {
@@ -550,7 +550,7 @@ func TestSettingsRejectsPrivateURL(t *testing.T) {
 			t.Errorf("%s: %d", u, r.StatusCode)
 		}
 	}
-	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID); !errors.Is(err, accounts.ErrNoSettings) {
+	if _, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil); !errors.Is(err, accounts.ErrNoSettings) {
 		t.Fatal("settings saved")
 	}
 }
@@ -689,7 +689,7 @@ func TestSettingsShowsMaskedKey(t *testing.T) {
 	}
 	// A blank key on save keeps the stored one.
 	e.post("/settings", settingsForm(e.csrf(), "api_key", "", "chat_model", "m9"))
-	s, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID)
+	s, err := e.st.GetSettings(t.Context(), e.userBySub("g-alice").ID, nil)
 	if err != nil || s.APIKey != "sk-secret-3f9a" || s.ChatModel != "m9" {
 		t.Fatalf("%+v %v", s, err)
 	}

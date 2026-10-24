@@ -97,7 +97,7 @@ func (e *env) user(t *testing.T, sub string) string {
 	}
 	if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{
 		BaseURL: "https://api.example.com/v1", APIKey: "sk-secret-3f9a", ChatModel: "m", EmbedModel: "e", EmbedDims: 256,
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	return u.ID
@@ -324,7 +324,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 	}
 	uid := u.ID
 	s := accounts.Settings{BaseURL: es.URL + "/v1", APIKey: "sk-test", ChatModel: "chat", EmbedModel: "old", EmbedDims: 256}
-	if _, err := e.st.PutSettings(ctx, uid, s); err != nil {
+	if _, err := e.st.PutSettings(ctx, uid, s, nil); err != nil {
 		t.Fatal(err)
 	}
 	cx, err := e.st.ResolveUser(ctx, e.root, uid, "", nil)
@@ -334,7 +334,7 @@ func TestRecallDuringReEmbedUsesOldModel(t *testing.T) {
 	ids := seedMemories(t, cx, cx.Embedder(), 70)
 
 	s.EmbedModel, s.EmbedDims = "new", 384
-	needs, err := e.st.PutSettings(ctx, uid, s)
+	needs, err := e.st.PutSettings(ctx, uid, s, nil)
 	if err != nil || !needs {
 		t.Fatalf("PutSettings needsReembed=%v err=%v", needs, err)
 	}
@@ -413,7 +413,7 @@ func (w *wrapEmb) Dimensions() int { return w.dims }
 // mustProviders builds the embedder for the user's desired (new) settings.
 func mustProviders(t *testing.T, e *env, uid string) cortex.Embedder {
 	t.Helper()
-	s, err := e.st.GetSettings(t.Context(), uid)
+	s, err := e.st.GetSettings(t.Context(), uid, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,17 +697,17 @@ func TestReEmbedWithPromotesBuiltSettings(t *testing.T) {
 		other := built
 		other.EmbedModel = "model-c"
 		other.EmbedDims = 768
-		if _, err := e.st.PutSettings(ctx, uid, other); err != nil {
+		if _, err := e.st.PutSettings(ctx, uid, other, nil); err != nil {
 			t.Error(err)
 		}
 	}
-	if _, err := e.st.PutSettings(ctx, uid, built); err != nil {
+	if _, err := e.st.PutSettings(ctx, uid, built, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReEmbedWith(ctx, cx, e.st, newE, &built, nil); err != nil {
 		t.Fatal(err)
 	}
-	a, err := e.st.GetActiveEmbed(ctx, uid)
+	a, err := e.st.GetActiveEmbed(ctx, uid, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -108,7 +108,7 @@ func (e *muEnv) user(t *testing.T, name, providerURL string) (id, token string) 
 		t.Fatal(err)
 	}
 	if providerURL != "" {
-		if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: providerURL, APIKey: "sk-" + name, ChatModel: "m", EmbedModel: "e", EmbedDims: 512}); err != nil {
+		if _, err := e.st.PutSettings(t.Context(), u.ID, accounts.Settings{BaseURL: providerURL, APIKey: "sk-" + name, ChatModel: "m", EmbedModel: "e", EmbedDims: 512}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

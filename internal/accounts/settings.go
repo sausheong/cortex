@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Errors returned by the store.
@@ -186,6 +188,8 @@ type settingsRow struct {
 	provider, baseURL, keySealed, chatModel, embedModel string
 	dims                                                int
 	embedURL, embedKeySealed, activeSealed              string
+	enc                                                 bool
+	ct                                                  []byte
 	updatedAt                                           time.Time
 }
 
@@ -195,13 +199,13 @@ type queryer interface {
 
 func loadRow(ctx context.Context, q queryer, userID string, forUpdate bool) (*settingsRow, error) {
 	query := `SELECT provider, base_url, api_key_sealed, chat_model, embed_model, embed_dims,
-		embed_base_url, embed_key_sealed, active_embed_sealed, updated_at FROM user_settings WHERE user_id = $1`
+		embed_base_url, embed_key_sealed, active_embed_sealed, enc, settings_ct, updated_at FROM user_settings WHERE user_id = $1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
 	var r settingsRow
 	err := q.QueryRowContext(ctx, query, userID).Scan(&r.provider, &r.baseURL, &r.keySealed, &r.chatModel,
-		&r.embedModel, &r.dims, &r.embedURL, &r.embedKeySealed, &r.activeSealed, &r.updatedAt)
+		&r.embedModel, &r.dims, &r.embedURL, &r.embedKeySealed, &r.activeSealed, &r.enc, &r.ct, &r.updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoSettings
 	}
@@ -211,7 +215,89 @@ func loadRow(ctx context.Context, q queryer, userID string, forUpdate bool) (*se
 	return &r, nil
 }
 
-func (st *Store) rowSettings(r *settingsRow) (*Settings, error) {
+// activeEmbed is the active embedder: sealed in active_embed_sealed for
+// legacy rows, a field of the settings blob for encrypted rows.
+type activeEmbed struct {
+	URL   string `json:"url"`
+	Key   string `json:"key"`
+	Model string `json:"model"`
+	Dims  int    `json:"dims"`
+}
+
+// settingsBlob is everything of user_settings that settings_ct seals.
+type settingsBlob struct {
+	Provider     string       `json:"provider"`
+	BaseURL      string       `json:"base_url"`
+	APIKey       string       `json:"api_key"`
+	ChatModel    string       `json:"chat_model"`
+	EmbedModel   string       `json:"embed_model"`
+	EmbedBaseURL string       `json:"embed_base_url"`
+	EmbedAPIKey  string       `json:"embed_key"`
+	Active       *activeEmbed `json:"active_embed,omitempty"`
+}
+
+const settingsTable, settingsColumn = "user_settings", "settings"
+
+// decode returns the row's settings and active embedder (nil when none is
+// recorded). Encrypted rows need uk (model.ErrLocked otherwise); plaintext
+// rows (legacy, or a migrating user not yet converted) never do.
+func (st *Store) decode(userID string, r *settingsRow, uk *keys.UK) (*Settings, *activeEmbed, error) {
+	if r.enc {
+		if uk == nil {
+			return nil, nil, model.ErrLocked
+		}
+		plain, err := uk.Open(userID, settingsTable, userID, settingsColumn, r.ct)
+		if err != nil {
+			return nil, nil, fmt.Errorf("accounts: open settings: %w", err)
+		}
+		var b settingsBlob
+		if err := json.Unmarshal(plain, &b); err != nil {
+			return nil, nil, errors.New("accounts: bad settings")
+		}
+		return &Settings{Provider: b.Provider, BaseURL: b.BaseURL, APIKey: b.APIKey, ChatModel: b.ChatModel,
+			EmbedModel: b.EmbedModel, EmbedDims: r.dims, EmbedBaseURL: b.EmbedBaseURL, EmbedAPIKey: b.EmbedAPIKey,
+			UpdatedAt: r.updatedAt}, b.Active, nil
+	}
+	key, err := st.open(r.keySealed)
+	if err != nil {
+		return nil, nil, err
+	}
+	ekey, err := st.open(r.embedKeySealed)
+	if err != nil {
+		return nil, nil, err
+	}
+	set := &Settings{Provider: r.provider, BaseURL: r.baseURL, APIKey: key, ChatModel: r.chatModel,
+		EmbedModel: r.embedModel, EmbedDims: r.dims, EmbedBaseURL: r.embedURL, EmbedAPIKey: ekey,
+		UpdatedAt: r.updatedAt}
+	if r.activeSealed == "" {
+		return set, nil, nil
+	}
+	a, err := st.openActive(r.activeSealed)
+	if err != nil {
+		return nil, nil, err
+	}
+	return set, a, nil
+}
+
+// GetSettings returns the user's settings with keys decrypted, or ErrNoSettings.
+// uk is the user's key; nil for a legacy user. An encrypted row without it
+// gives model.ErrLocked.
+func (st *Store) GetSettings(ctx context.Context, userID string, uk *keys.UK) (*Settings, error) {
+	r, err := loadRow(ctx, st.DB, userID, false)
+	if err != nil {
+		return nil, err
+	}
+	s, _, err := st.decode(userID, r, uk)
+	if err != nil && r.enc {
+		return nil, err
+	}
+	if err != nil { // legacy row with an unreadable active embedder: settings still readable
+		return st.legacySettings(r)
+	}
+	return s, nil
+}
+
+func (st *Store) legacySettings(r *settingsRow) (*Settings, error) {
 	key, err := st.open(r.keySealed)
 	if err != nil {
 		return nil, err
@@ -225,29 +311,24 @@ func (st *Store) rowSettings(r *settingsRow) (*Settings, error) {
 		UpdatedAt: r.updatedAt}, nil
 }
 
-// GetSettings returns the user's settings with keys decrypted, or ErrNoSettings.
-func (st *Store) GetSettings(ctx context.Context, userID string) (*Settings, error) {
-	r, err := loadRow(ctx, st.DB, userID, false)
-	if err != nil {
-		return nil, err
-	}
-	return st.rowSettings(r)
+// HasSettings reports whether the user has saved settings, without needing a
+// key (an encrypted row counts as set up).
+func (st *Store) HasSettings(ctx context.Context, userID string) (bool, error) {
+	var n int
+	err := st.DB.QueryRowContext(ctx, `SELECT count(*) FROM user_settings WHERE user_id = $1`, userID).Scan(&n)
+	return n > 0, err
 }
 
-// activeEmbed is what is sealed in active_embed_sealed.
-type activeEmbed struct {
-	URL   string `json:"url"`
-	Key   string `json:"key"`
-	Model string `json:"model"`
-	Dims  int    `json:"dims"`
-}
-
-func (st *Store) sealActive(s Settings) (string, error) {
+func activeFor(s Settings) activeEmbed {
 	key := s.EmbedAPIKey
 	if key == "" && s.Provider != ProviderAnthropic {
 		key = s.APIKey
 	}
-	b, _ := json.Marshal(activeEmbed{URL: s.EffectiveEmbedURL(), Key: key, Model: s.EmbedModel, Dims: s.EmbedDims})
+	return activeEmbed{URL: s.EffectiveEmbedURL(), Key: key, Model: s.EmbedModel, Dims: s.EmbedDims}
+}
+
+func (st *Store) sealActive(s Settings) (string, error) {
+	b, _ := json.Marshal(activeFor(s))
 	return st.Sealer.Seal(string(b))
 }
 
@@ -263,11 +344,48 @@ func (st *Store) openActive(sealed string) (*activeEmbed, error) {
 	return &a, nil
 }
 
+// sealBlob seals s and the active embedder for an encrypted row.
+func sealBlob(userID string, uk *keys.UK, s Settings, active *activeEmbed) ([]byte, error) {
+	b, err := json.Marshal(settingsBlob{Provider: s.Provider, BaseURL: s.BaseURL, APIKey: s.APIKey,
+		ChatModel: s.ChatModel, EmbedModel: s.EmbedModel, EmbedBaseURL: s.EmbedBaseURL,
+		EmbedAPIKey: s.EmbedAPIKey, Active: active})
+	if err != nil {
+		return nil, err
+	}
+	return uk.Seal(userID, settingsTable, userID, settingsColumn, b)
+}
+
+// writeEncrypted stores everything under uk, blanks every plain column and
+// leaves only embed_dims (metadata) in the clear.
+func writeEncrypted(ctx context.Context, tx *sql.Tx, userID string, uk *keys.UK, s Settings, active *activeEmbed, now time.Time) error {
+	ct, err := sealBlob(userID, uk, s, active)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_settings (user_id, provider, base_url, api_key_sealed, chat_model,
+		embed_model, embed_dims, embed_base_url, embed_key_sealed, active_embed_sealed, enc, settings_ct, updated_at)
+		VALUES ($1,'','','','','',$2,'','','',TRUE,$3,$4)
+		ON CONFLICT (user_id) DO UPDATE SET provider='', base_url='', api_key_sealed='', chat_model='',
+		embed_model='', embed_dims=$2, embed_base_url='', embed_key_sealed='', active_embed_sealed='',
+		enc=TRUE, settings_ct=$3, updated_at=$4`, userID, s.EmbedDims, ct, now)
+	return err
+}
+
 // PutSettings validates and saves s. A blank key keeps the stored one. The
 // active embedder is promoted in the same transaction when nothing needs
 // re-embedding; otherwise needsReembed is true and it is left untouched.
-func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (needsReembed bool, err error) {
+// An encrypted or migrating user's settings are sealed under uk
+// (model.ErrLocked without it).
+func (st *Store) PutSettings(ctx context.Context, userID string, s Settings, uk *keys.UK) (needsReembed bool, err error) {
 	s = s.WithDefaults()
+	state, err := st.encState(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	encrypted := state != "none"
+	if encrypted && uk == nil {
+		return false, model.ErrLocked
+	}
 	tx, err := st.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -279,11 +397,19 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (ne
 	if err != nil && !first {
 		return false, err
 	}
-	var prev *Settings
+	var oldActive *activeEmbed
 	if !first {
-		if prev, err = st.rowSettings(old); err != nil {
-			return false, err
+		prev, act, derr := st.decode(userID, old, uk)
+		if derr != nil && old.enc {
+			return false, derr
 		}
+		if derr != nil { // legacy row, unreadable active embedder: treated as none
+			if prev, derr = st.legacySettings(old); derr != nil {
+				return false, derr
+			}
+			act = nil
+		}
+		oldActive = act
 		if s.APIKey == "" {
 			s.APIKey = prev.APIKey
 		}
@@ -294,22 +420,13 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (ne
 	if err := s.Validate(st.AllowPrivate); err != nil {
 		return false, err
 	}
-	keySealed, err := st.seal(s.APIKey)
-	if err != nil {
-		return false, err
-	}
-	embKeySealed, err := st.seal(s.EmbedAPIKey)
-	if err != nil {
-		return false, err
-	}
 
 	promote := first
 	if !first {
-		active, aerr := st.openActive(old.activeSealed)
 		switch {
-		case old.activeSealed == "" || aerr != nil:
+		case oldActive == nil:
 			promote = true
-		case active.Model == s.EmbedModel && active.Dims == s.EmbedDims && active.URL == s.EffectiveEmbedURL():
+		case oldActive.Model == s.EmbedModel && oldActive.Dims == s.EmbedDims && oldActive.URL == s.EffectiveEmbedURL():
 			promote = true
 		default:
 			var n int
@@ -320,6 +437,28 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (ne
 		}
 	}
 	now := st.now()
+	if encrypted {
+		active := oldActive
+		if promote {
+			a := activeFor(s)
+			active = &a
+		}
+		if err := writeEncrypted(ctx, tx, userID, uk, s, active, now); err != nil {
+			return false, fmt.Errorf("accounts: save settings: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return !promote, nil
+	}
+	keySealed, err := st.seal(s.APIKey)
+	if err != nil {
+		return false, err
+	}
+	embKeySealed, err := st.seal(s.EmbedAPIKey)
+	if err != nil {
+		return false, err
+	}
 	if first {
 		_, err = tx.ExecContext(ctx, `INSERT INTO user_settings (user_id, provider, base_url, api_key_sealed, chat_model,
 			embed_model, embed_dims, embed_base_url, embed_key_sealed, updated_at)
@@ -334,7 +473,7 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (ne
 		return false, fmt.Errorf("accounts: save settings: %w", err)
 	}
 	if promote {
-		if err := st.PromoteActiveEmbedTx(ctx, tx, userID); err != nil {
+		if err := st.PromoteActiveEmbedTx(ctx, tx, userID, uk); err != nil {
 			return false, err
 		}
 	}
@@ -346,21 +485,43 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings) (ne
 
 // PromoteActiveEmbedTx makes the user's desired embedder settings the
 // active ones.
-func (st *Store) PromoteActiveEmbedTx(ctx context.Context, tx *sql.Tx, userID string) error {
+func (st *Store) PromoteActiveEmbedTx(ctx context.Context, tx *sql.Tx, userID string, uk *keys.UK) error {
 	r, err := loadRow(ctx, tx, userID, true)
 	if err != nil {
 		return err
 	}
-	s, err := st.rowSettings(r)
+	var s *Settings
+	if r.enc {
+		s, _, err = st.decode(userID, r, uk)
+	} else {
+		s, err = st.legacySettings(r)
+	}
 	if err != nil {
 		return err
 	}
-	return st.PromoteActiveEmbedSettingsTx(ctx, tx, userID, *s)
+	return st.PromoteActiveEmbedSettingsTx(ctx, tx, userID, *s, uk)
 }
 
 // PromoteActiveEmbedSettingsTx makes exactly s the active embedder settings,
 // regardless of what the user's desired settings are now.
-func (st *Store) PromoteActiveEmbedSettingsTx(ctx context.Context, tx *sql.Tx, userID string, s Settings) error {
+func (st *Store) PromoteActiveEmbedSettingsTx(ctx context.Context, tx *sql.Tx, userID string, s Settings, uk *keys.UK) error {
+	r, err := loadRow(ctx, tx, userID, true)
+	if err != nil {
+		return err
+	}
+	if r.enc {
+		cur, _, err := st.decode(userID, r, uk)
+		if err != nil {
+			return err
+		}
+		a := activeFor(s)
+		ct, err := sealBlob(userID, uk, *cur, &a)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE user_settings SET settings_ct = $2 WHERE user_id = $1`, userID, ct)
+		return err
+	}
 	sealed, err := st.sealActive(s)
 	if err != nil {
 		return err
@@ -372,26 +533,36 @@ func (st *Store) PromoteActiveEmbedSettingsTx(ctx context.Context, tx *sql.Tx, u
 // GetActiveEmbed returns the embedder settings currently in use (the stored
 // ones until a re-embed flips). The result is usable as the embed argument
 // of Providers.
-func (st *Store) GetActiveEmbed(ctx context.Context, userID string) (*Settings, error) {
+func (st *Store) GetActiveEmbed(ctx context.Context, userID string, uk *keys.UK) (*Settings, error) {
 	r, err := loadRow(ctx, st.DB, userID, false)
 	if err != nil {
 		return nil, err
 	}
-	if r.activeSealed == "" {
-		s, err := st.rowSettings(r)
+	if !r.enc && r.activeSealed != "" {
+		a, err := st.openActive(r.activeSealed)
 		if err != nil {
 			return nil, err
 		}
+		return &Settings{Provider: ProviderOpenAI, BaseURL: a.URL, APIKey: a.Key, EmbedModel: a.Model, EmbedDims: a.Dims,
+			EmbedBaseURL: a.URL, EmbedAPIKey: a.Key, UpdatedAt: r.updatedAt}, nil
+	}
+	var s *Settings
+	var a *activeEmbed
+	if r.enc {
+		s, a, err = st.decode(userID, r, uk)
+	} else {
+		s, err = st.legacySettings(r)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
 		key := s.EmbedAPIKey
 		if key == "" && s.Provider != ProviderAnthropic {
 			key = s.APIKey
 		}
 		return &Settings{Provider: ProviderOpenAI, BaseURL: s.EffectiveEmbedURL(), APIKey: key, EmbedModel: s.EmbedModel,
 			EmbedDims: s.EmbedDims, EmbedBaseURL: s.EffectiveEmbedURL(), EmbedAPIKey: key, UpdatedAt: s.UpdatedAt}, nil
-	}
-	a, err := st.openActive(r.activeSealed)
-	if err != nil {
-		return nil, err
 	}
 	return &Settings{Provider: ProviderOpenAI, BaseURL: a.URL, APIKey: a.Key, EmbedModel: a.Model, EmbedDims: a.Dims,
 		EmbedBaseURL: a.URL, EmbedAPIKey: a.Key, UpdatedAt: r.updatedAt}, nil

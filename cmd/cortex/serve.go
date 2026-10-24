@@ -87,7 +87,7 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		case "index":
 			return jobs.IndexJob(ctx, root, st, j.UserID)
 		case "reembed":
-			set, err := st.GetSettings(ctx, j.UserID)
+			set, err := st.GetSettings(ctx, j.UserID, j.Key)
 			if err != nil {
 				return err
 			}
@@ -95,7 +95,16 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 			if err != nil {
 				return err
 			}
-			return jobs.ReEmbedWith(ctx, root.ForUser(j.UserID), st, emb, set, func(done, total int) { pool.Progress(ctx, j.ID, done, total) })
+			cx := root.ForUser(j.UserID)
+			if j.Key != nil {
+				state, serr := st.EncState(ctx, j.UserID)
+				if serr != nil {
+					return serr
+				}
+				cx = cx.WithKey(j.Key, state)
+				defer cx.Release()
+			}
+			return jobs.ReEmbedWith(ctx, cx, st, emb, set, func(done, total int) { pool.Progress(ctx, j.ID, done, total) })
 		default:
 			return fmt.Errorf("unknown job kind %q", j.Kind)
 		}

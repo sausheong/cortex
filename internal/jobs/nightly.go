@@ -106,7 +106,7 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 	if deleted {
 		return errSkipped
 	}
-	if _, err := st.GetSettings(ctx, userID); errors.Is(err, accounts.ErrNoSettings) {
+	if ok, err := st.HasSettings(ctx, userID); err == nil && !ok {
 		return errSkipped
 	}
 	resolve := o.Resolve
@@ -178,11 +178,11 @@ func (o *NightlyOptions) maybeEnqueueReembed(ctx context.Context, st *accounts.S
 	if o.Enqueue == nil {
 		return
 	}
-	want, err := st.GetSettings(ctx, userID)
+	want, err := st.GetSettings(ctx, userID, nil) // a locked encrypted user is skipped
 	if err != nil {
 		return
 	}
-	act, err := st.GetActiveEmbed(ctx, userID)
+	act, err := st.GetActiveEmbed(ctx, userID, nil)
 	if err != nil {
 		return
 	}

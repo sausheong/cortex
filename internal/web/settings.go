@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 )
 
 // jobView is a background job as shown on the settings page.
@@ -69,15 +70,15 @@ func (s *server) latestReembed(ctx context.Context, userID string) (*jobView, er
 	return &j, nil
 }
 
-func (s *server) embedPending(ctx context.Context, userID string) (bool, error) {
-	cur, err := s.st.GetSettings(ctx, userID)
+func (s *server) embedPending(ctx context.Context, userID string, uk *keys.UK) (bool, error) {
+	cur, err := s.st.GetSettings(ctx, userID, uk)
 	if errors.Is(err, accounts.ErrNoSettings) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	act, err := s.st.GetActiveEmbed(ctx, userID)
+	act, err := s.st.GetActiveEmbed(ctx, userID, uk)
 	if err != nil {
 		return false, err
 	}
@@ -91,7 +92,7 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.ErrField = field[0]
 	}
 	if cur == nil {
-		if st, err := s.st.GetSettings(ctx, u.UserID); err == nil {
+		if st, err := s.st.GetSettings(ctx, u.UserID, u.Key); err == nil {
 			cur = st
 		} else if !errors.Is(err, accounts.ErrNoSettings) {
 			s.cfg.Logger.Error("settings", "err", err)
@@ -117,7 +118,7 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 	if err := s.st.DB.QueryRowContext(ctx, `SELECT last_maintenance_error FROM users WHERE id = $1`, u.UserID).Scan(&me); err == nil {
 		v.MaintenanceError = me.String
 	}
-	if v.Pending, err = s.embedPending(ctx, u.UserID); err != nil {
+	if v.Pending, err = s.embedPending(ctx, u.UserID, u.Key); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -146,7 +147,7 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		EmbedAPIKey:  strings.TrimSpace(r.PostFormValue("embed_api_key")),
 	}.WithDefaults()
 
-	prev, err := s.st.GetSettings(ctx, u.UserID)
+	prev, err := s.st.GetSettings(ctx, u.UserID, u.Key)
 	first := errors.Is(err, accounts.ErrNoSettings)
 	if err != nil && !first {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -169,7 +170,7 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false)
 		return
 	}
-	needsReembed, err := s.st.PutSettings(ctx, u.UserID, in)
+	needsReembed, err := s.st.PutSettings(ctx, u.UserID, in, u.Key)
 	if err != nil {
 		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false)
 		return
@@ -204,7 +205,7 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 
 func (s *server) settingsReembed(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
-	pending, err := s.embedPending(ctx, u.UserID)
+	pending, err := s.embedPending(ctx, u.UserID, u.Key)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

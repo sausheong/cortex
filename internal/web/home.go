@@ -15,6 +15,8 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // Home reads only stored state: the cached profile, cached usage, connection
@@ -135,11 +137,12 @@ func (s *server) homeVisitStamp(w http.ResponseWriter, r *http.Request, userID s
 }
 
 func (s *server) home(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.sessionFor(r)
+	u, ok := s.lookup(r, true)
 	if !ok {
 		s.render(w, r, http.StatusOK, "signin", nil)
 		return
 	}
+	defer u.Key.Zero()
 	ctx := r.Context()
 	now := s.now()
 	prev := s.homeVisitStamp(w, r, u.UserID, now, r.Method == http.MethodGet)
@@ -150,7 +153,7 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	v.Profile = s.homeProfile(ctx, cx)
 	v.New = s.homeNew(ctx, cx, conns, connErr, prev, now)
 	v.Assistants = s.homeAssistants(ctx, cx, conns, connErr, now)
-	v.Health = s.homeHealth(ctx, cx, u.UserID, now)
+	v.Health = s.homeHealth(ctx, cx, u.UserID, u.Key, now)
 	v.Strip = homeStrip(v)
 	s.render(w, r, http.StatusOK, "home", v)
 }
@@ -370,7 +373,7 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%.2f GB", f/k/k/k)
 }
 
-func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID string, now time.Time) homeHealth {
+func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID string, uk *keys.UK, now time.Time) homeHealth {
 	var h homeHealth
 	fail := func(what string, err error) { s.cfg.Logger.Error("home "+what, "err", err); h.Err = true }
 
@@ -402,9 +405,11 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 	}
 
 	// Provider: stored settings only, no test call.
-	switch set, err := s.st.GetSettings(ctx, userID); {
+	switch set, err := s.st.GetSettings(ctx, userID, uk); {
 	case errors.Is(err, accounts.ErrNoSettings):
 		h.ProviderText = "Not set up yet."
+	case errors.Is(err, model.ErrLocked):
+		h.ProviderText = "Unlock to see your provider."
 	case err != nil:
 		fail("provider", err)
 	case set.APIKey == "":
