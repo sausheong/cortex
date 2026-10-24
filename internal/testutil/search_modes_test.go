@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,8 +34,9 @@ func TestMemorySearchOrderEqualsLegacy(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		for _, s := range corpus {
-			if err := c.PutMemory(ctx, &cortex.Memory{Content: s, Source: "t"}); err != nil {
+		for i, s := range corpus {
+			// Fixed ids so the id tie-break is identical in both arms.
+			if err := c.PutMemory(ctx, &cortex.Memory{ID: fmt.Sprintf("mem-%02d", i), Content: s, Source: "t"}); err != nil {
 				t.Fatal(err)
 			}
 			if err := c.PutChunk(ctx, &cortex.Chunk{Content: s}); err != nil {

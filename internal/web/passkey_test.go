@@ -271,6 +271,11 @@ func TestLockedSessionShowsUnlockPage(t *testing.T) {
 	if resp.StatusCode != http.StatusLocked {
 		t.Fatalf("POST on a locked session: %d, want 423", resp.StatusCode)
 	}
+	// A locked settings save is refused and writes nothing.
+	resp, _ = p.e.post("/settings", url.Values{"csrf": {p.csrf}, "provider": {"openai"}, "api_key": {"sk-locked"}})
+	if resp.StatusCode != http.StatusLocked {
+		t.Fatalf("POST /settings on a locked session: %d, want 423", resp.StatusCode)
+	}
 	// Account and sign-out stay reachable.
 	if r, _ := p.e.get("/account"); r.StatusCode != 200 {
 		t.Fatalf("/account: %d", r.StatusCode)
