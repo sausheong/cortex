@@ -20,6 +20,13 @@ func TestCanonicalEntityType(t *testing.T) {
 		{"countrys", TypePlace, true},
 		{"loyalty_programs", TypeProduct, true},
 		{"spaceship", TypeConcept, false},
+		{"AI coding product", TypeProduct, true},
+		{"software project", TypeProject, true},
+		{"researcher group", TypeGroup, true},
+		{"Software Frameworks", TypeProduct, true},
+		{"System", TypeProduct, true},
+		{"title_suggestion", TypeDocument, true},
+		{"cache directory", TypeConcept, false},
 	}
 	for _, c := range cases {
 		got, known := CanonicalEntityType(c.in)

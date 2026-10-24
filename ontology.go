@@ -48,10 +48,14 @@ var entityTypeSynonyms = map[string]string{
 	"location": TypePlace, "city": TypePlace, "country": TypePlace, "region": TypePlace, "address": TypePlace,
 	"venue": TypePlace, "building": TypePlace, "state": TypePlace, "geo": TypePlace,
 	"initiative": TypeProject, "programme": TypeProject, "program": TypeProject, "workstream": TypeProject,
+	"research": TypeProject, "study": TypeProject,
 	"software": TypeProduct, "application": TypeProduct, "app": TypeProduct, "platform": TypeProduct, "tool": TypeProduct,
 	"technology": TypeProduct, "service": TypeProduct, "model": TypeProduct, "feature": TypeProduct, "device": TypeProduct,
 	"subscription_plan": TypeProduct, "plan": TypeProduct, "financial_product": TypeProduct, "payment_card": TypeProduct,
 	"card": TypeProduct, "loyalty_program": TypeProduct, "fund": TypeProduct, "library": TypeProduct, "framework": TypeProduct,
+	"system": TypeProduct, "toolkit": TypeProduct, "operating_system": TypeProduct, "hardware": TypeProduct,
+	"virtual_machine": TypeProduct, "runtime": TypeProduct, "agent": TypeProduct, "bot": TypeProduct,
+	"assistant": TypeProduct, "api": TypeProduct, "integration": TypeProduct, "component": TypeProduct,
 	"meeting": TypeEvent, "conference": TypeEvent, "incident": TypeEvent, "holiday": TypeEvent, "appointment": TypeEvent,
 	"date": TypeEvent, "deadline": TypeEvent, "trip": TypeEvent, "financial_transaction": TypeEvent, "transaction": TypeEvent,
 	"team": TypeGroup, "group_chat": TypeGroup, "whatsapp_group": TypeGroup, "chat": TypeGroup, "chat_group": TypeGroup,
@@ -59,6 +63,8 @@ var entityTypeSynonyms = map[string]string{
 	"file": TypeDocument, "page": TypeDocument, "email": TypeDocument, "article": TypeDocument, "publication": TypeDocument,
 	"podcast": TypeDocument, "video": TypeDocument, "report": TypeDocument, "book": TypeDocument, "url": TypeDocument,
 	"resource": TypeDocument, "source": TypeDocument, "paper": TypeDocument, "post": TypeDocument, "message": TypeDocument,
+	"title": TypeDocument, "title_suggestion": TypeDocument, "creative_work": TypeDocument, "written_work": TypeDocument,
+	"column": TypeDocument, "draft": TypeDocument, "newsletter": TypeDocument, "presentation": TypeDocument,
 	"email_address": TypeAccount, "identifier": TypeAccount, "username": TypeAccount, "phone_number": TypeAccount,
 	"handle": TypeAccount, "user_account": TypeAccount, "education_credential": TypeAccount,
 	"topic": TypeConcept, "idea": TypeConcept, "skill": TypeConcept, "role": TypeConcept, "field": TypeConcept,
@@ -78,12 +84,33 @@ func CanonicalEntityType(label string) (canonical string, known bool) {
 	if c, ok := entityTypeSynonyms[t]; ok {
 		return c, true
 	}
-	if strings.HasSuffix(t, "s") {
-		if c, ok := entityTypeSynonyms[strings.TrimSuffix(t, "s")]; ok {
+	if c, ok := lookupEntityType(strings.TrimSuffix(t, "s")); ok {
+		return c, true
+	}
+	// A compound label is usually a kind of its last word: "ai coding
+	// product", "software project", "researcher group".
+	if i := strings.LastIndexByte(t, '_'); i >= 0 {
+		head := t[i+1:]
+		if c, ok := lookupEntityType(head); ok {
+			return c, true
+		}
+		if c, ok := lookupEntityType(strings.TrimSuffix(head, "s")); ok {
 			return c, true
 		}
 	}
 	return TypeConcept, false
+}
+
+// lookupEntityType matches a normalised label against the curated types and
+// their synonyms.
+func lookupEntityType(t string) (string, bool) {
+	for _, et := range EntityTypes {
+		if et.Type == t {
+			return t, true
+		}
+	}
+	c, ok := entityTypeSynonyms[t]
+	return c, ok
 }
 
 // The curated relationship verbs. Each reads source-verb-target.
@@ -210,6 +237,16 @@ var relSynonyms = map[string]struct {
 	"discusses": {RelAbout, false}, "mentions": {RelAbout, false}, "concerns": {RelAbout, false},
 	"related_to_topic": {RelAbout, false}, "covers": {RelAbout, false}, "describes": {RelAbout, false},
 	"associated_with": {RelRelatedTo, false}, "linked_to": {RelRelatedTo, false}, "relates_to": {RelRelatedTo, false},
+	"covers_topic": {RelAbout, false}, "references": {RelAbout, false},
+	"refers_to": {RelAbout, false}, "cites": {RelAbout, false}, "summarizes": {RelAbout, false},
+	"develops": {RelCreated, false}, "maintains": {RelCreated, false}, "builds": {RelCreated, false},
+	"sent_email_to": {RelCommunicatedWith, false}, "meets_with": {RelCommunicatedWith, false},
+	"emails": {RelCommunicatedWith, false}, "messages": {RelCommunicatedWith, false}, "spoke_with": {RelCommunicatedWith, false},
+	"holds_stake_in": {RelInvestedIn, false}, "shareholder_of": {RelInvestedIn, false},
+	"partner_agency": {RelPartneredWith, false}, "partner_of_org": {RelPartneredWith, false},
+	"invited_to": {RelParticipatedIn, false}, "registered_for": {RelParticipatedIn, false},
+	"involves": {RelParticipatedIn, true}, "involves_agency": {RelParticipatedIn, true}, "features": {RelParticipatedIn, true},
+	"integrates_with": {RelUses, false}, "depends_on": {RelUses, false}, "relies_on": {RelUses, false},
 }
 
 // relSpecFor returns the curated spec for verb, if it is one.
@@ -257,16 +294,17 @@ func CanonicalRelation(rawVerb, fromType, toType string) (verb string, swap bool
 }
 
 // typeFits reports whether t satisfies allowed (nil allows anything; an
-// uncurated t is not held against the spec).
+// uncurated t, or concept, is not held against the spec).
 func typeFits(allowed []string, t string) bool {
 	if allowed == nil {
 		return true
 	}
-	if _, known := CanonicalEntityType(t); !known {
-		return true
+	c, known := CanonicalEntityType(t)
+	if !known || c == TypeConcept {
+		return true // concept is the catch-all; it cannot veto a verb
 	}
 	for _, a := range allowed {
-		if a == t {
+		if a == c {
 			return true
 		}
 	}
