@@ -1,364 +1,303 @@
 # Cortex
 
-A personal knowledge graph and memory system in Go. Cortex stores everything you know — people, organizations, concepts, events, documents — as a unified graph with typed relationships. It extracts entities and facts from your notes and conversations, then lets any AI agent query the graph via MCP, HTTP, or the Go API.
+A personal knowledge graph and memory system in Go. Cortex keeps what you know — people, organizations, projects, events, documents, and the facts about them — as one graph with typed relationships. It extracts entities and facts from notes, conversations and documents, resolves them to the things you already know about, and lets any AI agent read and write the graph over MCP, the CLI or the Go API.
 
-Think of it as a digital twin that compounds knowledge over time. Agents read from cortex before responding and write back after every conversation. The more you use it, the smarter it gets.
+Agents recall from cortex before answering and remember into it afterwards, so knowledge compounds: the next time a person comes up, the agent already has context.
 
-Inspired by [GBrain](https://github.com/garrytan/gbrain) (operational model), [Cognee](https://github.com/topoteretes/cognee) (graph structure), and [mem0](https://github.com/mem0ai/mem0) (memory pipeline).
+Inspired by [GBrain](https://github.com/garrytan/gbrain) (operational model), [Cognee](https://github.com/topoteretes/cognee) (graph structure), [mem0](https://github.com/mem0ai/mem0) (memory pipeline) and Atlassian's Teamwork Graph (curated vocabulary, stable identity, graph signals in ranking).
 
-## How It Works
+## How it works
 
 ```
-Ingest
-  Signal arrives (note, conversation)
-    -> Hybrid extraction (deterministic + LLM)
-       -> Entities: Alice (person), Stripe (org), distributed systems (concept)
-       -> Relationships: Alice --works_at--> Stripe
-       -> Memories: "Alice is joining Stripe next month" (confidence: 0.9)
-    -> Store in unified graph (Postgres + pgvector)
-    -> Embed for semantic search
+Remember  "Had coffee with Carol Seah from WYNNES; she's moving to Singapore"
+  -> extract (deterministic + LLM, long text in chunks)
+       entities       Carol Seah (person), WYNNES (organization), Singapore (place)
+       relationships  Carol Seah works_at WYNNES, Carol Seah lives_in Singapore
+       memories       "Carol Seah is moving to Singapore"  about [Carol Seah]
+  -> resolve each entity to one you already know (alias, owner, name, fuzzy match, LLM tie-break)
+  -> map types and verbs onto the curated vocabulary
+  -> store; lives_in Singapore closes Carol's previous lives_in edge
+  -> embed chunks and memories for semantic search
 
-Query
-  ("What do I know about Alice?")
-    -> LLM decomposes into sub-queries
-    -> Parallel search: memories + keywords + vectors + graph traversal
-    -> Reciprocal Rank Fusion merges results
-    -> Ranked results with provenance + confidence
+Recall  "what's Carol up to?"
+  -> seed from the entities the query names (Carol Seah)
+  -> search in parallel: memories (keyword + vector), chunks (keyword + vector),
+     the seeds' own memories, optional graph traversal
+  -> reciprocal rank fusion, weighted by confidence, graph proximity and past use
+  -> ranked results with provenance, plus a strength score and an abstain hint
 
-Maintain
-  Project   -> cortex export --vault ./vault   (browsable Obsidian-compatible projection)
-  Tidy      -> cortex lint                     (orphans, near-duplicates, dead sources)
-  Dedup     -> cortex merge <keep-id> <drop-id>   (atomic dedup with provenance)
-  Reconcile -> cortex reconcile               (soft-invalidate memories superseded by newer facts)
-  Brief     -> cortex init-schema              (drops CORTEX.md agent contract for AI clients)
+Maintain (nightly)
+  reconcile -> relate -> decay -> expire -> refresh profiles, then purge old deletions
 ```
 
-Every cycle through ingest/query adds knowledge. The agent enriches a person page after a meeting. Next time that person comes up, the agent already has context. The maintain loop (export, lint, merge, reconcile) is what keeps the graph healthy as it grows — run periodically, ideally by an agent reading the lint report and acting on its suggestions. You never start from zero.
+## Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Hosted multi-user service](#hosted-multi-user-service)
+- [Knowledge model](#knowledge-model)
+- [Ingestion](#ingestion)
+- [Recall](#recall)
+- [Keeping the graph healthy](#keeping-the-graph-healthy)
+- [CLI reference](#cli-reference)
+- [MCP server](#mcp-server)
+- [Go library](#go-library)
+- [Providers and configuration](#providers-and-configuration)
+- [Storage](#storage)
+- [Development](#development)
 
 ## Features
 
-- **Unified knowledge graph** — people, organizations, concepts, events, documents as first-class nodes with typed relationships
-- **Remember / Recall / Forget** — simple high-level API inspired by mem0
-- **Hybrid extraction** — deterministic parsing (frontmatter, wikilinks) + LLM-powered entity/relationship discovery
-- **Confidence scores** — every extracted entity, relationship, and memory carries a 0–1 confidence value the LLM assigns at ingest. Filter results with `--min-confidence`; lower-confidence claims show inline in vault pages and recall output
-- **Static memories** — the LLM extractor flags durable identity facts and stable preferences (role, hometown, "prefers dark mode") as `static` at ingest, distinct from episodic, time-bound facts ("exam tomorrow"). Static memories are exempt from confidence decay and always populate a profile's `static[]` section regardless of age
-- **Expiring memories** — time-bound facts (appointments, deadlines, "this week") can carry a `forget_after` expiry the LLM extractor resolves at ingest, resolving relative phrases like "tomorrow" against today's date. The `cortex expire` pass (also run by `cortex maintain`) soft-retires memories past their `forget_after` — hidden from default recall, still reachable via `include_invalid`/`as_of`. A `forget_after` wins over `static`: a memory marked both still expires
-- **Multi-strategy search** — keyword (FTS5), vector (cosine similarity), graph traversal, and memory lookup merged via reciprocal rank fusion
-- **Calibrated abstention** — `RecallWithStrength` returns a relevance `Strength` and an `Abstain` hint so an agent can say "I don't know that" instead of fabricating from a weak match. The signal is the query↔result cosine, with a threshold calibrated on a real graph
-- **Two ingestion paths** — `remember` (ad-hoc text) and `sync` (directory of text files: `.md`, `.csv`, `.yaml`, `.json`, `.txt`, `.tsv`, `.xml`, `.toml`). File format is auto-detected and the LLM extracts knowledge accordingly
-- **Obsidian-compatible vault export** — `cortex export` projects the graph as a browsable markdown vault with frontmatter, wikilinks, and backlinks. Incremental change detection via a hidden manifest
-- **Agent contract** — `cortex init-schema` drops a `CORTEX.md` into a project that tells any LLM-based agent how to use cortex as the knowledge layer (when to recall, when to remember, what not to store)
-- **Operational primitives** — `cortex merge` atomically combines duplicate entities (re-targets every reference, dedups, records provenance). `cortex lint` scans the graph for orphans, near-duplicates, and other cleanup candidates as a markdown report. `cortex reconcile` detects newer memories that supersede older contradicting ones and soft-invalidates the stale ones (dry-run by default)
-- **Entity profiles** — `cortex profile` returns a cached two-part digest of an entity's memories: a `static` half (stable identity and preferences) and a `dynamic` half (recent context). Distilled into bullets by the LLM when configured, raw memory texts otherwise. Rebuilt when stale (24h TTL or a change in memory count). The owner always has a profile; other entities are opt-in via `--track`
-- **Two interfaces** — CLI and MCP server (stdio or streamable HTTP)
-- **Postgres storage** — one Postgres 17 + pgvector database (HNSW vector indexes, `tsvector` keyword search); a single server can be shared by the CLI and the MCP server. See [docs/deploy.md](docs/deploy.md)
-- **Pluggable providers** — swap OpenAI for Anthropic, Ollama, or any custom implementation
-
-## Table of Contents
-
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Setup](#setup)
-- [CLI Reference](#cli-reference)
-- [MCP Server](#using-as-an-mcp-server)
-- [Go Library](#using-as-a-go-library)
-- [Architecture](#architecture)
-- [API Reference](#core-api-reference)
-- [Knowledge Model](#knowledge-model)
-- [Extraction Pipeline](#extraction-pipeline)
-- [Search Strategy](#search-strategy)
-- [Connectors](#connectors)
-- [Storage](#storage)
-- [Pluggable Providers](#pluggable-providers)
-- [Testing](#running-tests)
+- **One graph** of entities, relationships, memories (distilled facts) and chunks (raw text), in Postgres 17 + pgvector.
+- **Curated vocabulary** — ten entity types and 21 directional relationship verbs. Whatever an extractor invents is mapped onto them, keeping the original label, so the graph stays queryable.
+- **Stable identity** — aliases (other names, emails, phones, handles) and a resolution cascade that reuses known entities instead of creating near-duplicates, anchored on the owner.
+- **Per-memory links** — each memory is linked to the entities it is about, not to everything mentioned alongside it.
+- **Graph-aware recall** — entities named in a query seed the search; results near them rank higher. Multi-strategy retrieval merged by reciprocal rank fusion, with calibrated abstention.
+- **Time** — memories and relationships carry validity windows; recall can read the graph as it was (`as_of`) or include what is no longer true.
+- **Self-maintaining** — reconcile contradictions, relate memories, decay what nobody uses, expire time-bound facts, refresh profiles, all reversible.
+- **Curated graph questions** — `who_is`, `connections`, `timeline`, `what_changed` over MCP.
+- **Undoable** — merges, forgets, compactions and the vocabulary normalisation are recorded as batches you can restore for 30 days.
+- **Interfaces** — CLI, MCP (stdio or HTTP), a multi-user web app with Google sign-in and OAuth, and the Go library.
+- **Pluggable providers** — OpenAI and any OpenAI-compatible API (Ollama, vLLM, …), Anthropic, or your own.
 
 ---
 
-## Prerequisites
+## Quick start
 
-- **Go 1.22+** (uses `net/http` method-based routing from Go 1.22)
-- **OpenAI API key** (optional but recommended) — enables LLM extraction and semantic search
-
-Without an OpenAI key, cortex still works but is limited to deterministic extraction (YAML frontmatter + wikilinks) and keyword search only. No semantic search, no entity extraction from prose.
-
-## Installation
-
-### From Source
+Single-user, local. Requires **Go 1.25+**, a **Postgres 17 + pgvector ≥ 0.8** database, and optionally an OpenAI (or compatible) API key.
 
 ```bash
-git clone https://github.com/sausheong/cortex.git
-cd cortex
+git clone https://github.com/sausheong/cortex.git && cd cortex
+make build                       # bin/cortex; `sudo make install` copies it to /usr/local/bin
 
-# Build the cortex binary to bin/
-make build          # bin/cortex
+export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@localhost:5432/cortex'
+export OPENAI_API_KEY=sk-...     # optional: enables LLM extraction and semantic search
 
-# Optional: install to /usr/local/bin
-sudo make install
-```
-
-### As a Go Module
-
-```bash
-go get github.com/sausheong/cortex
-```
-
-This gives you the core library, all connectors, and all provider implementations as importable packages.
-
----
-
-## Setup
-
-### Step 1: Initialize the Brain
-
-```bash
-cortex init
-```
-
-This connects to the Postgres database named by `CORTEX_DATABASE_URL` (or `--db <dsn>`), applies the schema migrations, and creates the owner entity. Set it first, for example `export CORTEX_DATABASE_URL='postgres://cortex:PASSWORD@host:5432/cortex'`. To provision a server (droplet or Raspberry Pi), see [docs/deploy.md](docs/deploy.md); Postgres is never exposed publicly (the hosted setup reaches it only through cortex over HTTPS, see below). To bring over a v0.4 SQLite brain, run `cortex import-sqlite <brain.db>`.
-
-During initialization, cortex will prompt for your identity:
-- **Name** (required)
-- **Nickname** (optional)
-- **Email addresses** (zero or more)
-
-This stores you as the owner entity in the graph so that queries like "who am I" work out of the box. You can update your identity later with `cortex config`.
-
-### Step 2: Set Your OpenAI API Key (Recommended)
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-Add this to your `~/.zshrc` or `~/.bashrc` to persist across sessions.
-
-With an API key, cortex will:
-- Use **GPT-5.4-mini** to extract entities, relationships, and distilled facts from any text
-- Use **text-embedding-3-small** to generate 1536-dimensional vector embeddings for semantic search
-- Use LLM-powered **query decomposition** to break natural language queries into multi-strategy sub-queries
-
-Without it, cortex falls back to deterministic extraction only (YAML frontmatter + wikilinks) and keyword search.
-
-### Step 3: Ingest Your Data
-
-**Sync your files:**
-```bash
-cortex sync ~/notes
-```
-
-Cortex will recursively find all supported text files (`.md`, `.csv`, `.yaml`, `.json`, `.txt`, etc.), auto-detect the format, parse frontmatter and wikilinks from markdown, and run LLM extraction on all content (if API key is set). Incremental — only re-processes files that changed since the last sync.
-
-**Remember ad-hoc facts:**
-```bash
+cortex init                      # apply migrations, create you as the owner entity
 cortex remember "Alice works at Stripe as a staff engineer"
-cortex remember "Bob and Alice went to Stanford together"
-cortex remember "Meeting with Carol next Tuesday to discuss the Series A"
-```
-
-Each call runs the full extraction pipeline: entities are created or merged, relationships are discovered, and distilled memory facts are stored.
-
-### Step 4: Query
-
-```bash
-# Natural language queries
+cortex sync ~/notes              # incremental; .md .csv .tsv .yaml .json .txt .xml .toml .log
 cortex recall "who works at Stripe"
-cortex recall "what do I know about Alice"
-cortex recall "who should I invite to dinner who knows both Alice and Bob"
-
-# Browse the graph
-cortex entity list --type person
-cortex entity get <entity-id>
 ```
 
-Example output from `cortex recall "who works at Stripe"`:
-```
-[1] (memory, score=0.0323) Alice works at Stripe as a staff engineer
-    source: cli
-[2] (chunk, score=0.0161) Alice works at Stripe as a staff engineer
-[3] (entity, score=0.0161) Alice (person)
-[4] (entity, score=0.0161) Stripe (organization)
-```
+Without an API key cortex still runs, limited to deterministic extraction (YAML frontmatter and `[[wikilinks]]`) and keyword search. To migrate a v0.4 SQLite brain: `cortex import-sqlite <brain.db>`.
+
+Hook it up to an AI client with `cortex mcp` ([MCP server](#mcp-server)), and drop the agent contract into a project with `cortex init-schema`.
 
 ---
 
-## CLI Reference
+## Hosted multi-user service
+
+`cortex serve` runs the web app, Google sign-in, OAuth 2.1 and `/mcp` for several users on one server, each with an isolated graph and their own AI provider settings (set on the Settings page or with `cortex users set-provider`; the operator's key is never used for users).
+
+The web app has pages for:
+
+- **Home** — set-up checklist and assistant status.
+- **Memories** — search, filter, bulk delete, compaction (merge near-duplicate memories, undoable), and **Deleted** to restore any batch.
+- **Graph** — interactive map; rename, merge and delete entities.
+- **Vault** — the graph as browsable pages, downloadable as an Obsidian vault.
+- **Connections** — MCP address, per-assistant tokens, revoke and rename.
+- **Settings / Account** — provider, re-embedding, storage, account deletion.
+
+Deployment to a small server (Postgres on localhost, Caddy for HTTPS, a nightly maintenance timer) is scripted: `scripts/setup-server.sh --app-host <fqdn>` once, then `scripts/deploy-app.sh root@<fqdn>` for each release. Every deploy takes a database dump before migrating; `scripts/rollback-app.sh` restores it. See [docs/deploy.md](docs/deploy.md).
+
+---
+
+## Knowledge model
+
+### Entities
+
+Every entity has a type from the curated set. Extractors are asked to use these; anything else is mapped through a synonym table (`company` → organization, `whatsapp group` → group) or falls back to `concept` with the original label kept in the `type_label` attribute.
+
+| Type | Covers |
+|------|--------|
+| `person` | an individual human |
+| `organization` | company, institution, agency, school, bank, merchant |
+| `place` | country, city, region, address, venue, building |
+| `project` | a named piece of work, initiative or programme |
+| `product` | software, app, platform, model, service, device, card, plan |
+| `event` | meeting, conference, incident, holiday, appointment, dated occurrence |
+| `group` | team, community, chat group, channel, committee |
+| `document` | document, page, email, article, publication, podcast, video, URL |
+| `account` | account, email address, phone number, username, identifier |
+| `concept` | topic, idea, skill, role, field, anything else |
+
+The owner — you — is a person entity created by `cortex init` (or at sign-up). "The user" always resolves to the owner; "I" and "me" do when the text is in the owner's voice (`speaker` `user`).
+
+### Aliases
+
+An entity can have any number of aliases: other names, email addresses, phone numbers and @handles. Identifiers match regardless of type, so `carol@wynnes.com`, "Carol Seah" and "C. Seah" can all land on one person. Aliases are learned automatically (a name that fuzzy-resolved to a stored entity, identifiers in extracted attributes, the dropped name in a merge) and can be added explicitly with `add_alias` / `AddAlias`.
+
+### Relationships
+
+Directed, typed edges read source-verb-target. Each curated verb allows certain entity types at each end:
+
+| Verb | Meaning |
+|------|---------|
+| `works_at` | is employed by or works for |
+| `member_of` | belongs to a group, team, organisation or project |
+| `leads` | heads, manages or runs |
+| `founded` | founded or co-founded |
+| `reports_to` | has as their manager *(one current target)* |
+| `knows` | knows, is a friend, colleague or contact of |
+| `family_of` | is a relative or partner of (label says which) |
+| `communicated_with` | messaged, emailed, called, met or invited |
+| `lives_in` | lives in *(one current target)* |
+| `located_in` | is based or situated in |
+| `part_of` | is a part, subsidiary or component of |
+| `owns` | owns or holds |
+| `uses` | uses, runs on, subscribes to |
+| `created` | created, wrote, built or published |
+| `participated_in` | took part in, attended, works on |
+| `partnered_with` | partners or collaborates with |
+| `acquired` | bought or acquired |
+| `invested_in` | invested in or funded |
+| `paid` | paid, sent money to or spent at |
+| `about` | is about, discusses or mentions |
+| `related_to` | related in another way (label says how) |
+
+Synonyms map onto these, swapping the ends where the synonym reads backwards (`employs` → `works_at` reversed). An unknown verb, or one whose ends don't fit, is stored as `related_to` with the original as the `label` attribute.
+
+Edges are unique per (source, target, verb): asserting one again increments its `evidence_count` and refreshes `last_seen_at`. They have validity windows (`valid_at`, `invalid_at`): reads return what holds now unless asked for history, and for single-valued verbs a new target closes the previous edge rather than contradicting it.
+
+### Memories
+
+Distilled facts ("Carol prefers async communication"), linked to the entities they are about and searched by keyword and by meaning. Each carries:
+
+- **confidence** (0–1), set by the extractor: 1.0 for stated facts, lower for inferences;
+- **static** — durable identity facts and preferences, exempt from decay and always in a profile's static half;
+- **forget_after** — an expiry for time-bound facts ("dentist tomorrow"), resolved to a date at ingest;
+- **validity** — `valid_at` / `invalid_at` (when it was true) and `expired_at` (when the system retired it); retired memories drop out of recall but stay reachable with `as_of` / `include_invalid`;
+- **access** — how often recall surfaced it to an agent, which slows its decay and lifts it slightly in ranking.
+
+Memories can also be linked to each other: `supersedes` (from reconcile), `derives` and `extends` (from relate).
+
+### Chunks
+
+The raw text, split at about 6,000 characters, indexed for keyword and vector search, with metadata such as source and part numbers.
+
+---
+
+## Ingestion
+
+`Remember` (CLI `remember`, MCP `remember`, connectors) runs one pipeline:
+
+1. **Extract.** The hybrid extractor runs deterministic parsing (frontmatter, wikilinks) and the LLM. Long text is split and extracted in chunks concurrently, then merged; a failing chunk does not discard the rest. The LLM is given the curated vocabulary and returns entities (with attributes such as email or phone), relationships, and memories each naming the entities they are `about`.
+2. **Resolve entities.** Each extracted entity goes through a cascade before anything is created:
+   1. an alias (identifiers match any type);
+   2. the owner, by "the user", by first person in the owner's voice, or by the owner's name or email;
+   3. the same name ignoring case, same kind of type;
+   4. fuzzy name similarity, nudged towards entities one hop from the owner or from entities already resolved in the same text — a clear winner links;
+   5. if still unclear and the provider supports it, an LLM picks among the top candidates using the source text.
+
+   A match absorbs the extracted attributes without overwriting stored ones. Uncertain near-misses are created as new entities and show up in `cortex lint` for review.
+3. **Store relationships**, mapped onto the vocabulary, upserted with evidence counts.
+4. **Store chunks and memories**, link each memory to its `about` entities, and embed in batches. If embedding fails the save still succeeds; nightly maintenance backfills missing vectors.
+
+Over MCP, content larger than about 12,000 characters is saved and processed in the background; facts appear within minutes.
+
+For facts you already know structurally — an email's sender and recipients, a calendar invite — skip extraction: `link_entities` / `Link` records the relationship directly, resolving or creating each end, and `add_alias` / `AddAlias` records identifiers.
+
+### Connectors
+
+- **Files** — `cortex sync <dir>` ingests supported text files recursively, re-processing only files changed since the last sync. Markdown frontmatter (`type:`, `name:`, other keys as attributes) and `[[wikilinks]]` are parsed deterministically.
+- **Conversation** — `conversation.New().Ingest(ctx, c, messages)` remembers chat messages with role prefixes; use it in an agent's post-response hook.
+
+Custom extractors implement `Extractor` (`Extract(ctx, content, contentType) (*Extraction, error)`); custom connectors implement `Connector` (`Sync(ctx, c) error`).
+
+---
+
+## Recall
+
+1. **Decompose.** The LLM splits the question into sub-queries (`memory_lookup`, `memory_vector`, `keyword_search`, `vector_search`, `graph_traverse`, `temporal_filter`). Without an LLM, recall runs memory lookup, memory vector, keyword and vector search on the raw query.
+2. **Seed from the graph.** Word n-grams of the query that equal an entity name or alias become seeds (up to five). Their own memories join the fusion as an extra ranked list, so a memory about a named entity is found even with no keyword or vector overlap. Turn this off with `WithGraph(false)`.
+3. **Fuse.** Ranked lists are merged with reciprocal rank fusion (`Σ 1/(60 + rank)`), then each result's score is multiplied by its confidence, a graph proximity boost (×1.5 / 1.25 / 1.1 for a link to an entity 0 / 1 / 2 hops from a seed, never walking through the owner), and a small, capped lift for memories recalled before (at most +15%). Optional MMR diversity reranking (`rerank`) spreads out near-duplicates for browsing; it is off by default because it hurts fact recall.
+4. **Filter** by `min_confidence`, `source`, and time: by default only currently valid memories and edges; `as_of` reads the graph as it was; `include_invalid` adds retired ones.
+5. **Strength and abstention.** `RecallWithStrength` returns the best query↔result cosine as `Strength` and sets `Abstain` below 0.40, calibrated on a real graph so out-of-domain questions abstain instead of returning the nearest irrelevant match. Counterfactual questions close to real facts still need an answer-level check.
+
+The MCP `recall` and `context` tools record which memories they returned (`WithTrackAccess`); library and benchmark callers don't unless asked.
+
+---
+
+## Keeping the graph healthy
+
+`cortex maintain` runs the nightly pass. On a server (`--user` omitted) it covers every user with provider settings, then purges deletions older than 30 days.
+
+| Pass | What it does | Standalone |
+|------|--------------|-----------|
+| reconcile | finds newer memories that contradict older ones about the same entity; soft-invalidates the stale ones (needs an LLM) | `cortex reconcile [--apply]` (dry run by default; `--json` / `--apply --from` for reviewed apply) |
+| relate | records `derives` / `extends` edges between related memories (needs an LLM) | `cortex relate` |
+| decay | exponential confidence decay (90-day half-life) from creation or last use; soft-retires memories below the floor; static memories exempt | `cortex decay [--dry-run]` |
+| expire | soft-retires memories past their `forget_after` | `cortex expire [--dry-run]` |
+| profile | refreshes the cached static/dynamic digest of the owner and tracked entities | `cortex profile [--track <id>]` |
+
+Other tools:
+
+- **`cortex lint`** — read-only report: orphan entities, entities without memories, possible duplicates (same kind, same or similar name, with a similarity score), dead sources, unlinked memories, optionally low-confidence memories.
+- **`cortex merge <keep> <drop> [--dry-run]`** — folds one entity into another: relationships, memory links, chunks and aliases move, duplicates collapse, attributes union (keep wins), the dropped name becomes an alias, provenance goes in `merged_from`. Undoable.
+- **`cortex normalize [--dry-run]`** — one-off migration of an existing graph onto the curated vocabulary: retypes entities and relationships, merges entities that then share a name and kind (and namesakes of the owner into the owner), folds edges that become identical. One undoable batch; run the dry run first.
+- **`cortex export [--vault <dir>]`** — writes the graph as an Obsidian-compatible markdown vault (frontmatter, wikilinks, backlinks), incrementally.
+- **`cortex init-schema [<dir>]`** — writes `CORTEX.md`, a contract telling agents when to recall, when to remember and how to use the graph tools.
+
+Forgets, merges, compactions and normalisations are soft and batched: restore them from the web app's Deleted page or `RestoreBatch` within 30 days.
+
+To schedule maintenance yourself (single-user installs), run `cortex maintain --user <id>` from cron or launchd, e.g. nightly at 03:17; preview with `--dry-run`. Reconcile and relate are skipped without an LLM provider; decay and expire still run.
+
+---
+
+## CLI reference
 
 ```
-Usage: cortex [--db <path>] <command> [arguments]
+Usage: cortex [--db <postgres-url>] [--user <id|verified-email>] <command> [arguments]
 
-Global options:
-  --db <dsn>                     Postgres DSN (no default; or CORTEX_DATABASE_URL env var)
+  --db      Postgres URL (or CORTEX_DATABASE_URL)
+  --user    act as that user with their provider settings (needs CORTEX_SECRET_KEY);
+            accepted by maintain, recall, profile, import-sqlite, sync and normalize
 
-Commands:
-  init                           Set up owner identity in the database
-  remember <text>                Ingest text, extract entities/relationships/memories
-  recall <query>                 Natural language query with multi-strategy search
-  sync <dir>                     Sync text files from a directory (incremental, auto-detects format)
-  entity list [--type <type>]    List entities, optionally filtered by type
-  entity get <id>                Show entity details, attributes, and relationships
-  forget --source <src>          Remove all knowledge from a source
-  forget --entity <id>           Remove a specific entity and all linked data
-  merge <keep-id> <drop-id> [--dry-run]
-                                 Merge drop entity into keep entity; re-target all references
-  lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
-                                 Scan the graph for cleanup candidates; print markdown report
-  reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]
-                                 Soft-invalidate memories superseded by newer facts (dry-run by default);
-                                 --json saves a dry-run report, --apply --from <file> applies a reviewed one
+Service
+  serve [--addr host:port]           multi-user web, OAuth and MCP service
+  mcp [--transport stdio|http] [--addr host:port]
+                                     MCP server
+  migrate [--timeout 30m]            apply database migrations
+  users list                         list users
+  users set-provider --user <ref> [--provider openai-compatible|anthropic] [--base-url URL]
+                     [--chat-model M] [--embed-model M] [--embed-dims N] [--embed-base-url URL]
+                                     set a user's AI provider (key from stdin or env, never argv)
+
+Graph
+  init                               apply the schema and set the owner
+  config [--name N] [--nickname N] [--email E]
+                                     show or update the owner identity
+  remember <text>                    remember text
+  recall <query> [--min-confidence <0-1>]
+  sync <dir>                         sync a directory of text files
+  entity list [--type T] | entity get <id>
+  forget --source <src> | --entity <id>
   profile [<entity-id>] [--track <id>] [--untrack <id>] [--json]
-                                 Show an entity's cached profile (owner by default); --track/--untrack
-                                 opt an entity in/out of auto-refresh during maintain
-  config                         Show owner identity
-  config --name <name>           Update owner name
-  config --nickname <nick>       Update owner nickname
-  config --email <email>         Add an email address
   export [--vault <dir>] [--full] [--dry-run]
-                                 Export the knowledge graph as an Obsidian-compatible markdown vault
-  init-schema [<dir>] [--force]  Write CORTEX.md (generic agent contract) to <dir> (default: cwd)
+  import-sqlite <path> [--force] [--embed-only]
+  init-schema [<dir>] [--force]
+
+Maintenance
+  maintain [--user <id> [--dry-run] [--no-reconcile] [--no-relate] [--no-decay]
+           [--half-life <dur>] [--floor <0-1>] [--out <file>]]
+  reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]
+  relate [--out <file>]
+  decay [--half-life <dur>] [--floor <0-1>] [--dry-run] [--out <file>]
+  expire [--dry-run] [--out <file>]
+  lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
+  merge <keep-id> <drop-id> [--dry-run]
+  normalize [--dry-run] [--out <file>]
 ```
 
-### `cortex recall`
-
-Recall results now carry a `confidence` score (0–1). The LLM extractor sets the value at ingest time — 1.0 for facts directly stated in the source, lower for inferences or speculation. Filter to high-confidence-only with `--min-confidence`:
-
-```bash
-cortex recall "did alice join stripe" --min-confidence 0.7
-```
-
-Default behavior is unchanged: all results surface, ranked by Reciprocal Rank Fusion, with confidence reported but not used for ranking.
-
-### `cortex export`
-
-Project the knowledge graph as an Obsidian-compatible markdown vault.
-
-```bash
-cortex export [--vault <dir>] [--full] [--dry-run]
-```
-
-- `--vault <dir>` — output directory (default: `./vault`).
-- `--full` — rewrite every page regardless of whether content has changed.
-- `--dry-run` — compute what would change and report stats; write nothing.
-
-The vault is laid out as `vault/people/`, `vault/organizations/`, `vault/concepts/`, etc., with one markdown page per entity. An `index.md` catalog and a chronological `log.md` live at the vault root. A hidden `.cortex-export.json` manifest tracks content hashes so subsequent runs only rewrite pages whose content has actually changed. Entities deleted from the graph are moved to `vault/_archive/<timestamp>/`.
-
-Each page carries YAML frontmatter (including the entity's full `cortex_id`) and renders memories, outbound relationships, backlinks, and source attribution. Wikilinks use explicit paths (`[[people/alice-chen|Alice Chen]]`), so the vault is browsable in Obsidian, in a plain editor, or via `grep`.
-
-### `cortex merge`
-
-Merge a duplicate entity into the canonical one.
-
-```bash
-cortex merge <keep-id> <drop-id> [--dry-run]
-```
-
-Re-targets every reference to the drop entity onto the keep entity: relationships, memory links, chunks, and the entity's vector embedding. Duplicate relationships and memory links that would arise from the re-target are collapsed. Self-loops (an edge from drop pointing at keep, which would become keep→keep after merge) are removed. The drop entity is then deleted.
-
-Attributes from the drop entity are unioned into the keep entity. **Keep wins** on duplicate keys — its existing attribute values are preserved. A `merged_from` record (containing the drop entity's name, type, source, and full attribute snapshot at merge time) is appended to the keep entity's attributes for provenance. Multiple merges into the same entity append to the same `merged_from` array.
-
-The whole operation runs in a single database transaction. On any error, all changes are rolled back. `--dry-run` runs the same algorithm and reports identical stats, but always rolls back — useful for previewing a merge before committing to it.
-
-```bash
-$ cortex merge ent_01HKEEP ent_01HDROP --dry-run
-Dry-run: would merge ent_01HDROP → ent_01HKEEP (Alice Chen, person)
-  4 relationships would be re-targeted (1 duplicates dropped)
-  ...
-No changes written.
-```
-
-Errors out (exit 1) if either entity is missing, the IDs are identical, or the entities have different types (e.g. trying to merge a `person` into an `organization`).
-
-### `cortex lint`
-
-Scan the graph for cleanup candidates and print a markdown report.
-
-```bash
-cortex lint [--low-confidence] [--low-confidence-threshold <0-1>] [--out <file>]
-```
-
-Pure read operation — never modifies the graph. Six checks run on every invocation:
-
-- **Orphan entities** — no relationships, no memory links. Often extraction noise.
-- **Entities without memories** — have relationships but nothing said about them.
-- **Near-duplicate entity names** — same type + case-insensitively-equal name. Direct candidates for `cortex merge`.
-- **Dead sources** — source strings on memory rows with no matching live entity.
-- **Unlinked memories** — memories not joined to any entity; findable via search but invisible to graph traversal.
-- **Low-confidence memories** — opt-in via `--low-confidence`. Default threshold 0.3; override with `--low-confidence-threshold <n>` (which also enables the section).
-
-Output is markdown by default — empty sections are omitted so a healthy graph shows just the count summary. Use `--out <path>` to write the report to a file.
-
-Lint is informational. Even when findings are present, exit code is 0.
-
-### `cortex reconcile`
-
-Detect and resolve contradicting memories where a newer fact supersedes an older one.
-
-```bash
-cortex reconcile [--apply] [--out <file>] [--json <file>] [--from <file>]
-```
-
-Dry-run by default: prints a markdown report of proposed supersessions and writes nothing. `--out <path>` writes that report to a file instead of stdout, and `--json <path>` additionally writes it as a machine-readable JSON report for later reviewed apply (see below).
-
-There are two ways to apply:
-
-- **One-shot** — `cortex reconcile --apply` detects and applies in a single run. Convenient for autonomous use, but detection and application happen back-to-back with no review step.
-- **Reviewed** — `cortex reconcile --json report.json` captures a dry-run, you inspect it, then `cortex reconcile --apply --from report.json` applies exactly those proposals. The `--from` path **re-validates** each proposal against the current graph and **never re-detects** — proposals that no longer hold are skipped and listed as rejected (e.g. a memory that was already invalidated or deleted between the dry-run and the apply). `--from` requires `--apply`.
-
-Either way, applying soft-invalidates each superseded memory — it drops out of default `recall` but remains reachable via `as_of` / `include_invalid`, so nothing is destroyed.
-
-Detection requires an LLM provider that implements conflict detection — the shipped Anthropic and OpenAI providers do. Without such a provider, reconcile reports nothing and exits cleanly. Resolution itself is deterministic: only a strictly-newer, currently-valid memory may supersede an older one.
-
-Scope is **per-entity**: cortex only compares memories that share a linked entity. Contradictions between memories with no common entity are not detected.
-
-### `cortex expire`
-
-Soft-retire memories whose `forget_after` expiry has passed. The same pass runs inside `cortex maintain`; use this to run it on its own.
-
-```bash
-cortex expire [--dry-run] [--out <file>]
-```
-
-Currently-valid memories with a `forget_after` in the past are soft-invalidated — they drop out of default `recall` but stay reachable via `include_invalid` / `as_of`, so nothing is destroyed. The `forget_after` value is set by the LLM extractor at ingest for time-bound facts, and overrides `static`: a memory marked both still expires. `--dry-run` reports what would be retired without writing; `--out <path>` writes the markdown report to a file instead of stdout.
-
-### `cortex init-schema`
-
-Write a generic agent contract (`CORTEX.md`) into a project directory.
-
-```bash
-cortex init-schema [<dir>] [--force]
-```
-
-The template explains to any LLM-based agent how to use cortex as the knowledge layer for the project: when to `recall`, when to `remember`, what not to store, and how the vault fits in. Refuses to overwrite an existing `CORTEX.md` unless `--force` is passed. After running, edit the file to add project-specific conventions.
-
-### `cortex profile`
-
-Show a cached, two-part digest of an entity's memories.
-
-```bash
-cortex profile                  # owner's profile
-cortex profile <entity-id>      # any entity's profile
-cortex profile --track <id>     # opt an entity in to auto-refresh
-cortex profile --untrack <id>   # opt it back out
-cortex profile --json           # machine-readable output
-```
-
-A profile has a `static` half — stable identity and preferences — and a `dynamic` half — recent context. Memories flagged `static` at ingest land in the static half regardless of age; recent non-static memories feed the dynamic half. Both are built from the entity's currently-valid linked memories and, when an LLM is configured, distilled into bullets; without one, the raw memory texts are used. The profile is cached on the entity and rebuilt when stale: after a 24h TTL, or as soon as the entity's memory count changes.
-
-The owner entity always has a profile. Other entities are opt-in: `--track <id>` marks an entity so its profile is refreshed during `cortex maintain`, and `--untrack <id>` removes it.
+`cortex <command>` with bad arguments prints its own usage.
 
 ---
 
-## Using as an MCP Server
+## MCP server
 
-Connect cortex to Claude Code, Cursor, Windsurf, or any MCP-compatible AI tool. The MCP server exposes 11 tools over stdio.
+### Connecting
 
-### Build
-
-```bash
-make build    # builds all binaries to bin/
-```
-
-### Claude Code Setup
-
-Add to `~/.claude/server.json`:
+Local, over stdio (Claude Code, Cursor, Windsurf):
 
 ```json
 {
@@ -367,858 +306,184 @@ Add to `~/.claude/server.json`:
       "command": "/path/to/cortex",
       "args": ["mcp"],
       "env": {
-        "OPENAI_API_KEY": "sk-...",
-        "CORTEX_DATABASE_URL": "postgres://cortex:PASSWORD@host:5432/cortex"
+        "CORTEX_DATABASE_URL": "postgres://cortex:PASSWORD@host:5432/cortex",
+        "OPENAI_API_KEY": "sk-..."
       }
     }
   }
 }
 ```
 
-### Cursor / Windsurf Setup
-
-Add to your MCP server configuration:
-
-```json
-{
-  "cortex": {
-    "command": "/path/to/cortex",
-    "args": ["mcp"],
-    "env": {
-      "OPENAI_API_KEY": "sk-...",
-      "CORTEX_DATABASE_URL": "postgres://cortex:PASSWORD@host:5432/cortex"
-    }
-  }
-}
-```
-
-### HTTP transport
-
-Cortex can also serve MCP over streamable HTTP for clients that can't or won't drive a subprocess:
-
-```bash
-# Default: listens on 127.0.0.1:8080, MCP endpoint at /mcp
-bin/cortex mcp --transport http
-
-# Bind elsewhere
-bin/cortex mcp --transport http --addr 0.0.0.0:9000
-
-# With bearer-token auth (required if you expose the port beyond localhost)
-CORTEX_AUTH_TOKEN=$(openssl rand -hex 32) bin/cortex mcp --transport http
-```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:8080/healthz
-# {"status":"ok"}
-```
-
-Env-var equivalents: `CORTEX_TRANSPORT`, `CORTEX_ADDR`, `CORTEX_AUTH_TOKEN`. Flags win over env. Stdio remains the default — `cortex mcp` with no arguments serves stdio.
-
-### MCP over HTTPS (hosted)
-
-To reach your memory from anywhere (Claude Code on several machines, phones, hosted agents), run cortex and Postgres on one small server. `scripts/setup-server.sh --app-host cortex.example.com` installs Postgres (localhost only), a `cortex serve` systemd service on `127.0.0.1:8080` (web, Google sign-in, OAuth and MCP for several users), a nightly per-user `cortex maintain` timer and Caddy, which terminates HTTPS with its own Let's Encrypt certificate. `scripts/deploy-app.sh root@cortex.example.com` then builds and ships the binary and your settings, taking a final database dump and running `cortex migrate` before the single restart; `scripts/rollback-app.sh` undoes an upgrade. Port 5432 is never exposed; `/mcp` always requires `Authorization: Bearer <CORTEX_AUTH_TOKEN>`.
+Over HTTP: `cortex mcp --transport http [--addr 127.0.0.1:8080]` serves `/mcp` and `/healthz`; set `CORTEX_AUTH_TOKEN` to require `Authorization: Bearer <token>` (always set it beyond localhost). Against a hosted service:
 
 ```bash
 claude mcp add --transport http cortex https://cortex.example.com/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-Full instructions, security notes and conversion of older installs: [docs/deploy.md](docs/deploy.md).
+### Tools
 
-### Available MCP Tools
-
-| Tool | Description | Required Params | Optional Params |
-|------|-------------|-----------------|-----------------|
-| `remember` | Store content in the knowledge graph | `content` | `source` |
-| `recall` | Natural language query with multi-strategy search; returns results plus a relevance `strength` and an `abstain` hint | `query` | `limit` |
-| `forget` | Remove knowledge from the graph | `entity_id` or `source` | |
-| `get_entity` | Retrieve an entity by ID | `id` | |
-| `find_entities` | Search for entities | | `type`, `name`, `source` |
-| `get_relationships` | Get the current relationships of an entity | `entity_id` | `type`, `include_invalid` |
-| `traverse` | BFS walk of the knowledge graph | `start_id` | `depth`, `edge_types` |
-| `search` | Direct keyword, vector, or memory search | `query`, `mode` | `limit` |
-| `profile` | Cached two-part (static + dynamic) digest of an entity's memories; owner by default | | `entity_id` |
-| `who_is` | Resolve a name, alias, email, phone or handle; returns aliases, current relationships and memories | `name` | |
+| Tool | Description | Required | Optional |
+|------|-------------|----------|----------|
+| `context` | Start-of-conversation context: the owner's profile plus memories relevant to a question | `question` | |
+| `remember` | Store text; large text is processed in the background | `content` | `source`, `speaker` |
+| `recall` | Multi-strategy search with `strength` and `abstain` | `query` | `limit`, `min_confidence`, `as_of`, `include_invalid`, `rerank` |
+| `forget` | Remove knowledge (recoverable for 30 days) | one of `entity_id`, `source`, `memory_id`, `chunk_id` | |
+| `who_is` | Resolve a name, alias, email, phone or handle; aliases, current relationships, memories | `name` | |
 | `connections` | Shortest chain of current relationships between two entities | `from`, `to` | `max_hops` |
 | `timeline` | An entity's history, including ended relationships and retired memories | `entity` | `since`, `limit` |
 | `what_changed` | Entities, memories and relationships added or retired since a time | `since` | `limit` |
 | `add_alias` | Record another identifier for an entity | `entity`, `value` | `kind` |
 | `link_entities` | Record a known relationship directly, creating ends that match nothing | `source`, `type`, `target` | `source_type`, `target_type`, `provenance` |
+| `profile` | Cached static + dynamic digest; owner by default | | `entity_id` |
+| `get_entity` | Entity by ID | `id` | |
+| `find_entities` | Entities by type, name pattern or source | | `type`, `name`, `source` |
+| `get_relationships` | An entity's current relationships | `entity_id` | `type`, `include_invalid` |
+| `traverse` | Breadth-first walk from an entity | `start_id` | `depth`, `edge_types` |
+| `search` | Direct keyword, vector or memory search, no decomposition | `query`, `mode` | `limit` |
+| `merge` | Merge two entities | `keep_id`, `drop_id` | `dry_run` |
+| `lint` | Cleanup report | | `format` |
 
-The `search` tool's `mode` parameter accepts `keyword`, `vector`, or `memory` to select the search strategy directly, bypassing query decomposition.
-
-The `traverse` tool's `edge_types` parameter accepts a comma-separated list of relationship types to follow (e.g., `"works_at,knows"`).
+Entity arguments of the graph tools (`connections`, `timeline`, `add_alias`, `link_entities`) take an ID or a name. When remembering text in the owner's own voice, pass `speaker: "user"`; text written by someone else should not carry it.
 
 ---
 
-## Using as a Go Library
-
-### Full Example
+## Go library
 
 ```go
-package main
-
 import (
-    "context"
-    "fmt"
-
     "github.com/sausheong/cortex"
-    "github.com/sausheong/cortex/connector/conversation"
-    "github.com/sausheong/cortex/connector/files"
     "github.com/sausheong/cortex/extractor/deterministic"
     "github.com/sausheong/cortex/extractor/hybrid"
-    llmext "github.com/sausheong/cortex/extractor/llmext"
+    "github.com/sausheong/cortex/extractor/llmext"
     oaillm "github.com/sausheong/cortex/llm/openai"
 )
 
-func main() {
-    // Set up providers
-    llm := oaillm.NewLLM("sk-...")
-    emb := oaillm.NewEmbedder("sk-...")
-    ext := hybrid.New(deterministic.New(), llmext.New(llm))
-
-    // Open the knowledge graph
-    c, _ := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
-        cortex.WithLLM(llm),
-        cortex.WithEmbedder(emb),
-        cortex.WithExtractor(ext),
-    )
-    defer c.Close()
-
-    ctx := context.Background()
-
-    // --- Ingestion ---
-
-    // Remember ad-hoc text
-    c.Remember(ctx, "Alice works at Stripe as a staff engineer")
-
-    // Sync files (markdown, CSV, YAML, JSON, etc.)
-    f := files.New("/path/to/notes")
-    f.Sync(ctx, c)
-
-    // Ingest conversation messages
-    conv := conversation.New()
-    conv.Ingest(ctx, c, []conversation.Message{
-        {Role: "user", Content: "Had lunch with Bob, he's leaving Google"},
-        {Role: "assistant", Content: "Noted — Bob is leaving Google."},
-    })
-
-    // --- Querying ---
-
-    // Natural language recall (multi-strategy search + RRF)
-    results, _ := c.Recall(ctx, "who works at Stripe")
-    for _, r := range results {
-        fmt.Printf("[%s] %s (score: %.3f)\n", r.Type, r.Content, r.Score)
-    }
-
-    // Structured graph queries
-    people, _ := c.FindEntities(ctx, cortex.EntityFilter{Type: "person"})
-    for _, p := range people {
-        fmt.Printf("%s: %s\n", p.Name, p.ID)
-
-        // Get their relationships
-        rels, _ := c.GetRelationships(ctx, p.ID)
-        for _, r := range rels {
-            fmt.Printf("  --%s--> %s\n", r.Type, r.TargetID)
-        }
-    }
-
-    // Graph traversal — BFS from an entity
-    graph, _ := c.Traverse(ctx, people[0].ID,
-        cortex.WithDepth(2),
-        cortex.WithEdgeTypes("works_at", "knows"),
-    )
-    fmt.Printf("Traversal found %d entities, %d relationships\n",
-        len(graph.Entities), len(graph.Relationships))
-
-    // Direct search primitives
-    chunks, _ := c.SearchKeyword(ctx, "distributed systems", 5)
-    vectors, _ := c.SearchVector(ctx, "machine learning research", 5)
-    memories, _ := c.SearchMemories(ctx, "Stripe", 5)
-
-    // --- Cleanup ---
-
-    // Forget all knowledge from a source
-    c.Forget(ctx, cortex.Filter{Source: "markdown"})
-
-    // Forget a specific entity (cascades to relationships, chunks, memories)
-    c.Forget(ctx, cortex.Filter{EntityID: people[0].ID})
-}
-```
-
-### Minimal Setup (No OpenAI)
-
-```go
-c, _ := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
-    cortex.WithExtractor(deterministic.New()),
+llm := oaillm.NewLLM("sk-...")
+c, err := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
+    cortex.WithLLM(llm),
+    cortex.WithEmbedder(oaillm.NewEmbedder("sk-...")),
+    cortex.WithExtractor(hybrid.New(deterministic.New(), llmext.New(llm))),
 )
+if err != nil { ... }
 defer c.Close()
 
-// Works with frontmatter + wikilinks only
-c.Remember(ctx, "---\ntype: person\nname: Alice\n---\nAlice works at [[Stripe]].")
-```
+c.Remember(ctx, "Alice works at Stripe as a staff engineer", cortex.WithSource("notes"))
 
----
-
-## Architecture
-
-```
-                           ┌─────────────────┐
-                           │    Ingestion     │
-                           │                  │
-                           │  Remember(text)  │
-                           │  Sync(markdown/) │
-                           └────────┬─────────┘
-                                    │
-                           ┌────────▼─────────┐
-                           │  Hybrid Extractor│
-                           │                  │
-                           │  Deterministic:  │
-                           │  frontmatter,    │
-                           │  wikilinks       │
-                           │       +          │
-                           │  LLM: prose →    │
-                           │  entities, rels, │
-                           │  memories        │
-                           └────────┬─────────┘
-                                    │
-                    ┌───────────────┼───────────────┐
-                    │               │               │
-             ┌──────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
-             │  Entities   │ │   Chunks   │ │  Memories   │
-             │  & Rels     │ │ + FTS5     │ │  + Links    │
-             │             │ │ + Vectors  │ │  + Vectors  │
-             └──────┬──────┘ └─────┬──────┘ └──────┬──────┘
-                    │              │               │
-                    └──────────────┼───────────────┘
-                                   │
-                          ┌────────▼─────────┐
-                          │ Postgres+pgvector │
-                          │  HNSW + tsvector │
-                          │  (one server)    │
-                          └────────┬─────────┘
-                                   │
-                    ┌──────────────┼──────────────┐
-                    │              │              │
-             ┌──────▼──────┐ ┌────▼─────┐ ┌─────▼─────┐
-             │    CLI      │ │   MCP    │ │   HTTP    │
-             │  cortex ... │ │  stdio   │ │  :8080    │
-             └─────────────┘ └──────────┘ └───────────┘
-```
-
-### Package Structure
-
-```
-cortex/
-├── *.go                     # Core library — graph, search, Remember/Recall/Forget
-├── llm/
-│   ├── openai/              # OpenAI + OpenAI-compatible LLM + Embedder
-│   └── anthropic/           # Anthropic Claude LLM
-├── extractor/
-│   ├── deterministic/       # Regex, frontmatter, wikilink extraction
-│   ├── llmext/              # LLM-powered extraction
-│   └── hybrid/              # Composes deterministic + LLM
-├── connector/
-│   ├── files/               # File directory connector (md, csv, yaml, json, txt, etc.)
-│   └── conversation/        # Conversation message connector
-├── cmd/
-│   └── cortex/              # CLI + MCP server (cortex mcp subcommand)
-│       └── mcp/             # MCP server package (stdio + streamable HTTP)
-└── internal/testutil/       # Test mocks and helpers
-```
-
-**Simple ingestion model**: cortex accepts text via `Remember` and text files via `Sync`. The file connector auto-detects format by extension and lets the LLM extract knowledge from any supported text format. No external API connectors — keeps the core simple and dependency-free.
-
----
-
-## Core API Reference
-
-### High-Level Memory Operations
-
-| Method | Description |
-|--------|-------------|
-| `Remember(ctx, content, ...RememberOption)` | Ingest text, extract entities/relationships/memories, generate embeddings |
-| `Recall(ctx, query, ...RecallOption)` | Natural language query with decomposition + parallel search + RRF merge |
-| `RecallWithStrength(ctx, query, ...RecallOption)` | `Recall` plus an aggregate relevance `Strength` and an `Abstain` hint for "I don't know that" decisions |
-| `Forget(ctx, Filter)` | Remove knowledge by entity ID or source, with cascading deletes |
-
-### Structured Graph Operations
-
-| Method | Description |
-|--------|-------------|
-| `PutEntity(ctx, *Entity)` | Create or update entity (upsert by name + type) |
-| `GetEntity(ctx, id)` | Get entity by ID |
-| `FindEntities(ctx, EntityFilter)` | Search by type, name pattern (SQL LIKE), source |
-| `PutRelationship(ctx, *Relationship)` | Create a typed directed relationship between two entities |
-| `GetRelationships(ctx, entityID, ...RelFilter)` | Get relationships involving an entity (as source or target) |
-| `Traverse(ctx, startID, ...TraverseOption)` | BFS graph walk with configurable depth and edge type filtering |
-
-### Search Primitives
-
-| Method | Description |
-|--------|-------------|
-| `SearchKeyword(ctx, query, limit)` | FTS5 full-text search on text chunks |
-| `SearchVector(ctx, query, limit)` | Cosine similarity search on vector embeddings |
-| `SearchMemories(ctx, query, limit)` | Keyword search on distilled memory facts |
-
-### Options
-
-```go
-// Remember options
-cortex.WithSource("markdown")       // Set source provenance
-cortex.WithContentType("markdown")  // Hint content type for extraction
-
-// Recall options
-cortex.WithLimit(10)                // Max results (default 20)
-cortex.WithSourceFilter("markdown")    // Filter results by source
-
-// Relationship filter
-cortex.RelTypeFilter("works_at")    // Filter by relationship type
-
-// Traverse options
-cortex.WithDepth(2)                          // Traversal depth (default 1)
-cortex.WithEdgeTypes("works_at", "knows")    // Only follow these edge types
-
-// Provider options (used in Open)
-cortex.WithLLM(myLLM)              // Set LLM provider
-cortex.WithEmbedder(myEmbedder)    // Set embedding provider
-cortex.WithExtractor(myExtractor)  // Set extraction provider
-```
-
-### Types
-
-```go
-type Entity struct {
-    ID         string            // ULID, auto-generated
-    Type       string            // "person", "organization", "concept", "event", "document"
-    Name       string            // Display name
-    Attributes map[string]any    // Type-specific data (email, url, role, etc.)
-    Source     string            // Origin: "markdown", "conversation"
-    CreatedAt  time.Time
-    UpdatedAt  time.Time
+rr, _ := c.RecallWithStrength(ctx, "who works at Stripe", cortex.WithLimit(10))
+if !rr.Abstain {
+    for _, r := range rr.Results { fmt.Println(r.Type, r.Content, r.Score) }
 }
 
-type Relationship struct {
-    ID         string            // ULID
-    SourceID   string            // Entity ID
-    TargetID   string            // Entity ID
-    Type       string            // "works_at", "knows", "attended", etc.
-    Attributes map[string]any
-    Source     string
-    CreatedAt  time.Time
-}
-
-type Memory struct {
-    ID        string             // ULID
-    Content   string             // "Alice is joining Stripe next month"
-    EntityIDs []string           // Linked entity IDs
-    Static    bool               // Durable identity/preference fact; decay-exempt, feeds profile static[]
-    Source    string
-    CreatedAt time.Time
-    UpdatedAt time.Time
-}
-
-type Result struct {
-    Type      string             // "memory", "entity", "chunk", "relationship"
-    Content   string             // Displayable text
-    Score     float64            // RRF score
-    EntityIDs []string           // Related entities for follow-up traversal
-    Source    string             // Provenance
-    Metadata  map[string]any
-}
-
-type RecallResult struct {
-    Results  []Result           // Ranked recall, same as Recall returns
-    Strength float64            // Relevance of the best hit (query↔result cosine, 0–1)
-    Abstain  bool               // True when nothing is relevant enough — a cue to say "I don't know"
-}
+card, _ := c.WhoIs(ctx, "alice@stripe.com")               // resolve + describe
+path, _ := c.Path(ctx, aliceID, bobID, 4)                  // how two entities connect
+events, _ := c.Timeline(ctx, aliceID, time.Time{}, 50)     // history, oldest first
 ```
 
----
+`Open` applies migrations. A handle is scoped to one user; `ForUser(id, ...opts)` returns another user's handle on the same database.
 
-## Knowledge Model
+### API
 
-Cortex uses a unified graph where all node types are first-class:
-
-### Entities (Nodes)
-
-| Type | Description | Examples |
-|------|-------------|---------|
-| `person` | People in your network | Alice, Bob, your contacts |
-| `organization` | Companies and institutions | Stripe, Google, Stanford |
-| `concept` | Ideas and topics | distributed systems, machine learning |
-| `event` | Meetings, conferences, milestones | "Q4 planning meeting", "GopherCon 2024" |
-| `document` | Notes, articles, emails | Linked from wikilinks or file ingestion |
-
-Entity types are open-ended strings. You can introduce any type — the five above are conventions, not constraints.
-
-### Relationships (Edges)
-
-Typed directed edges between entities. Types are also open-ended — connectors introduce new types organically.
-
-| Type | Example |
+| Area | Methods |
 |------|---------|
-| `works_at` | Alice --works_at--> Stripe |
-| `knows` | Alice --knows--> Bob |
-| `attended` | Alice --attended--> Q4 Planning |
-| `discussed_in` | Series A --discussed_in--> Q4 Planning |
-| `related_to` | Machine Learning --related_to--> AI |
-| `part_of` | Alice --part_of--> Engineering Team |
+| Memory | `Remember`, `Recall`, `RecallWithStrength`, `Forget` |
+| Entities | `PutEntity`, `GetEntity`, `FindEntities`, `MergeEntities`, `MergeEntitiesDryRun`, `Describe` |
+| Identity | `ResolveEntity`, `WhoIs`, `AddAlias`, `Aliases`, `RemoveAlias` |
+| Relationships | `PutRelationship`, `GetRelationships`, `InvalidateRelationship`, `Link`, `Traverse`, `Path` |
+| History | `Timeline`, `WhatChanged` |
+| Memories | `PutMemory`, `GetMemoriesByEntity`, `InvalidateMemory`, `PutMemoryEdge`, `GetMemoryEdges` |
+| Search | `SearchKeyword`, `SearchVector`, `SearchMemories` |
+| Maintenance | `Reconcile`, `BuildMemoryEdges`, `DecayConfidence`, `Profile`, `RefreshProfiles`, `Lint`, `NormalizeGraph` |
+| Undo | `ListDeleteBatches`, `RestoreBatch`, `PurgeDeleted` |
 
-### Chunks
-
-Raw text fragments linked to entities. Indexed for both FTS5 keyword search and vector similarity search. Each chunk carries JSON metadata (file path, line range, message ID, etc.).
-
-### Memories
-
-Distilled facts extracted by the LLM. Higher signal density than raw chunks.
-
-Examples:
-- "Alice is joining Stripe next month"
-- "Bob and Alice went to Stanford together"
-- "The project deadline is March 15"
-- "Carol prefers async communication"
-
-Memories are linked to related entities via a junction table and are searched first during `Recall` because they're denser and more useful than raw text.
-
-Each memory also carries a `static` flag the LLM extractor sets at ingest. Static memories hold durable identity facts and stable preferences ("Alice is a staff engineer", "Carol prefers async communication"); non-static memories are episodic and time-bound ("The project deadline is March 15"). Static memories are exempt from confidence decay — they don't erode or get soft-retired as they age — and always feed a profile's `static[]` section, while recent non-static memories feed `dynamic[]`.
-
-A memory may also carry a `forget_after` expiry that the LLM extractor resolves at ingest. Time-bound facts (appointments, deadlines, "this week") get one — relative phrases like "tomorrow" are resolved against today's date, which is injected into the extraction prompt — while durable facts don't. Once `forget_after` has passed, the `cortex expire` pass (run standalone or by `cortex maintain`) soft-retires the memory: it drops out of default recall but stays reachable via `include_invalid` / `as_of`. A `forget_after` overrides `static` — a memory marked both still expires.
-
----
-
-## Extraction Pipeline
-
-### How It Works
-
-When you call `Remember`, cortex runs a hybrid extraction pipeline:
-
-**Step 1 — Deterministic extraction** (free, fast, reliable):
-- **YAML frontmatter**: `type: person`, `name: Alice` becomes an entity
-- **Wikilinks**: `[[Stripe]]` becomes a document entity
-**Step 2 — LLM extraction** (powerful, costs API calls):
-- Sends unstructured prose to OpenAI with a structured extraction prompt
-- Receives entities, relationships, and distilled memory facts as JSON
-- Processes content that the deterministic extractor can't handle
-
-**Step 3 — Store and embed**:
-- Entities are upserted (merged by name + type — no duplicates)
-- Relationships are created between resolved entities
-- Raw text is stored as chunks and indexed for full-text + vector search
-- Memories are stored with entity links
-
-The LLM extractor now requests a `confidence` field on every extracted item, and a `static` flag on every memory (durable identity fact vs. episodic). Schema migrations apply automatically on `Open`; older rows default to `confidence=1.0` and `static=false`.
-
-### Custom Extractors
-
-Implement the `Extractor` interface to add your own extraction logic:
+Common options:
 
 ```go
-type Extractor interface {
-    Extract(ctx context.Context, content string, contentType string) (*Extraction, error)
-}
+// Remember
+cortex.WithSource("notes"); cortex.WithSpeaker("user"); cortex.WithContentType("markdown"); cortex.WithMaxChunkChars(6000)
+// Recall
+cortex.WithLimit(10); cortex.WithMinConfidence(0.7); cortex.WithSourceFilter("notes")
+cortex.WithAsOf(t); cortex.WithIncludeInvalid(); cortex.WithRerank(true); cortex.WithGraph(false); cortex.WithTrackAccess()
+// Relationships and traversal
+cortex.RelTypeFilter("works_at"); cortex.RelAsOf(t); cortex.RelIncludeInvalid()
+cortex.WithDepth(2); cortex.WithEdgeTypes("works_at", "knows"); cortex.WithTraverseAsOf(t)
+// Open
+cortex.WithLLM(l); cortex.WithEmbedder(e); cortex.WithExtractor(x); cortex.WithLogger(logf)
 ```
 
-For example, you could write an extractor that handles Slack messages, Notion pages, or any domain-specific format.
+Without an LLM, `cortex.Open(dsn, cortex.WithExtractor(deterministic.New()))` works on frontmatter and wikilinks alone.
 
 ---
 
-## Search Strategy
+## Providers and configuration
 
-`Recall` uses a multi-step process to answer natural language queries:
+| Interface | Methods | Shipped |
+|-----------|---------|---------|
+| `LLM` | `Extract`, `Decompose`, `Summarize` | OpenAI / OpenAI-compatible (default `gpt-5.4-mini`), Anthropic (default Claude Sonnet 4.5) |
+| `Embedder` | `Embed`, `Dimensions` | OpenAI / compatible (default `text-embedding-3-small`, 512 dims) |
+| `Extractor` | `Extract` | deterministic, LLM, hybrid |
 
-### Step 1: Query Decomposition
-
-The LLM breaks the query into structured sub-queries:
-
-```
-Query: "What do I know about Alice's work at Stripe?"
-
-Sub-queries:
-  1. memory_lookup:   {query: "Alice Stripe"}
-  2. graph_traverse:  {entity: "Alice", edge: "works_at"}
-  3. vector_search:   {query: "Alice work Stripe"}
-```
-
-Without an LLM, cortex falls back to keyword search + memory lookup on the raw query text.
-
-### Step 2: Parallel Execution
-
-All sub-queries run concurrently using goroutines:
-
-| Strategy | Source | Best For |
-|----------|--------|----------|
-| Memory lookup | `memories` table | Distilled facts — highest signal |
-| Keyword search | FTS5 on `chunks` | Exact matches, names, identifiers |
-| Vector search | Embeddings (cosine similarity) | Semantic similarity, fuzzy matching |
-| Graph traversal | `entities` + `relationships` | Relationship queries ("who knows who") |
-
-### Step 3: Reciprocal Rank Fusion (RRF)
-
-Results from all strategies are merged using RRF — a ranking algorithm that combines ranked lists without requiring score normalization across different search backends.
-
-Formula: `score(item) = sum(1 / (k + rank_in_list))` across all lists where the item appears.
-
-Items appearing in multiple search results get boosted. For example, if "Alice works at Stripe" appears as both a memory match and a keyword match, it ranks higher than items from only one source.
-
-### Step 4: Strength & Abstention (optional)
-
-`Recall` always returns its best-ranked results, even when the graph holds
-nothing relevant — RRF ranks whatever it finds. For agents that must decide
-*whether to answer at all*, `RecallWithStrength` adds a relevance signal:
+Optional LLM capabilities, detected by type assertion: `Reconciler` (reconcile), `RelationDetector` (relate) and `EntityDisambiguator` (the resolution tie-break). Both shipped LLMs implement all three. Anthropic has no embeddings API, so pair it with another embedder.
 
 ```go
-rr, _ := cx.RecallWithStrength(ctx, "What is Sarah's favorite cheese?")
-if rr.Abstain {
-    // Nothing relevant enough — say "I don't know" instead of guessing.
-} else {
-    use(rr.Results) // rr.Strength is the confidence (0–1)
-}
+oaillm.NewLLM("ollama", oaillm.WithBaseURL("http://localhost:11434/v1"), oaillm.WithModel("llama3"))
+anthropicllm.NewLLM("sk-ant-...", anthropicllm.WithModel("claude-haiku-4-5"))
 ```
 
-`Strength` is the **maximum cosine similarity** between the query and the top
-few returned results (not the RRF rank-score, which is roughly constant for any
-non-empty recall and so carries no relevance information). When an embedder is
-configured, `Abstain` is set when `Strength` falls below
-`AbstainRelevanceThreshold`; without an embedder it falls back to the RRF top
-score and `AbstainThreshold`.
+### Environment variables
 
-The threshold (0.40) was calibrated with the `cortex-eval` benchmark over a real
-~1200-memory graph: out-of-domain questions a personal graph cannot answer are
-abstained on ~100% of the time, with no false abstentions on genuinely
-answerable questions. Note the limit of a retrieval-similarity signal:
-*counterfactual* questions — vocabulary-close but asking a fact that is absent
-("the exact publication date of the column") — retrieve the same nearby memory a
-true question would, so cosine alone cannot flag them. Catching those needs an
-answer-grounded check beyond retrieval.
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CORTEX_DATABASE_URL` | *(required)* | Postgres URL |
+| `LLM_PROVIDER` | `openai` | `openai` or `anthropic` |
+| `LLM_MODEL` | provider default | chat model |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | | OpenAI or compatible API |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | | Anthropic or compatible API |
+| `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL` | fall back to the OpenAI values | embedding API |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | embedding model |
+| `EMBEDDING_DIMS` | `512` | vector size, fixed once the database is initialised |
+| `CORTEX_TRANSPORT`, `CORTEX_ADDR` | `stdio`, `127.0.0.1:8080` | `cortex mcp` transport and address |
+| `CORTEX_AUTH_TOKEN` | | bearer token for HTTP MCP |
+| `CORTEX_SECRET_KEY` | | encrypts per-user provider keys (`serve`, `--user`) |
 
----
-
-## Connectors
-
-### File Sync
-
-Syncs a directory of text files with incremental change detection and automatic format detection.
-
-```bash
-cortex sync ~/notes
-```
-
-**Supported formats:** `.md`, `.csv`, `.tsv`, `.yaml`, `.yml`, `.json`, `.txt`, `.xml`, `.toml`, `.log`
-
-- Recursively finds all supported text files
-- Auto-detects content type from file extension
-- For markdown: parses YAML frontmatter and `[[wikilinks]]` deterministically
-- For all formats: the LLM extracts entities, relationships, and memories from the content
-- Tracks file modification times — only re-processes changed files on subsequent syncs
-
-**Markdown frontmatter format:**
-```yaml
----
-type: person
-name: Alice
-email: alice@example.com
-role: Staff Engineer
----
-Alice is a staff engineer at [[Stripe]].
-She knows [[Bob]] from their time at [[Google]].
-She's interested in [[distributed systems]] and [[machine learning]].
-```
-
-**CSV / YAML / JSON** are ingested as-is — the LLM reads the tabular or structured data and extracts entities and relationships from it.
-
-### Conversation
-
-Inline ingestion from chat messages — designed for agent integration, not batch sync.
-
-```go
-import "github.com/sausheong/cortex/connector/conversation"
-
-conv := conversation.New()
-err := conv.Ingest(ctx, c, []conversation.Message{
-    {Role: "user", Content: "Had lunch with Alice, she's joining Stripe next month"},
-    {Role: "assistant", Content: "I'll remember that Alice is joining Stripe."},
-})
-```
-
-Messages are concatenated with role prefixes and passed through `Remember` with source `"conversation"`. The LLM extractor identifies entities and relationships from the conversation text.
-
-Use this in your agent's post-response hook to build the compounding knowledge loop: read from cortex before responding, write back after.
+The provider variables configure single-user CLI and MCP use. On the multi-user service each user's settings hold their provider; see [docs/deploy.md](docs/deploy.md) for the service's variables.
 
 ---
 
 ## Storage
 
-Cortex stores everything in Postgres 17 with the [pgvector](https://github.com/pgvector/pgvector) extension (>= 0.8.0). Schema is created by embedded, versioned migrations on `Open`. See [docs/deploy.md](docs/deploy.md) for server setup and backups. The last SQLite release is `v0.4.0`; `cortex import-sqlite` migrates a v0.4 brain.
+Postgres 17 with pgvector ≥ 0.8. The schema is created by embedded, numbered migrations on `Open` (or `cortex migrate`). Every graph row carries a `user_id`.
 
-### Schema
+| Table | Holds |
+|-------|-------|
+| `entities` | nodes: type, name, JSON attributes, source, confidence; unique per user on (name, type) among live rows |
+| `entity_aliases` | other names and identifiers per entity |
+| `relationships` | edges: verb, attributes, confidence, evidence count, validity window; unique per (source, target, verb) among live rows |
+| `memories` | facts with confidence, static, forget_after, validity, access counts; `tsvector` for keyword search |
+| `memory_entities`, `memory_edges` | memory→entity links; memory→memory edges |
+| `chunks` | raw text with metadata; `tsvector` |
+| `embeddings` | `halfvec(N)` vectors, one HNSW index per kind |
+| `delete_batches`, `delete_batch_changes` | soft deletes and merges, for restore |
+| `users`, `user_settings`, `connections`, `agent_tokens`, `oauth_*`, `sessions`, `login_attempts` | multi-user service and auth |
+| `jobs`, `compactions`, `sync_state` | background work, compaction previews, connector state |
+| `schema_migrations`, `cortex_meta` | applied migrations, embedding dimension |
 
-| Table | Purpose |
-|-------|---------|
-| `entities` | Graph nodes — type, name, JSON attributes, source, timestamps (unique on name + type) |
-| `relationships` | Directed typed edges between entities with JSON attributes |
-| `chunks` | Text fragments linked to entities with JSON metadata; generated `tsvector` column for keyword search |
-| `memories` | Distilled facts extracted by the LLM; generated `tsvector` column for keyword search |
-| `memory_entities` | Junction table linking memories to related entities |
-| `embeddings` | `halfvec(N)` vectors with one partial HNSW index per `ref_type` |
-| `sync_state` | Per-connector sync state (timestamps, cursors, history IDs) |
-| `schema_migrations`, `cortex_meta` | Applied migrations; embedding dimension |
-
-### Design Choices
-
-- **Shared server** — the CLI and the MCP server can use one database concurrently
-- **Full-text search** — Postgres `tsvector` (`english` config), keyword queries OR-joined per token
-- **HNSW vector search** — `halfvec` cosine indexes via pgvector, with iterative scan for filtered queries
-- **ULIDs** — time-sortable, globally unique, URL-safe identifiers for all entities
-- **Open-ended types** — entity types and relationship types are plain strings, not enums. New connectors introduce new types without schema changes.
+IDs are ULIDs. Keyword search uses Postgres full text (`english`), vector search uses HNSW cosine indexes with iterative scans for filtered queries.
 
 ---
 
-## Pluggable Providers
-
-| Interface | Methods | Shipped Implementations |
-|-----------|---------|------------------------|
-| `LLM` | `Extract`, `Decompose`, `Summarize` | OpenAI (GPT-5.4-mini), Anthropic (Claude Sonnet 4.5) |
-| `Embedder` | `Embed`, `Dimensions` | OpenAI (text-embedding-3-small, 1536 dims) |
-| `Extractor` | `Extract` | Deterministic, LLM, Hybrid (deterministic + LLM) |
-
-### OpenAI Provider
-
-```go
-import oaillm "github.com/sausheong/cortex/llm/openai"
-
-// Default (OpenAI API)
-llm := oaillm.NewLLM("sk-...")
-emb := oaillm.NewEmbedder("sk-...")
-
-// With a different model
-llm := oaillm.NewLLM("sk-...", oaillm.WithModel("gpt-4o"))
-
-// OpenAI-compatible API (Ollama, vLLM, LM Studio, Together AI, Groq, etc.)
-llm := oaillm.NewLLM("ollama",
-    oaillm.WithBaseURL("http://localhost:11434/v1"),
-    oaillm.WithModel("llama3"),
-)
-emb := oaillm.NewEmbedder("ollama",
-    oaillm.WithEmbedderBaseURL("http://localhost:11434/v1"),
-    oaillm.WithEmbeddingModel(oai.EmbeddingModel("nomic-embed-text"), 768),
-)
-```
-
-Or set `OPENAI_BASE_URL` as an environment variable — all three binaries (CLI, MCP, HTTP) pick it up automatically.
-
-### Anthropic Provider
-
-Anthropic does not offer an embeddings API, so you always pair the Anthropic LLM with a separate `Embedder` (e.g., OpenAI, Ollama).
-
-```go
-import (
-    anthropicllm "github.com/sausheong/cortex/llm/anthropic"
-    oaillm "github.com/sausheong/cortex/llm/openai"
-)
-
-// Default (Anthropic API, Claude Sonnet 4.5)
-llm := anthropicllm.NewLLM("sk-ant-...")
-
-// With a different model
-llm := anthropicllm.NewLLM("sk-ant-...",
-    anthropicllm.WithModel("claude-haiku-4-5"),
-)
-
-// Anthropic-compatible API (custom proxy, AWS Bedrock adapter, etc.)
-llm := anthropicllm.NewLLM("key",
-    anthropicllm.WithBaseURL("https://your-proxy.example.com"),
-)
-
-// Wire up with OpenAI embedder (Anthropic has no embeddings)
-emb := oaillm.NewEmbedder("sk-...")
-ext := hybrid.New(deterministic.New(), llmext.New(llm))
-
-c, _ := cortex.Open("postgres://cortex:PASSWORD@host:5432/cortex",
-    cortex.WithLLM(llm),
-    cortex.WithEmbedder(emb),
-    cortex.WithExtractor(ext),
-)
-```
-
-### Implementing a Custom Provider
-
-Implement the `LLM` and/or `Embedder` interfaces to add any provider:
-
-```go
-type LLM interface {
-    Extract(ctx context.Context, text, prompt string) (ExtractionResult, error)
-    Decompose(ctx context.Context, query string) ([]StructuredQuery, error)
-    Summarize(ctx context.Context, texts []string) (string, error)
-}
-
-type Embedder interface {
-    Embed(ctx context.Context, texts []string) ([][]float32, error)
-    Dimensions() int
-}
-```
-
-You can mix providers freely — for example, Anthropic for extraction, OpenAI for embeddings, and Ollama for query decomposition.
-
----
-
-## Environment Variables
-
-**LLM Provider:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLM_PROVIDER` | `openai` | LLM provider: `openai` or `anthropic` |
-| `LLM_MODEL` | (provider default) | Override the LLM model (e.g., `gpt-5.4-mini`, `claude-haiku-4-5`) |
-| `OPENAI_API_KEY` | (none) | OpenAI API key |
-| `OPENAI_BASE_URL` | (none) | Custom base URL for OpenAI-compatible APIs (Ollama, vLLM, Together AI, Groq) |
-| `ANTHROPIC_API_KEY` | (none) | Anthropic API key (required when `LLM_PROVIDER=anthropic`) |
-| `ANTHROPIC_BASE_URL` | (none) | Custom base URL for Anthropic-compatible APIs |
-
-**Embeddings:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `EMBEDDING_API_KEY` | falls back to `OPENAI_API_KEY` | API key for the embedding provider |
-| `EMBEDDING_BASE_URL` | falls back to `OPENAI_BASE_URL` | Base URL for the embedding provider |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
-| `EMBEDDING_DIMS` | `512` | Embedding vector dimensions (sent to OpenAI via the `dimensions` parameter; fixed once the database is initialised) |
-
-**Server:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CORTEX_DATABASE_URL` | _(required)_ | Postgres DSN (CLI, MCP). Replaces `CORTEX_DB` |
-| `CORTEX_TRANSPORT` | `stdio` | MCP transport: `stdio` or `http` |
-| `CORTEX_ADDR` | `127.0.0.1:8080` | Listen address when transport is `http` |
-| `CORTEX_AUTH_TOKEN` | _(unset)_ | Bearer token for the HTTP transport. When set it is always enforced (any bind address); a non-loopback bind without it logs a warning |
-
-### Example Configurations
-
-**OpenAI (default):**
-```bash
-export OPENAI_API_KEY=sk-...
-cortex recall "who works at Stripe"
-```
-
-**Anthropic Claude + OpenAI embeddings:**
-```bash
-export LLM_PROVIDER=anthropic
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...           # for embeddings
-cortex recall "who works at Stripe"
-```
-
-**Ollama (fully local, no API keys):**
-```bash
-export OPENAI_API_KEY=ollama
-export OPENAI_BASE_URL=http://localhost:11434/v1
-export LLM_MODEL=llama3
-export EMBEDDING_MODEL=nomic-embed-text
-export EMBEDDING_DIMS=768
-cortex recall "who works at Stripe"
-```
-
-**Anthropic LLM + Ollama embeddings:**
-```bash
-export LLM_PROVIDER=anthropic
-export ANTHROPIC_API_KEY=sk-ant-...
-export EMBEDDING_API_KEY=ollama
-export EMBEDDING_BASE_URL=http://localhost:11434/v1
-export EMBEDDING_MODEL=nomic-embed-text
-export EMBEDDING_DIMS=768
-cortex recall "who works at Stripe"
-```
-
----
-
-## Scheduling maintenance
-
-`cortex maintain` runs the reconsolidation pass — reconcile contradictions, build derives/extends edges, decay confidence and soft-retire stale memories, expire memories past their `forget_after`, then refresh the owner's and any tracked entities' profiles. It is a one-shot, idempotent-in-effect command: run it periodically and the OS scheduler owns the cadence.
-
-Preview first:
+## Development
 
 ```bash
-cortex maintain --dry-run
+make build        # bin/cortex
+make test         # starts a throwaway pgvector container on :55432, runs go test ./...
+make test-v       # verbose
+make test-cover   # coverage.html
+make vet
+make run-mcp      # MCP over stdio;  make run-mcp-http for HTTP
+make dist         # cross-compiled release binaries
 ```
 
-### cron (Linux)
+Database tests need `CORTEX_TEST_DATABASE_URL` (set by `make test`; `make test-db` just starts the container) and are skipped without it; each test gets its own schema. No API keys are needed — providers are mocked. Live provider tests: `OPENAI_API_KEY=... go test ./llm/openai/` and `ANTHROPIC_API_KEY=... go test ./llm/anthropic/`.
 
-Run nightly at 03:17 (off the hour to avoid the thundering herd):
-
-```cron
-17 3 * * *  CORTEX_DATABASE_URL=postgres://cortex:PASSWORD@host:5432/cortex /usr/local/bin/cortex maintain --out /path/to/last-maintain.md
-```
-
-### launchd (macOS)
-
-Create `~/Library/LaunchAgents/ai.cortex.maintain.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>ai.cortex.maintain</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/local/bin/cortex</string>
-    <string>maintain</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict><key>CORTEX_DATABASE_URL</key><string>postgres://cortex:PASSWORD@host:5432/cortex</string></dict>
-  <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>17</integer></dict>
-</dict>
-</plist>
-```
-
-Then load it:
-
-```bash
-launchctl load ~/Library/LaunchAgents/ai.cortex.maintain.plist
-```
-
-Reconcile and relate need an LLM provider configured (see `cortex config`); decay runs without one. A maintain run with no provider still decays and prunes, and reports the reconcile/relate passes as skipped.
-
----
-
-## Make Targets
-
-```
-make              Build all binaries to bin/
-make test         Run all tests
-make test-v       Run tests with verbose output
-make test-cover   Run tests with HTML coverage report
-make vet          Run go vet
-make tidy         Run go mod tidy
-make clean        Remove bin/ and coverage files
-make install      Copy binaries to /usr/local/bin
-make run-mcp      Build and run MCP server (stdio)
-make run-mcp-http Build and run MCP server (streamable HTTP)
-```
-
-## Running Tests
-
-```bash
-# Run all tests (no API key needed — uses mocks)
-make test
-
-# Run with verbose output
-make test-v
-
-# Run with coverage report
-make test-cover    # generates coverage.html
-
-# Run a specific package
-go test ./connector/files/ -v
-
-# Run OpenAI integration tests (requires API key)
-OPENAI_API_KEY=sk-... go test ./llm/openai/ -v
-
-# Run Anthropic integration tests (requires API key)
-ANTHROPIC_API_KEY=sk-ant-... go test ./llm/anthropic/ -v
-```
-
+Retrieval quality is measured with `cortex-eval` (`generate` an eval set from a graph, then `run` it across configurations, including `hybrid+graph`).
