@@ -16,6 +16,8 @@ require (
 	modernc.org/sqlite v1.50.1
 )
 
+require github.com/kljensen/snowball v0.10.0 // indirect
+
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
