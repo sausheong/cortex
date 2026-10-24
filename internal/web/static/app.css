@@ -284,10 +284,11 @@ label.check input{margin:0;width:20px;height:20px}
 .graph-layout{grid-template-columns:minmax(0,1fr) 22rem;grid-template-areas:"stage panel" "list panel";align-items:start}
 .graph-stage{grid-area:stage}.graph-panel{grid-area:panel}.graph-list{grid-area:list}
 }
+.graph-layout.is-sparse .graph-list{order:-1}
 .graph-canvas{display:none;border-top:1px solid var(--line);border-bottom:1px solid var(--line);min-height:12rem}
 .js .graph-canvas{display:block}
 .js .graph-canvas:not(.is-ready){visibility:hidden}
-.g-svg{display:block;width:100%;max-width:100%;height:auto}
+.g-svg{display:block;max-width:100%;height:auto}
 .g-edge{stroke:var(--line-strong);stroke-width:1}
 .g-arrowhead{fill:var(--line-strong)}
 .g-shape{fill:var(--bg);stroke:var(--fg);stroke-width:1.5}

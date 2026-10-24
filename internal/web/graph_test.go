@@ -247,7 +247,8 @@ func TestGraphPageRendersListWithoutScript(t *testing.T) {
 		"Started at Acme in March", // memories that mention it
 		"/memories?entity=" + acme, // linked to Memories filtered to the entity
 		`data-src="/graph/data?center=` + acme,
-		`>Graph</a>`, // nav item
+		`>Graph</a>`,             // nav item
+		`graph-layout is-sparse`, // two nodes: list leads, small map
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page lacks %q", want)

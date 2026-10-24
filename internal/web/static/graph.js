@@ -32,7 +32,10 @@
   }
 
   function draw() {
-    var W = Math.max(280, box.clientWidth), H = W < 520 ? 440 : 540;
+    // The frame height follows the node count so a handful of nodes get a
+    // small map rather than a big empty one.
+    var count = data.nodes.length, W = Math.max(280, box.clientWidth);
+    var H = count < 5 ? 220 : count < 10 ? 340 : (W < 520 ? 440 : 540);
     lastW = box.clientWidth;
     var nodes = data.nodes.map(function (n) { return Object.assign({}, n); });
     var byId = {};
@@ -55,6 +58,26 @@
       nodes.forEach(function (n) { ax = Math.min(ax, n.x); bx = Math.max(bx, n.x); ay = Math.min(ay, n.y); by = Math.max(by, n.y); });
       var fx = Math.min(1, (W - 2 * pad) / Math.max(1, bx - ax)), fy = Math.min(1, (H - 2 * pad) / Math.max(1, by - ay));
       if (fx < 1 || fy < 1) nodes.forEach(function (n) { n.x = W / 2 + (n.x - W / 2) * fx; n.y = H / 2 + (n.y - H / 2) * fy; });
+    })();
+    // Nodes never sit closer than SEP, so shapes and their labels cannot
+    // overlap even with two nodes. The centre stays put; others are pushed apart.
+    (function separate() {
+      var SEP = 96, it, a, b, i, j;
+      for (it = 0; it < 60; it++) {
+        var moved = false;
+        for (i = 0; i < nodes.length; i++) for (j = i + 1; j < nodes.length; j++) {
+          a = nodes[i]; b = nodes[j];
+          var dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy);
+          if (d >= SEP) continue;
+          if (d < 0.01) { dx = 1; dy = 0; d = 1; }
+          var push = SEP - d, ux = dx / d, uy = dy / d;
+          if (a.center) { b.x += ux * push; b.y += uy * push; }
+          else if (b.center) { a.x -= ux * push; a.y -= uy * push; }
+          else { a.x -= ux * push / 2; a.y -= uy * push / 2; b.x += ux * push / 2; b.y += uy * push / 2; }
+          moved = true;
+        }
+        if (!moved) break;
+      }
     })();
     // Labels are chosen greedily, centre first and then the best-connected
     // neighbours, and kept only when they overlap no other label or shape.
@@ -105,17 +128,17 @@
     }
     var k = Math.min(1, bw / W), pl = plan(k), m = 16, VW, VH, vx, vy;
     for (var pass = 0; pass < 3; pass++) {
-      VW = Math.max(300, pl.x1 - pl.x0 + 2 * m); VH = Math.max(200, pl.y1 - pl.y0 + 2 * m);
+      VW = Math.max(300, pl.x1 - pl.x0 + 2 * m); VH = Math.max(160, pl.y1 - pl.y0 + 2 * m);
       var nk = bw / VW;
       if (Math.abs(nk - k) < 0.02) break;
       k = nk; pl = plan(k);
     }
-    VW = Math.max(300, pl.x1 - pl.x0 + 2 * m); VH = Math.max(200, pl.y1 - pl.y0 + 2 * m);
+    VW = Math.max(300, pl.x1 - pl.x0 + 2 * m); VH = Math.max(160, pl.y1 - pl.y0 + 2 * m);
     var x0 = (pl.x0 + pl.x1) / 2 - VW / 2, y0 = (pl.y0 + pl.y1) / 2 - VH / 2;
     var fs0 = pl.fs;
 
     box.textContent = "";
-    var svg = el("svg", { viewBox: x0 + " " + y0 + " " + VW + " " + VH, "aria-hidden": "true", focusable: "false", class: "g-svg" }, box);
+    var svg = el("svg", { viewBox: x0 + " " + y0 + " " + VW + " " + VH, "aria-hidden": "true", focusable: "false", class: "g-svg", width: Math.round(Math.min(bw, VW)) }, box);
     var defs = el("defs", {}, svg);
     var mk = el("marker", { id: "g-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
     el("path", { d: "M0 1L9 5L0 9Z", class: "g-arrowhead" }, mk);
