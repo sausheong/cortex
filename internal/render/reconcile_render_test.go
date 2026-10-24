@@ -1,16 +1,17 @@
-package cortex
+package render
 
 import (
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestRenderReconcileMarkdown(t *testing.T) {
-	rep := ReconcileReport{
+	rep := model.ReconcileReport{
 		EntitiesScanned: 1,
 		MemoriesScanned: 2,
-		Proposed: []Supersession{{
+		Proposed: []model.Supersession{{
 			StaleID: "a", StaleContent: "budget 5000",
 			SupersededByID: "b", SupersededByContent: "budget 10000",
 			Reason: "changed", InvalidAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
@@ -25,15 +26,15 @@ func TestRenderReconcileMarkdown(t *testing.T) {
 }
 
 func TestRenderReconcileMarkdownMode_Applied(t *testing.T) {
-	rep := ReconcileReport{
+	rep := model.ReconcileReport{
 		EntitiesScanned: 1,
 		MemoriesScanned: 2,
-		Proposed: []Supersession{{
+		Proposed: []model.Supersession{{
 			StaleID: "a", StaleContent: "budget 5000",
 			SupersededByID: "b", SupersededByContent: "budget 10000",
 			Reason: "changed", InvalidAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 		}},
-		Rejected: []RejectedPair{{
+		Rejected: []model.RejectedPair{{
 			StaleID: "c", SupersededByID: "d", Reason: "no longer valid",
 		}},
 	}
@@ -49,7 +50,7 @@ func TestRenderReconcileMarkdownMode_Applied(t *testing.T) {
 }
 
 func TestRenderReconcileMarkdown_Skipped(t *testing.T) {
-	md := RenderReconcileMarkdown(ReconcileReport{Skipped: true, SkipReason: "no reconciler"})
+	md := RenderReconcileMarkdown(model.ReconcileReport{Skipped: true, SkipReason: "no reconciler"})
 	if !strings.Contains(md, "no reconciler") {
 		t.Fatalf("expected skip reason in output, got:\n%s", md)
 	}

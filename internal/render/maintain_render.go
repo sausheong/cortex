@@ -1,13 +1,14 @@
-package cortex
+package render
 
 import (
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
 // RenderMaintainMarkdown renders a MaintainReport by composing the per-pass
 // renders under a single header. Sub-passes toggled off (nil) are noted as
 // skipped.
-func RenderMaintainMarkdown(r MaintainReport) string {
+func RenderMaintainMarkdown(r model.MaintainReport) string {
 	var b strings.Builder
 	b.WriteString("# Maintain Report\n\n")
 	if r.DryRun {
@@ -45,7 +46,7 @@ func RenderMaintainMarkdown(r MaintainReport) string {
 		b.WriteString("_skipped_\n")
 	}
 
-	b.WriteString("\n## Profile\n\n")
+	b.WriteString("\n## model.Profile\n\n")
 	if r.Profile != nil {
 		b.WriteString(RenderProfileReportMarkdown(*r.Profile))
 	} else {

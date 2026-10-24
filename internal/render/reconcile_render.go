@@ -1,7 +1,8 @@
-package cortex
+package render
 
 import (
 	"fmt"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
@@ -9,7 +10,7 @@ import (
 // markdown summary, mirroring RenderLintMarkdown. It uses dry-run wording
 // ("Proposed", "Rejected by gate"); use RenderReconcileMarkdownMode to render
 // the applied-path wording.
-func RenderReconcileMarkdown(r ReconcileReport) string {
+func RenderReconcileMarkdown(r model.ReconcileReport) string {
 	return RenderReconcileMarkdownMode(r, false)
 }
 
@@ -19,7 +20,7 @@ func RenderReconcileMarkdown(r ReconcileReport) string {
 // report describes the result of an apply run ("Applied Supersessions",
 // "Skipped (re-validation)"), where r.Proposed lists what was applied and
 // r.Rejected lists re-validation skips.
-func RenderReconcileMarkdownMode(r ReconcileReport, applied bool) string {
+func RenderReconcileMarkdownMode(r model.ReconcileReport, applied bool) string {
 	var b strings.Builder
 	b.WriteString("# Reconcile Report\n\n")
 

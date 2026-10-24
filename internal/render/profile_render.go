@@ -1,12 +1,13 @@
-package cortex
+package render
 
 import (
 	"fmt"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
 // RenderProfileMarkdown renders a Profile as a human-readable markdown digest.
-func RenderProfileMarkdown(p Profile) string {
+func RenderProfileMarkdown(p model.Profile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Profile: %s\n\n", p.Name)
 	if !p.BuiltAt.IsZero() {
@@ -40,9 +41,9 @@ func writeBullets(b *strings.Builder, lines []string) {
 
 // RenderProfileReportMarkdown renders a ProfileReport (the Maintain pass
 // summary).
-func RenderProfileReportMarkdown(r ProfileReport) string {
+func RenderProfileReportMarkdown(r model.ProfileReport) string {
 	var b strings.Builder
-	b.WriteString("# Profile Report\n\n")
+	b.WriteString("# model.Profile Report\n\n")
 	fmt.Fprintf(&b, "Scanned: %d\n", r.Scanned)
 	fmt.Fprintf(&b, "Rebuilt: %d\n", r.Rebuilt)
 	fmt.Fprintf(&b, "Skipped: %d\n", len(r.Skipped))

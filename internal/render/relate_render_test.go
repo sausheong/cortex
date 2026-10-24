@@ -1,18 +1,19 @@
-package cortex
+package render
 
 import (
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 )
 
 func TestRenderRelationMarkdown(t *testing.T) {
-	r := RelationReport{
+	r := model.RelationReport{
 		EntitiesScanned: 2,
 		MemoriesScanned: 5,
-		Proposed: []RelationProposal{
+		Proposed: []model.RelationProposal{
 			{SourceID: "d", SourceContent: "detail", TargetID: "b", TargetContent: "base", Type: "extends", Reason: "adds detail"},
 		},
-		Rejected: []RejectedRelation{
+		Rejected: []model.RejectedRelation{
 			{SourceID: "x", TargetID: "x", Type: "extends", Reason: "self-loop"},
 		},
 	}
@@ -23,7 +24,7 @@ func TestRenderRelationMarkdown(t *testing.T) {
 		}
 	}
 
-	skipped := RenderRelationMarkdown(RelationReport{Skipped: true, SkipReason: "no detector"})
+	skipped := RenderRelationMarkdown(model.RelationReport{Skipped: true, SkipReason: "no detector"})
 	if !strings.Contains(skipped, "no detector") {
 		t.Fatalf("expected skip reason in output, got:\n%s", skipped)
 	}

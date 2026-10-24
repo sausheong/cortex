@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sausheong/cortex/internal/ingest"
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
@@ -268,7 +269,7 @@ func TestRemember_ExtractionConcurrencyIsBounded(t *testing.T) {
 	if err := c.Remember(context.Background(), manyParagraphs(12), WithMaxChunkChars(100)); err != nil {
 		t.Fatal(err)
 	}
-	if p := peak.Load(); p > extractConcurrency || p < 2 {
-		t.Fatalf("peak concurrency = %d, want between 2 and %d", p, extractConcurrency)
+	if p := peak.Load(); p > ingest.ExtractConcurrency || p < 2 {
+		t.Fatalf("peak concurrency = %d, want between 2 and %d", p, ingest.ExtractConcurrency)
 	}
 }

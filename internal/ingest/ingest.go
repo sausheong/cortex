@@ -1,4 +1,4 @@
-package cortex
+package ingest
 
 import (
 	"context"
@@ -16,13 +16,13 @@ import (
 
 // Remember extracts entities, relationships, memories, and chunks from the
 // provided content and stores them in the knowledge graph.
-func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberOption) error {
-	cfg := &model.RememberConfig{MaxChunkSize: DefaultMaxChunkChars}
+func (c Ops) Remember(ctx context.Context, content string, opts ...model.RememberOption) error {
+	cfg := &model.RememberConfig{MaxChunkSize: model.DefaultMaxChunkChars}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	if c.h.Cfg.Extractor == nil {
+	if c.Cfg.Extractor == nil {
 		return fmt.Errorf("cortex: no extractor configured")
 	}
 
@@ -30,10 +30,10 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// per chunk and merged; a failing chunk does not discard the others, the
 	// caller gets an *ExtractPartialError after everything else is stored.
 	parts := llmutil.SplitContent(content, cfg.MaxChunkSize)
-	extraction, err := c.extractParts(ctx, content, parts, cfg.ContentType)
+	extraction, err := c.ExtractParts(ctx, content, parts, cfg.ContentType)
 	var extractPartial error
 	if err != nil {
-		if extraction == nil || !IsExtractPartial(err) {
+		if extraction == nil || !isExtractPartial(err) {
 			return fmt.Errorf("cortex: extract: %w", err)
 		}
 		extractPartial = err
@@ -51,7 +51,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 			e.Source = cfg.Source
 		}
 		extracted := e.Name
-		if err := graph.New(c.h).IngestEntity(ctx, e, rc); err != nil {
+		if err := graph.New(c.Handle).IngestEntity(ctx, e, rc); err != nil {
 			return fmt.Errorf("cortex: store entity %q: %w", extracted, err)
 		}
 		if !slices.Contains(entityIDs, e.ID) {
@@ -67,7 +67,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// its ends' types is stored as related_to with the original as "label".
 	idToType := make(map[string]string, len(extraction.Entities))
 	for _, e := range extraction.Entities {
-		idToType[e.ID], _ = CanonicalEntityType(e.Type)
+		idToType[e.ID], _ = ontology.CanonicalEntityType(e.Type)
 	}
 	for i := range extraction.Relationships {
 		r := &extraction.Relationships[i]
@@ -76,7 +76,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if !srcOK || !tgtOK || sourceID == targetID {
 			continue // skip if either end doesn't resolve, or it is a self-loop
 		}
-		verb, swap, label := CanonicalRelation(r.Type, idToType[sourceID], idToType[targetID])
+		verb, swap, label := ontology.CanonicalRelation(r.Type, idToType[sourceID], idToType[targetID])
 		if swap {
 			sourceID, targetID = targetID, sourceID
 		}
@@ -92,7 +92,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if cfg.Source != "" && r.Source == "" {
 			r.Source = cfg.Source
 		}
-		if err := c.PutRelationship(ctx, r); err != nil {
+		if err := graph.New(c.Handle).PutRelationship(ctx, r); err != nil {
 			return fmt.Errorf("cortex: store relationship: %w", err)
 		}
 	}
@@ -106,9 +106,9 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// missing vectors are backfilled by nightly maintenance, and the caller
 	// gets an *EmbedPartialError saying how many items are waiting.
 	var unembedded model.EmbedFailures
-	var chunkTargets []embedTarget
+	var chunkTargets []memory.EmbedTarget
 	for i, part := range parts {
-		ch := &Chunk{Content: part}
+		ch := &model.Chunk{Content: part}
 		md := map[string]any{}
 		if cfg.Source != "" {
 			md["source"] = cfg.Source
@@ -120,13 +120,13 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if len(md) > 0 {
 			ch.Metadata = md
 		}
-		if err := c.PutChunk(ctx, ch); err != nil {
+		if err := memory.New(c.Handle).PutChunk(ctx, ch); err != nil {
 			return fmt.Errorf("cortex: store chunk: %w", err)
 		}
-		chunkTargets = append(chunkTargets, embedTarget{ch.ID, "chunk", ch.Content})
+		chunkTargets = append(chunkTargets, memory.EmbedTarget{RefID: ch.ID, RefType: "chunk", Text: ch.Content})
 	}
-	if c.h.Cfg.Embedder != nil {
-		unembedded.Merge(c.embedAndStoreBatch(ctx, chunkTargets))
+	if c.Cfg.Embedder != nil {
+		unembedded.Merge(memory.New(c.Handle).EmbedAndStoreBatch(ctx, chunkTargets))
 	}
 
 	// 5. Store memories, linking each to the entities it is about.
@@ -135,7 +135,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		idToName[e.ID] = e.Name
 	}
 
-	var memTargets []embedTarget
+	var memTargets []memory.EmbedTarget
 	for i := range extraction.Memories {
 		m := &extraction.Memories[i]
 		m.EntityIDs = memoryEntityIDs(m.About, nameToID, entityIDs)
@@ -150,16 +150,16 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if cfg.Speaker != "" && m.Speaker == "" {
 			m.Speaker = cfg.Speaker
 		}
-		if err := c.PutMemory(ctx, m); err != nil {
+		if err := memory.New(c.Handle).PutMemory(ctx, m); err != nil {
 			return fmt.Errorf("cortex: store memory: %w", err)
 		}
 		// Embed the fact-augmented key (entity context + content), not the
 		// bare content, so thin memories are findable by their entities.
 		// The stored content and FTS index keep the original text.
-		memTargets = append(memTargets, embedTarget{m.ID, "memory", memory.AugmentForEmbedding(m.Content, entityNames)})
+		memTargets = append(memTargets, memory.EmbedTarget{RefID: m.ID, RefType: "memory", Text: memory.AugmentForEmbedding(m.Content, entityNames)})
 	}
-	if c.h.Cfg.Embedder != nil {
-		unembedded.Merge(c.embedAndStoreBatch(ctx, memTargets))
+	if c.Cfg.Embedder != nil {
+		unembedded.Merge(memory.New(c.Handle).EmbedAndStoreBatch(ctx, memTargets))
 	}
 
 	return errors.Join(extractPartial, unembedded.Err())
@@ -176,7 +176,7 @@ func ownerVoice(speaker, source string) bool {
 }
 
 // nameKey is the key an extracted entity name is looked up by: lower-cased
-// with whitespace collapsed, matching how mergeExtractions dedupes names.
+// with whitespace collapsed, matching how MergeExtractions dedupes names.
 func nameKey(name string) string { return ontology.NormKey(name) }
 
 // memoryEntityIDs resolves a memory's "about" names to entity IDs. Names that
@@ -203,21 +203,21 @@ func memoryEntityIDs(about []string, nameToID map[string]string, all []string) [
 // (see ListDeleteBatches, RestoreBatch) and purged after 30 days. Memory
 // links are kept, so a memory whose only entities were forgotten is still
 // recalled.
-func (c *Cortex) Forget(ctx context.Context, f Filter) error {
+func (c Ops) Forget(ctx context.Context, f model.Filter) error {
 	if f.EntityID != "" {
-		_, err := graph.New(c.h).SoftDeleteEntityKind(ctx, f.EntityID, "user", "forget")
+		_, err := graph.New(c.Handle).SoftDeleteEntityKind(ctx, f.EntityID, "user", "forget")
 		return err
 	}
 	if f.Source == "" {
 		return fmt.Errorf("cortex: forget requires EntityID or Source filter")
 	}
-	tx, err := c.h.DB.BeginTx(ctx, nil)
+	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("cortex: begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id FROM entities WHERE user_id = ? AND source = ? AND deleted_at IS NULL`, c.h.UserID, f.Source)
+		`SELECT id FROM entities WHERE user_id = ? AND source = ? AND deleted_at IS NULL`, c.UserID, f.Source)
 	if err != nil {
 		return fmt.Errorf("cortex: query entities by source: %w", err)
 	}
@@ -237,12 +237,12 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	batchID, err := graph.NewBatch(ctx, tx, c.h.UserID, "forget")
+	batchID, err := graph.NewBatch(ctx, tx, c.UserID, "forget")
 	if err != nil {
 		return err
 	}
 	for _, id := range ids {
-		if err := graph.New(c.h).SoftDeleteEntityTx(ctx, tx, batchID, "user", id); err != nil {
+		if err := graph.New(c.Handle).SoftDeleteEntityTx(ctx, tx, batchID, "user", id); err != nil {
 			return err
 		}
 	}
@@ -250,4 +250,11 @@ func (c *Cortex) Forget(ctx context.Context, f Filter) error {
 		return fmt.Errorf("cortex: commit forget: %w", err)
 	}
 	return nil
+}
+
+// isExtractPartial reports whether err only means some sections were not
+// analysed.
+func isExtractPartial(err error) bool {
+	var p *model.ExtractPartialError
+	return errors.As(err, &p)
 }

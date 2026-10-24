@@ -193,3 +193,12 @@ Root testdata/ was referenced by no Go test, script or doc, so it was moved to e
 - Exported for root white-box tests: `ProfileEligibleIDs`, `DistillBucket`, `AttrProfile`, `AttrProfiled`, `ProfileStaticPrompt`; `whitebox_test.go` re-exposes them under the old unexported names. Pure tests `TestPartitionMemories_*` and `TestSelectStaticCandidates_PerEntityCap` moved to `internal/maintain` (there is no isFresh test). DB tests stay in root.
 - Neither package spawns goroutines or stores an `Ops`; every `Ops` is built per call from the same `*Handle`.
 - apidiff: only the known alias-to-internal reports and the `RelationshipVerbs` element type; no removed or changed method.
+
+## Stage 8 notes
+
+- `internal/ingest` (`Remember`, `Forget`, `ExtractParts`, `MergeExtractions`, `ExtractConcurrency`) imports `graph`, `llmutil`, `memory`, `model`, `ontology`, `store`; `tenancy` is not needed. `internal/render` imports only `model`.
+- Deviation: `embedTarget` and `embedAndStoreBatch` (used by `Remember`) lived in root `embedfail.go`; they moved to `internal/memory/embedbatch.go` as `EmbedTarget`, `Ops.EmbedAndStoreBatch` and `EmbedBatchSize`. `BackfillEmbeddings` and `IsEmbedPartial` stay in root, and `IsExtractPartial` moved from `extractchunks.go` to `embedfail.go` next to `IsEmbedPartial`.
+- Root forwarders: `api_ingest.go` (`Remember`, `Forget`) and `api_render.go` (all `Render*Markdown` as funcs). `renderLintMarkdown` is re-exposed to `lint_test.go` via `whitebox_test.go`; `chunked_test.go` uses `ingest.ExtractConcurrency`.
+- The only goroutines are the `ExtractParts` workers, joined before return; no `Ops` is stored in a struct.
+- apidiff: only the known alias-to-internal reports and the `RelationshipVerbs` element type.
+- Moving root tests to `cortex_test` (team_test, example_test) is left to stage 9.

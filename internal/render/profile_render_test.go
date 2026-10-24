@@ -1,13 +1,14 @@
-package cortex
+package render
 
 import (
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestRenderProfileMarkdown(t *testing.T) {
-	p := Profile{
+	p := model.Profile{
 		Name:      "Alice",
 		Static:    []string{"Staff engineer", "Likes Go"},
 		Dynamic:   []string{"Working on payments"},
@@ -23,7 +24,7 @@ func TestRenderProfileMarkdown(t *testing.T) {
 }
 
 func TestRenderProfileMarkdown_Empty(t *testing.T) {
-	md := RenderProfileMarkdown(Profile{Name: "Bob"})
+	md := RenderProfileMarkdown(model.Profile{Name: "Bob"})
 	if !strings.Contains(md, "# Profile: Bob") {
 		t.Errorf("missing header in:\n%s", md)
 	}
@@ -33,7 +34,7 @@ func TestRenderProfileMarkdown_Empty(t *testing.T) {
 }
 
 func TestRenderProfileReportMarkdown(t *testing.T) {
-	md := RenderProfileReportMarkdown(ProfileReport{Scanned: 3, Rebuilt: 2, Skipped: []string{"x"}})
+	md := RenderProfileReportMarkdown(model.ProfileReport{Scanned: 3, Rebuilt: 2, Skipped: []string{"x"}})
 	for _, want := range []string{"Scanned: 3", "Rebuilt: 2", "Skipped: 1"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("missing %q in:\n%s", want, md)

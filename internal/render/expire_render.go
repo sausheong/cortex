@@ -1,13 +1,14 @@
-package cortex
+package render
 
 import (
 	"fmt"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
-// RenderExpireMarkdown renders an ExpireReport as human-readable markdown,
+// RenderExpireMarkdown renders a ExpireReport as human-readable markdown,
 // mirroring RenderDecayMarkdown.
-func RenderExpireMarkdown(r ExpireReport) string {
+func RenderExpireMarkdown(r model.ExpireReport) string {
 	var b strings.Builder
 	b.WriteString("# Expire Report\n\n")
 	if r.DryRun {

@@ -1,35 +1,29 @@
-package cortex
+package ingest
 
 import (
 	"context"
 	"errors"
 	"sync"
 
+	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/ontology"
 )
 
-// extractConcurrency bounds how many chunk extractions run at once.
-const extractConcurrency = 4
+// ExtractConcurrency bounds how many chunk extractions run at once.
+const ExtractConcurrency = 4
 
-// IsExtractPartial reports whether err only means some sections were not
-// analysed.
-func IsExtractPartial(err error) bool {
-	var p *ExtractPartialError
-	return errors.As(err, &p)
-}
-
-// extractParts runs the extractor over content. A single part takes the
+// ExtractParts runs the extractor over content. A single part takes the
 // plain one-call path. Several parts are extracted concurrently and merged;
 // if some fail the merged result of the rest comes back with an
 // *ExtractPartialError, and only when every part fails is the error fatal
 // (nil extraction).
-func (c *Cortex) extractParts(ctx context.Context, content string, parts []string, contentType string) (*Extraction, error) {
+func (c Ops) ExtractParts(ctx context.Context, content string, parts []string, contentType string) (*model.Extraction, error) {
 	if len(parts) <= 1 {
-		return c.h.Cfg.Extractor.Extract(ctx, content, contentType)
+		return c.Cfg.Extractor.Extract(ctx, content, contentType)
 	}
-	results := make([]*Extraction, len(parts))
+	results := make([]*model.Extraction, len(parts))
 	errs := make([]error, len(parts))
-	sem := make(chan struct{}, extractConcurrency)
+	sem := make(chan struct{}, ExtractConcurrency)
 	var wg sync.WaitGroup
 	for i, p := range parts {
 		wg.Add(1)
@@ -37,12 +31,12 @@ func (c *Cortex) extractParts(ctx context.Context, content string, parts []strin
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i], errs[i] = c.h.Cfg.Extractor.Extract(ctx, p, contentType)
+			results[i], errs[i] = c.Cfg.Extractor.Extract(ctx, p, contentType)
 		}()
 	}
 	wg.Wait()
 
-	var ok []*Extraction
+	var ok []*model.Extraction
 	var failed int
 	var first error
 	for i := range parts {
@@ -61,22 +55,22 @@ func (c *Cortex) extractParts(ctx context.Context, content string, parts []strin
 	if len(ok) == 0 {
 		return nil, first
 	}
-	merged := mergeExtractions(ok)
+	merged := MergeExtractions(ok)
 	if failed > 0 {
-		return merged, &ExtractPartialError{Failed: failed, Total: len(parts), Err: first}
+		return merged, &model.ExtractPartialError{Failed: failed, Total: len(parts), Err: first}
 	}
 	return merged, nil
 }
 
-// mergeExtractions combines per-chunk extractions, in order, into one.
+// MergeExtractions combines per-chunk extractions, in order, into one.
 // Entities dedupe by case-insensitive name and type (first spelling wins,
 // attributes merge with the first value kept on conflict). Relationship
 // endpoints, which are entity names at this stage, are rewritten to the
 // canonical merged name so a relationship resolves even when its entities
 // were extracted in a different chunk; duplicates by endpoints and type are
 // dropped. Memories dedupe by normalised content.
-func mergeExtractions(results []*Extraction) *Extraction {
-	out := &Extraction{}
+func MergeExtractions(results []*model.Extraction) *model.Extraction {
+	out := &model.Extraction{}
 	entityIdx := map[string]int{} // name+type key -> index in out.Entities
 	canon := map[string]string{}  // normalised name -> canonical name
 	for _, r := range results {

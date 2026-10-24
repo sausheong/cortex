@@ -1,14 +1,15 @@
-package cortex
+package render
 
 import (
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 )
 
 func TestRenderDecayMarkdown(t *testing.T) {
-	r := DecayReport{
+	r := model.DecayReport{
 		Scanned: 3, Decayed: 2, Pruned: 1, DryRun: true,
-		Changes: []DecayChange{
+		Changes: []model.DecayChange{
 			{ID: "a", Content: "fading", OldConfidence: 0.9, NewConfidence: 0.45, Pruned: false},
 			{ID: "b", Content: "dead", OldConfidence: 0.5, NewConfidence: 0.01, Pruned: true},
 		},

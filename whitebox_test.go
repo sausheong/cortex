@@ -59,3 +59,5 @@ func (c *Cortex) profileEligibleIDs(ctx context.Context) ([]string, error) {
 func (c *Cortex) distillBucket(ctx context.Context, name, instruction string, mems []Memory) ([]string, bool) {
 	return maintain.New(c.h).DistillBucket(ctx, name, instruction, mems)
 }
+
+func renderLintMarkdown(r LintReport) string { return RenderLintMarkdown(r) }

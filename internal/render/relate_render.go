@@ -1,13 +1,14 @@
-package cortex
+package render
 
 import (
 	"fmt"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
 // RenderRelationMarkdown renders a RelationReport as human-readable markdown,
 // mirroring RenderReconcileMarkdown.
-func RenderRelationMarkdown(r RelationReport) string {
+func RenderRelationMarkdown(r model.RelationReport) string {
 	var b strings.Builder
 	b.WriteString("# Relation Report\n\n")
 

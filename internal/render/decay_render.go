@@ -1,12 +1,13 @@
-package cortex
+package render
 
 import (
 	"fmt"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
 // RenderDecayMarkdown renders a DecayReport as human-readable markdown.
-func RenderDecayMarkdown(r DecayReport) string {
+func RenderDecayMarkdown(r model.DecayReport) string {
 	var b strings.Builder
 	b.WriteString("# Decay Report\n\n")
 	if r.DryRun {

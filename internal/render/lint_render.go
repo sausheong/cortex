@@ -1,7 +1,8 @@
-package cortex
+package render
 
 import (
 	"fmt"
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 )
 
@@ -9,7 +10,7 @@ import (
 // document. Empty finding sections are omitted entirely. If
 // LowConfidenceMemories is nil (i.e. the option was not passed), a
 // "skipped" note appears in its place.
-func renderLintMarkdown(r LintReport) string {
+func renderLintMarkdown(r model.LintReport) string {
 	var b strings.Builder
 	b.WriteString("# Cortex Lint Report\n\n")
 	fmt.Fprintf(&b, "Scanned %d entities, %d relationships, %d memories.\n",
@@ -79,6 +80,6 @@ func renderLintMarkdown(r LintReport) string {
 
 // RenderLintMarkdown formats a LintReport as a human-readable markdown
 // document. Exported wrapper for CLI consumption.
-func RenderLintMarkdown(r LintReport) string {
+func RenderLintMarkdown(r model.LintReport) string {
 	return renderLintMarkdown(r)
 }

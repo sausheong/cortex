@@ -1,15 +1,16 @@
-package cortex
+package render
 
 import (
+	"github.com/sausheong/cortex/internal/model"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestRenderExpireMarkdown(t *testing.T) {
-	r := ExpireReport{
+	r := model.ExpireReport{
 		Scanned: 2, Expired: 2,
-		Changes: []ExpireChange{
+		Changes: []model.ExpireChange{
 			{ID: "m1", Content: "meeting yesterday", ForgetAfter: time.Date(2026, 6, 26, 0, 0, 0, 0, time.UTC)},
 		},
 	}
@@ -22,7 +23,7 @@ func TestRenderExpireMarkdown(t *testing.T) {
 }
 
 func TestRenderExpireMarkdown_DryRun(t *testing.T) {
-	md := RenderExpireMarkdown(ExpireReport{DryRun: true})
+	md := RenderExpireMarkdown(model.ExpireReport{DryRun: true})
 	if !strings.Contains(md, "Dry run") {
 		t.Errorf("expected dry-run note in:\n%s", md)
 	}
