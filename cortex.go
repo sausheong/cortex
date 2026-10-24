@@ -1,6 +1,8 @@
 package cortex
 
 import (
+	"database/sql"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/memory"
@@ -85,4 +87,26 @@ func (c *Cortex) CloneKey() *keys.UK {
 		return nil
 	}
 	return c.h.Key.Clone()
+}
+
+// SetExtractor sets the extractor on the Cortex instance.
+func (c *Cortex) SetExtractor(e Extractor) { c.h.Cfg.Extractor = e }
+
+// SetLLM sets the LLM on the Cortex instance.
+func (c *Cortex) SetLLM(l LLM) { c.h.Cfg.LLM = l }
+
+// SetEmbedder sets the embedder on the Cortex instance.
+func (c *Cortex) SetEmbedder(e Embedder) { c.h.Cfg.Embedder = e }
+
+// DB returns the underlying database handle. It is intended for tooling
+// (such as the SQLite importer); normal callers should use the Cortex API.
+func (c *Cortex) DB() *sql.DB { return c.h.DB.DB }
+
+// Embedder returns the configured embedder, or nil. Intended for tooling.
+func (c *Cortex) Embedder() Embedder { return c.h.Cfg.Embedder }
+
+// AugmentForEmbedding builds the text embedded for a memory: its content
+// prefixed with the names of the entities it concerns. Intended for tooling.
+func AugmentForEmbedding(content string, entityNames []string) string {
+	return memory.AugmentForEmbedding(content, entityNames)
 }

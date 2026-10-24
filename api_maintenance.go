@@ -2,8 +2,12 @@ package cortex
 
 import (
 	"context"
+	"time"
 
+	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/maintain"
+	"github.com/sausheong/cortex/internal/render"
+	"github.com/sausheong/cortex/internal/tenancy"
 )
 
 // ProposeCompaction proposes merges, combinations and rollups of this user's
@@ -159,3 +163,210 @@ func (c *Cortex) CachedProfile(ctx context.Context) (Profile, bool, error) {
 func (c *Cortex) RefreshProfiles(ctx context.Context, opts ...ProfileOption) (ProfileReport, error) {
 	return maintain.New(c.h).RefreshProfiles(ctx, opts...)
 }
+
+// CountMemories returns how many live memories SoftDeleteMemories would mark
+// for f, so a caller can show the exact number before deleting.
+func (c *Cortex) CountMemories(ctx context.Context, f DeleteFilter) (int, error) {
+	return graph.New(c.h).CountMemories(ctx, f)
+}
+
+// SampleMemories returns up to limit of the live memories SoftDeleteMemories
+// would mark for f, newest first, so a caller can show what is about to go.
+func (c *Cortex) SampleMemories(ctx context.Context, f DeleteFilter, limit int) ([]Memory, error) {
+	return graph.New(c.h).SampleMemories(ctx, f, limit)
+}
+
+// CountByConnection returns how many rows SoftDeleteByConnection would mark
+// for connID (memories, entities, chunks and relationships, including
+// relationships that touch the connection's entities).
+func (c *Cortex) CountByConnection(ctx context.Context, connID string) (int, error) {
+	return graph.New(c.h).CountByConnection(ctx, connID)
+}
+
+// SoftDeleteMemories marks the memories matching f as deleted in one batch.
+// The batch ID is empty when nothing matched.
+func (c *Cortex) SoftDeleteMemories(ctx context.Context, f DeleteFilter, by string) (string, int, error) {
+	return graph.New(c.h).SoftDeleteMemories(ctx, f, by)
+}
+
+// SoftDeleteEntity soft-deletes an entity, its relationships and its chunks.
+func (c *Cortex) SoftDeleteEntity(ctx context.Context, id string, by string) (string, error) {
+	return graph.New(c.h).SoftDeleteEntity(ctx, id, by)
+}
+
+// SoftDeleteByConnection soft-deletes everything the connection wrote:
+// memories, entities, relationships and chunks, plus relationships that touch
+// the removed entities. n counts all rows marked.
+func (c *Cortex) SoftDeleteByConnection(ctx context.Context, connID string) (string, int, error) {
+	return graph.New(c.h).SoftDeleteByConnection(ctx, connID)
+}
+
+// RestoreBatch reverses a batch of this user: undoes recorded merge changes
+// (newest first), then un-deletes the batch's rows. An entity whose (name,
+// type) is now taken by a live entity is merged into it instead.
+func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
+	return graph.New(c.h).RestoreBatch(ctx, batchID)
+}
+
+// ListDeleted returns this user's soft-deleted memories, newest deletion first.
+func (c *Cortex) ListDeleted(ctx context.Context, limit int, offset int) ([]Memory, error) {
+	return graph.New(c.h).ListDeleted(ctx, limit, offset)
+}
+
+// ListDeleteBatches lists this user's unrestored batches, newest first.
+func (c *Cortex) ListDeleteBatches(ctx context.Context) ([]DeleteBatch, error) {
+	return graph.New(c.h).ListDeleteBatches(ctx)
+}
+
+// PurgeDeleted hard-deletes this user's rows soft-deleted more than olderThan
+// ago, with their embeddings (every generation), memory links and memory
+// edges, in one transaction. Batches older than the cutoff, or already
+// restored, are removed with their change records. It returns the number of
+// memories, entities, relationships and chunks removed.
+func (c *Cortex) PurgeDeleted(ctx context.Context, olderThan time.Duration) (int, error) {
+	return graph.New(c.h).PurgeDeleted(ctx, olderThan)
+}
+
+// SoftDeleteChunks marks the chunks with the given IDs as deleted in one
+// batch. The batch ID is empty when nothing matched.
+func (c *Cortex) SoftDeleteChunks(ctx context.Context, ids []string, by string) (string, int, error) {
+	return graph.New(c.h).SoftDeleteChunks(ctx, ids, by)
+}
+
+// GetSyncState returns the last-known sync state for a connector.
+func (c *Cortex) GetSyncState(ctx context.Context, connector string) (string, error) {
+	return c.h.GetSyncState(ctx, connector)
+}
+
+// SetSyncState upserts the sync state for a connector.
+func (c *Cortex) SetSyncState(ctx context.Context, connector, state string) error {
+	return c.h.SetSyncState(ctx, connector, state)
+}
+
+// CreateUser inserts a user and its person entity (Source "owner"), whose ID
+// is stored in users.owner_entity_id.
+func (c *Cortex) CreateUser(ctx context.Context, googleSub, email, name string, emailVerified bool) (*User, error) {
+	return tenancy.New(c.h).CreateUser(ctx, googleSub, email, name, emailVerified)
+}
+
+// UserByGoogleSub returns the user with the given Google subject, or ErrNotFound.
+func (c *Cortex) UserByGoogleSub(ctx context.Context, sub string) (*User, error) {
+	return tenancy.New(c.h).UserByGoogleSub(ctx, sub)
+}
+
+// ListUsers returns every user, oldest first.
+func (c *Cortex) ListUsers(ctx context.Context) ([]User, error) {
+	return tenancy.New(c.h).ListUsers(ctx)
+}
+
+// BindBootstrap attaches a Google identity to the bootstrap user, keeping
+// its existing data. It fails if the bootstrap user is already bound.
+func (c *Cortex) BindBootstrap(ctx context.Context, googleSub, email, name string) (*User, error) {
+	return tenancy.New(c.h).BindBootstrap(ctx, googleSub, email, name)
+}
+
+// ResolveUserRef resolves an admin reference: a user ID, else a verified
+// email. Several matches is an error listing the IDs; none is ErrNotFound.
+func (c *Cortex) ResolveUserRef(ctx context.Context, ref string) (*User, error) {
+	return tenancy.New(c.h).ResolveUserRef(ctx, ref)
+}
+
+// OwnerEntityID returns the ID of the handle's user's owner (person) entity,
+// or ErrNotFound when the user has none.
+func (c *Cortex) OwnerEntityID(ctx context.Context) (string, error) {
+	return tenancy.New(c.h).OwnerEntityID(ctx)
+}
+
+// ComputeUsage measures this user's rows now. Bytes is the sum of
+// pg_column_size over every row the user owns, including embeddings of all
+// generations and soft-deleted rows (they still occupy space until purged).
+func (c *Cortex) ComputeUsage(ctx context.Context) (Usage, error) {
+	return tenancy.New(c.h).ComputeUsage(ctx)
+}
+
+// RefreshUsage computes the usage and stores it in users.usage_json (the
+// nightly job calls this).
+func (c *Cortex) RefreshUsage(ctx context.Context) (Usage, error) {
+	return tenancy.New(c.h).RefreshUsage(ctx)
+}
+
+// CachedUsage returns the figures stored by the nightly job. ok is false
+// when none are cached yet; it never measures, so it is cheap on a page load.
+func (c *Cortex) CachedUsage(ctx context.Context) (u Usage, ok bool, err error) {
+	return tenancy.New(c.h).CachedUsage(ctx)
+}
+
+// Usage returns the cached figures, or computes them live when none are cached.
+func (c *Cortex) Usage(ctx context.Context) (Usage, error) {
+	return tenancy.New(c.h).Usage(ctx)
+}
+
+// NewMemoriesSince groups this user's live memories created after since by
+// the connection that wrote them, with each group's newest perGroup
+// memories. Groups are ordered by their newest memory, newest first. It is
+// one indexed query and never calls a model.
+func (c *Cortex) NewMemoriesSince(ctx context.Context, since time.Time, perGroup int) ([]ConnectionNew, error) {
+	return tenancy.New(c.h).NewMemoriesSince(ctx, since, perGroup)
+}
+
+// WrittenSince counts this user's live memories created after since, per
+// writing connection ID ("" for none).
+func (c *Cortex) WrittenSince(ctx context.Context, since time.Time) (map[string]int, error) {
+	return tenancy.New(c.h).WrittenSince(ctx, since)
+}
+
+// ListMemories pages this user's live memories, newest first unless
+// f.Oldest, and returns the total number matching the filter.
+func (c *Cortex) ListMemories(ctx context.Context, f MemoryListFilter, limit, offset int) ([]Memory, int, error) {
+	return tenancy.New(c.h).ListMemories(ctx, f, limit, offset)
+}
+
+// AppliedMigrations returns the versions recorded in schema_migrations, ascending.
+func (c *Cortex) AppliedMigrations(ctx context.Context) ([]int, error) {
+	return c.h.AppliedMigrations(ctx)
+}
+
+// RenderDecayMarkdown renders a DecayReport as human-readable markdown.
+func RenderDecayMarkdown(r DecayReport) string { return render.RenderDecayMarkdown(r) }
+
+// RenderExpireMarkdown renders a ExpireReport as human-readable markdown,
+// mirroring RenderDecayMarkdown.
+func RenderExpireMarkdown(r ExpireReport) string { return render.RenderExpireMarkdown(r) }
+
+// RenderLintMarkdown formats a LintReport as a human-readable markdown
+// document. Exported wrapper for CLI consumption.
+func RenderLintMarkdown(r LintReport) string { return render.RenderLintMarkdown(r) }
+
+// RenderMaintainMarkdown renders a MaintainReport by composing the per-pass
+// renders under a single header. Sub-passes toggled off (nil) are noted as
+// skipped.
+func RenderMaintainMarkdown(r MaintainReport) string { return render.RenderMaintainMarkdown(r) }
+
+// RenderProfileMarkdown renders a Profile as a human-readable markdown digest.
+func RenderProfileMarkdown(p Profile) string { return render.RenderProfileMarkdown(p) }
+
+// RenderProfileReportMarkdown renders a ProfileReport (the Maintain pass
+// summary).
+func RenderProfileReportMarkdown(r ProfileReport) string {
+	return render.RenderProfileReportMarkdown(r)
+}
+
+// RenderReconcileMarkdown renders a ReconcileReport as a human-readable
+// markdown summary, mirroring RenderLintMarkdown. It uses dry-run wording
+// ("Proposed", "Rejected by gate"); use RenderReconcileMarkdownMode to render
+// the applied-path wording.
+func RenderReconcileMarkdown(r ReconcileReport) string { return render.RenderReconcileMarkdown(r) }
+
+// RenderReconcileMarkdownMode renders a ReconcileReport as a human-readable
+// markdown summary. When applied is false the report describes a dry-run
+// ("Proposed Supersessions", "Rejected by gate"); when applied is true the
+// report describes the result of an apply run ("Applied Supersessions",
+// "Skipped (re-validation)"), where r.Proposed lists what was applied and
+// r.Rejected lists re-validation skips.
+func RenderReconcileMarkdownMode(r ReconcileReport, applied bool) string {
+	return render.RenderReconcileMarkdownMode(r, applied)
+}
+
+// RenderRelationMarkdown renders a RelationReport as human-readable markdown,
+// mirroring RenderReconcileMarkdown.
+func RenderRelationMarkdown(r RelationReport) string { return render.RenderRelationMarkdown(r) }

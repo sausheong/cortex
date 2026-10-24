@@ -3,9 +3,13 @@ package cortex
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/sausheong/cortex/internal/ingest"
 	"github.com/sausheong/cortex/internal/memory"
+	"github.com/sausheong/cortex/internal/query"
 )
 
 // PutMemory inserts a memory and its entity links into the database.
@@ -159,4 +163,134 @@ func (c *Cortex) WithGeneration(g int) *Cortex {
 	h2 := *c.h
 	h2.PinnedGen = g
 	return &Cortex{h: &h2}
+}
+
+// Remember extracts entities, relationships, memories, and chunks from the
+// provided content and stores them in the knowledge graph.
+func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberOption) error {
+	return ingest.New(c.h).Remember(ctx, content, opts...)
+}
+
+// Forget removes knowledge from the graph based on the provided filter
+// (EntityID or Source). The removal is a recoverable soft delete: matching
+// entities, their relationships and chunks are marked deleted in one batch
+// (see ListDeleteBatches, RestoreBatch) and purged after 30 days. Memory
+// links are kept, so a memory whose only entities were forgotten is still
+// recalled.
+func (c *Cortex) Forget(ctx context.Context, f Filter) error {
+	return ingest.New(c.h).Forget(ctx, f)
+}
+
+// RecallWithStrength runs Recall and adds an aggregate strength score plus
+// an abstention hint. Use this when the caller (e.g. an agent) needs to
+// decide whether the knowledge graph actually knows the answer.
+func (c *Cortex) RecallWithStrength(ctx context.Context, query string, opts ...RecallOption) (RecallResult, error) {
+	return memory.New(c.h).RecallWithStrength(ctx, query, opts...)
+}
+
+// Recall searches the knowledge graph using multiple retrieval strategies,
+// merges the results via reciprocal rank fusion, and returns a unified
+// ranked list of Result items.
+func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption) ([]Result, error) {
+	return memory.New(c.h).Recall(ctx, query, opts...)
+}
+
+// IsEmbedPartial reports whether err only means some embeddings are pending.
+func IsEmbedPartial(err error) bool {
+	var p *EmbedPartialError
+	return errors.As(err, &p)
+}
+
+// IsExtractPartial reports whether err only means some sections were not
+// analysed.
+func IsExtractPartial(err error) bool {
+	var p *ExtractPartialError
+	return errors.As(err, &p)
+}
+
+// BackfillEmbeddings embeds up to limit rows that have no vector at the
+// active generation (for example after a provider outage during Remember).
+// It returns how many rows it embedded; a provider error stops the batch.
+func (c *Cortex) BackfillEmbeddings(ctx context.Context, limit int) (int, error) {
+	if c.h.Cfg.Embedder == nil {
+		return 0, nil
+	}
+	gen, err := c.ActiveGeneration(ctx)
+	if err != nil {
+		return 0, err
+	}
+	items, err := c.PendingEmbeddings(ctx, gen, limit)
+	if err != nil {
+		return 0, err
+	}
+	done := 0
+	for start := 0; start < len(items); start += memory.EmbedBatchSize {
+		batch := items[start:min(start+memory.EmbedBatchSize, len(items))]
+		texts := make([]string, len(batch))
+		for i, it := range batch {
+			texts[i] = it.Text
+		}
+		vecs, err := c.h.Cfg.Embedder.Embed(ctx, texts)
+		if err != nil {
+			return done, fmt.Errorf("cortex: backfill embedding: %w", err)
+		}
+		for i := 0; i < len(vecs) && i < len(batch); i++ {
+			if err := c.PutEmbeddingGen(ctx, batch[i].ID, batch[i].RefType, gen, vecs[i]); err != nil {
+				return done, err
+			}
+			done++
+		}
+	}
+	return done, nil
+}
+
+// WhoIs resolves a mention (a name, alias, email, phone or handle) and
+// returns the entity with its aliases, current relationships (named) and
+// current memories, static ones first. When the mention does not resolve
+// confidently, the card is empty and Candidates lists the closest entities.
+func (c *Cortex) WhoIs(ctx context.Context, mention string) (*EntityCard, error) {
+	return query.New(c.h).WhoIs(ctx, mention)
+}
+
+// Describe returns the EntityCard of a known entity.
+func (c *Cortex) Describe(ctx context.Context, entityID string) (*EntityCard, error) {
+	return query.New(c.h).Describe(ctx, entityID)
+}
+
+// Path returns a shortest chain of current relationships linking two
+// entities (in either direction), at most maxHops long (default 4, capped at
+// 6), or nil when they are not connected within that distance. The owner is
+// only used as an end, never as a stepping stone: everything connects
+// through the owner, which says nothing.
+func (c *Cortex) Path(ctx context.Context, fromID, toID string, maxHops int) ([]NamedEdge, error) {
+	return query.New(c.h).Path(ctx, fromID, toID, maxHops)
+}
+
+// Timeline returns an entity's history, oldest first: its memories (dated by
+// when they became true, else when they were recorded), and the start and
+// end of its relationships. since, when non-zero, drops earlier events;
+// limit (default 100) keeps the most recent. Retired memories are included,
+// so the timeline shows what used to be true.
+func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time, limit int) ([]TimelineEvent, error) {
+	return query.New(c.h).Timeline(ctx, entityID, since, limit)
+}
+
+// WhatChanged lists what was added to or retired from the graph since t:
+// new entities, memories and relationships (by when they were recorded),
+// memories that stopped being current, and relationships whose end falls
+// after t (by when they ended, which for a back-dated end may be before it
+// was recorded). Each list holds at most limit items (default 50), newest
+// first.
+func (c *Cortex) WhatChanged(ctx context.Context, since time.Time, limit int) (*Changes, error) {
+	return query.New(c.h).WhatChanged(ctx, since, limit)
+}
+
+// Link records a relationship known for certain (from structured data such
+// as an email header), without free-text extraction. Each end is an entity
+// ID, or a name or identifier resolved like an ingested mention; one that
+// resolves to nothing is created with the given type (default person), and
+// an identifier used as its name is kept as an alias. The verb is mapped
+// onto the curated vocabulary as in Remember.
+func (c *Cortex) Link(ctx context.Context, r LinkRequest) (*NamedEdge, error) {
+	return query.New(c.h).Link(ctx, r)
 }
