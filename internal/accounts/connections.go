@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/workset"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -446,8 +447,9 @@ func (st *Store) DeleteAccount(ctx context.Context, userID string) error {
 }
 
 // WorksetDrop is a hook set by the workset cache (Task 11) to evict a user's
-// decrypted working set when the account is soft-deleted.
-var WorksetDrop func(userID string)
+// decrypted working set when the account is soft-deleted (and on logout). It
+// defaults to workset.Drop, which only evicts the cache.
+var WorksetDrop func(userID string) = workset.Drop
 
 // RestoreAccount clears deleted_at. Connections stay revoked.
 func (st *Store) RestoreAccount(ctx context.Context, userID string) error {

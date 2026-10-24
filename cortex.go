@@ -5,6 +5,8 @@ import (
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/store"
+	// Linked for its init: installs the store.OnWrite cache-invalidation hook.
+	_ "github.com/sausheong/cortex/internal/workset"
 )
 
 // Cortex is the main knowledge graph store backed by Postgres.
