@@ -91,11 +91,3 @@ func TestProfileEligibleIncludesOwnerByFlag(t *testing.T) {
 		t.Fatalf("source-text owner wrongly eligible: %v", ids)
 	}
 }
-
-// markOwner flags an entity as the owner (fixture helper).
-func markOwner(t *testing.T, c *Cortex, id string) {
-	t.Helper()
-	if _, err := c.h.DB.ExecContext(context.Background(), `UPDATE entities SET is_owner = TRUE WHERE id = ?`, id); err != nil {
-		t.Fatal(err)
-	}
-}

@@ -2,7 +2,6 @@ package cortex
 
 import (
 	"context"
-	"sort"
 	"testing"
 )
 
@@ -81,17 +80,4 @@ func testBulkLoadersMatchPerEntity(t *testing.T) {
 			t.Errorf("%s relationships: bulk %d, per-entity %d", e.Name, n, len(wantRels))
 		}
 	}
-}
-
-func ids(ms []Memory) string {
-	s := make([]string, len(ms))
-	for i, m := range ms {
-		s[i] = m.ID
-	}
-	sort.Strings(s)
-	out := ""
-	for _, id := range s {
-		out += id + ","
-	}
-	return out
 }

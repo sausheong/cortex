@@ -33,14 +33,6 @@ func sdCount(t *testing.T, c *Cortex, q string, args ...any) int {
 	return n
 }
 
-func sdEmbed(t *testing.T, c *Cortex, id, typ, text string) {
-	t.Helper()
-	vecs, _ := c.h.Cfg.Embedder.Embed(context.Background(), []string{text})
-	if err := c.putEmbedding(context.Background(), id, typ, vecs[0]); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestSoftDeleteHidesEverywhere(t *testing.T) { forEachMode(t, testSoftDeleteHidesEverywhere) }
 
 func testSoftDeleteHidesEverywhere(t *testing.T) {

@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/sausheong/cortex/internal/pgtest"
 )
 
 // isoWorld is two users with identically named content.
@@ -18,26 +16,6 @@ type isoWorld struct {
 	aMem, bMem     *Memory
 	aMem2, bMem2   *Memory
 	aChunk, bChunk *Chunk
-}
-
-// twoUsers returns handles for two fresh users sharing one database.
-func twoUsers(t *testing.T) (a, b *Cortex) {
-	t.Helper()
-	root, err := Open(pgtest.DSN(t), WithEmbedder(&testEmbedder{}))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { root.Close() })
-	ctx := context.Background()
-	ua, err := root.CreateUser(ctx, "sub-a", "a@example.com", "A", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ub, err := root.CreateUser(ctx, "sub-b", "b@example.com", "B", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return keyedHandle(t, root, ua.ID), keyedHandle(t, root, ub.ID)
 }
 
 func seedIso(t *testing.T, cx *Cortex, tag string) (e, e2 *Entity, m, m2 *Memory, ch *Chunk) {

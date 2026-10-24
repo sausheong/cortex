@@ -393,50 +393,6 @@ func testRecall_MMRSkippedForSingleRetrievalMode(t *testing.T) {
 	}
 }
 
-// mockLLM is a test-only LLM mock.
-type mockLLM struct {
-	extractFn         func(ctx context.Context, text, prompt string) (ExtractionResult, error)
-	decomposeFn       func(ctx context.Context, query string) ([]StructuredQuery, error)
-	summarizeFn       func(ctx context.Context, texts []string) (string, error)
-	detectConflictsFn func(ctx context.Context, memories []Memory) ([]ConflictPair, error)
-	detectRelationsFn func(ctx context.Context, memories []Memory) ([]MemoryRelation, error)
-}
-
-func (m *mockLLM) Extract(ctx context.Context, text, prompt string) (ExtractionResult, error) {
-	if m.extractFn != nil {
-		return m.extractFn(ctx, text, prompt)
-	}
-	return ExtractionResult{}, nil
-}
-
-func (m *mockLLM) Decompose(ctx context.Context, query string) ([]StructuredQuery, error) {
-	if m.decomposeFn != nil {
-		return m.decomposeFn(ctx, query)
-	}
-	return nil, nil
-}
-
-func (m *mockLLM) Summarize(ctx context.Context, texts []string) (string, error) {
-	if m.summarizeFn != nil {
-		return m.summarizeFn(ctx, texts)
-	}
-	return "", nil
-}
-
-func (m *mockLLM) DetectConflicts(ctx context.Context, memories []Memory) ([]ConflictPair, error) {
-	if m.detectConflictsFn != nil {
-		return m.detectConflictsFn(ctx, memories)
-	}
-	return nil, nil
-}
-
-func (m *mockLLM) DetectRelations(ctx context.Context, memories []Memory) ([]MemoryRelation, error) {
-	if m.detectRelationsFn != nil {
-		return m.detectRelationsFn(ctx, memories)
-	}
-	return nil, nil
-}
-
 func TestMockLLM_SatisfiesReconciler(t *testing.T) {
 	var r Reconciler = &mockLLM{
 		detectConflictsFn: func(_ context.Context, mems []Memory) ([]ConflictPair, error) {

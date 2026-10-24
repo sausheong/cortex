@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/store"
+	"github.com/sausheong/cortex/internal/testhook"
 )
 
 // MockLLM is a configurable mock for the cortex.LLM interface.
@@ -111,3 +113,9 @@ func OpenTestDB(t *testing.T) *cortex.Cortex {
 	)
 	return c
 }
+
+// H returns the store handle behind c, for tests that need raw SQL or config.
+func H(c *cortex.Cortex) *store.Handle { return testhook.Handle(c) }
+
+// Wrap builds a *cortex.Cortex around a store handle.
+func Wrap(h *store.Handle) *cortex.Cortex { return testhook.Wrap(h).(*cortex.Cortex) }

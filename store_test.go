@@ -9,15 +9,6 @@ import (
 	"github.com/sausheong/cortex/internal/pgtest"
 )
 
-func schemaVersion(t *testing.T, c *Cortex) int {
-	t.Helper()
-	var v int
-	if err := c.h.DB.QueryRowContext(context.Background(), `SELECT max(version) FROM schema_migrations`).Scan(&v); err != nil {
-		t.Fatalf("schema_migrations: %v", err)
-	}
-	return v
-}
-
 func TestOpenAppliesMigrations(t *testing.T) {
 	c, err := Open(pgtest.DSN(t))
 	if err != nil {

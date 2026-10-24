@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/sausheong/cortex/internal/pgtest"
-	"github.com/sausheong/cortex/internal/tenancy"
 )
 
 func TestAddAlias_ConflictAndResolve(t *testing.T) { forEachMode(t, testAddAlias_ConflictAndResolve) }
@@ -41,28 +38,6 @@ func testAddAlias_ConflictAndResolve(t *testing.T) {
 	if err != nil || len(al) != 1 || al[0].Kind != AliasEmail {
 		t.Errorf("Aliases = %v %v", al, err)
 	}
-}
-
-// ownerCortex returns a handle scoped to a fresh user whose owner entity is
-// named name.
-func ownerCortex(t *testing.T, name, email string) (*Cortex, string) {
-	t.Helper()
-	root, err := Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { root.Close() })
-	u, err := root.CreateUser(context.Background(), "", email, name, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, uk := keyedHandleUK(t, root, u.ID)
-	sealOwner(t, root, uk, u.ID, name)
-	ownerID, err := tenancy.New(c.h).OwnerEntityID(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c, ownerID
 }
 
 func TestRemember_AnchorsOwnerAndLearnsAliases(t *testing.T) {

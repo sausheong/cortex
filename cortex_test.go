@@ -420,18 +420,6 @@ func testRememberUnresolvableRelationshipSkipped(t *testing.T) {
 	}
 }
 
-// mockExtractor is a test-only extractor mock.
-type mockExtractor struct {
-	extractFn func(ctx context.Context, content, contentType string) (*Extraction, error)
-}
-
-func (m *mockExtractor) Extract(ctx context.Context, content, contentType string) (*Extraction, error) {
-	if m.extractFn != nil {
-		return m.extractFn(ctx, content, contentType)
-	}
-	return &Extraction{}, nil
-}
-
 func TestRemember_EventTimeFlowsToAsOfRecall(t *testing.T) {
 	forEachMode(t, testRemember_EventTimeFlowsToAsOfRecall)
 }

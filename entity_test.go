@@ -7,19 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/sausheong/cortex/internal/pgtest"
 )
-
-func openTestDB(t *testing.T) *Cortex {
-	t.Helper()
-	c, err := Open(pgtest.DSN(t))
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-	t.Cleanup(func() { c.Close() })
-	return modeHandle(t, c)
-}
 
 func TestPutAndGetEntity(t *testing.T) { forEachMode(t, testPutAndGetEntity) }
 

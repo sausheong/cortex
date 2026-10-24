@@ -7,17 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
-
-	"github.com/sausheong/cortex/internal/llmutil"
 )
-
-func fastBackoff(t *testing.T) {
-	t.Helper()
-	old := llmutil.Backoff
-	llmutil.Backoff = func(int) time.Duration { return time.Millisecond }
-	t.Cleanup(func() { llmutil.Backoff = old })
-}
 
 func TestReconcile_TimeoutSkipsEntityAndContinues(t *testing.T) {
 	forEachMode(t, testReconcile_TimeoutSkipsEntityAndContinues)

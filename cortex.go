@@ -7,6 +7,7 @@ import (
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/store"
+	"github.com/sausheong/cortex/internal/testhook"
 	// Linked for its init: installs the store.OnWrite cache-invalidation hook.
 	_ "github.com/sausheong/cortex/internal/workset"
 )
@@ -14,6 +15,13 @@ import (
 // Cortex is the main knowledge graph store backed by Postgres.
 type Cortex struct {
 	h *store.Handle
+}
+
+// init installs the test-only accessors in internal/testhook. They are not
+// part of the public API.
+func init() {
+	testhook.Handle = func(c any) *store.Handle { return c.(*Cortex).h }
+	testhook.Wrap = func(h *store.Handle) any { return &Cortex{h: h} }
 }
 
 // Open connects to the Postgres database at dsn and applies pending migrations.

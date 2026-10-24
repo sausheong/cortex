@@ -2,55 +2,8 @@ package cortex
 
 import (
 	"context"
-	"math"
 	"testing"
-
-	"github.com/sausheong/cortex/internal/pgtest"
 )
-
-func openTestDBWithEmbedder(t *testing.T) *Cortex {
-	t.Helper()
-	embedder := &testEmbedder{}
-	c, err := Open(pgtest.DSN(t), WithEmbedder(embedder))
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-	t.Cleanup(func() { c.Close() })
-	return modeHandle(t, c)
-}
-
-// testEmbedder produces deterministic 8-dim normalized vectors from text bytes.
-type testEmbedder struct{}
-
-func (e *testEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
-	result := make([][]float32, len(texts))
-	for i, text := range texts {
-		result[i] = testDeterministicVector(text)
-	}
-	return result, nil
-}
-
-func (e *testEmbedder) Dimensions() int { return 8 }
-
-func testDeterministicVector(text string) []float32 {
-	const dims = 8
-	vec := make([]float32, dims)
-	for i, b := range []byte(text) {
-		vec[i%dims] += float32(b)
-	}
-	// Normalize to unit length.
-	var norm float64
-	for _, v := range vec {
-		norm += float64(v) * float64(v)
-	}
-	norm = math.Sqrt(norm)
-	if norm > 0 {
-		for i := range vec {
-			vec[i] = float32(float64(vec[i]) / norm)
-		}
-	}
-	return vec
-}
 
 func TestStoreAndSearchEmbedding(t *testing.T) { forEachMode(t, testStoreAndSearchEmbedding) }
 
