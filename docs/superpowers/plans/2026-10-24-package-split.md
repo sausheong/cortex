@@ -9,8 +9,8 @@ Branch: `restructure`. Baseline commit for API comparison: `880d057`.
 1. `*Cortex` is a struct of `db dbConn, cfg config, userID, pinnedGen, connID`, and about 110 exported methods plus many unexported helper methods hang off it. Go cannot define methods on a type from another package, so internal packages cannot keep `func (c *Cortex)` as is.
 2. A corrected file-level call graph (calls only, not type or name mentions) shows these real cycles: `entity <-> identity <-> resolve`, `relationship <-> traverse`, `recall <-> recall_graph`. Everything else is layered. Many apparent cross-file edges are only shared helpers (`logf`, `newID`, `nullTimePtr`, `augmentForEmbedding`, `normKey`, `truncate`), which sink to a lower package.
 3. Layering that falls out of the graph (low to high): pure helpers, store, graph cluster, memory cluster, query / maintain / tenancy, ingest. `recall` calls `GetEntity` and `GetRelationships` (so memory sits above graph); `profile`, `compaction`, `reconcile`, `relate` call recall, memory and entity (so maintain sits above both); `Remember` calls nearly everything (so ingest is on top).
-4. Test helpers (`mockLLM`, `mockExtractor`, `testEmbedder`, `batchEmbedder`, `ownerCortex`, `twoUsers`, ...) are shared across the root test files, and `internal/testutil` imports the root package. DB-backed tests therefore cannot move into internal packages without a cycle or duplicated mocks. They stay at the root. Only pure unit tests move.
-5. `/docs` and `/openspec` are in `.gitignore`. Only `docs/deploy.md` is tracked there (plus this plan, force-added). `docs/CORTEX.md` and the research note are untracked, so they move with plain `mv`, and `openspec/` is deleted with `rm -rf`. Root `testdata/` is tracked but no test or doc references it (the live fixtures are `vault/testdata` and `internal/sqliteimport/testdata`), so it is `git rm`ed rather than moved.
+4. Test strategy. Only `team_test.go` is `package cortex_test` today (it imports `internal/testutil`, which imports the root). The other 47 test files are `package cortex`, share helpers (`mockLLM`, `mockExtractor`, `testEmbedder`, `batchEmbedder`, `ownerCortex`, `twoUsers`, ...) and touch unexported fields (`c.db` ~94 uses, `c.cfg` ~16, `c.userID` ~28) and unexported methods that will live in internal packages (`putEmbedding`, `getMemoryByID`, `distillBucket`, `embeddingByRef`, `searchVectorRaw`, `searchMemoriesMode`, `profileEligibleIDs`, `neighbourhood`, `addAliasQuiet`, `migrate`, `migrateUpTo`, `loadMigrations`). Decision: DB tests stay at the root as `package cortex` (NOT converted to `cortex_test`), so helpers and unexported identifiers keep working. Fields are handled by sed (`c.db` to `c.h.DB`, `c.cfg` to `c.h.Cfg`, `c.userID` to `c.h.UserID`). Moved methods are exported on the owning internal `Ops` type (for example `memory.Ops.PutEmbedding`), and one root test-only file `whitebox_test.go` (package cortex) re-declares each as a thin unexported method (`func (c *Cortex) putEmbedding(...) error { return memory.New(c.h).PutEmbedding(...) }`) so test bodies are unchanged. The list is finalised by compile errors; each stage commit message lists the wrappers it added. Exceptions that move into internal packages because pure or store-only: `migrate_test`, `db_test` (to `internal/store`, using `internal/pgtest`, which does not import the root), plus the pure unit tests in the table below. `internal/testutil` keeps importing the root and is only used by `package cortex_test` files.
+5. `/docs` and `/openspec` are in `.gitignore`. Tracked under docs today: `docs/deploy.md` and this plan (force-added). `docs/CORTEX.md` and `docs/cortex-improvements-from-memory-research.md` are untracked. Because `/docs` is ignored, the moved files are added with `git add -f docs/design docs/ops` so they are committed and README links resolve (leave `.gitignore` alone; `docs/superpowers` is already force-tracked). `openspec/` is deleted with `rm -rf` and `/openspec` removed from `.gitignore`. Root `testdata/` (tracked: five markdown notes and `team.csv`) is referenced by no Go test, Makefile, script or doc (`cmd/cortex/admin_test.go` reads `internal/sqliteimport/testdata`), so there is no test to move it next to. It is not deleted: `git mv testdata examples/sample-notes` so the sample fixtures survive as sample import data. Call this out in the stage 1 commit body and final report.
 6. `//go:embed migrations/*.sql` needs the directory inside the package that embeds it, so `migrations/` moves to `internal/store/migrations/`. No other file references the path.
 7. `cmd/cortex/CORTEX.md.template` has a comment pointing at `docs/CORTEX.md`; update it to `docs/design/CORTEX.md`.
 
@@ -20,18 +20,20 @@ Dependency direction is strictly downward; no package imports one above it.
 
 | Package | Contents (current files) | Imports |
 |---|---|---|
-| `internal/model` | All exported data types, interfaces (`LLM`, `Embedder`, `Extractor`, `Reconciler`, `RelationDetector`, ...), option types plus their `With*` constructors, option config structs (fields exported, e.g. `RecallConfig`), `Config` (llm, embedder, extractor, logf, migration timeout), constants, sentinel errors and error types (`ErrNotFound`, `notFoundError`, `ErrEntityNameTaken`, `EmbedPartialError`, `ExtractPartialError`), `TemporalMode` and clause helpers (`temporal.go`), `coerceConfidence`, `extractionJSON`. Everything from `types.go`, plus the type decls scattered in `identity`, `graph`, `queries`, `usage`, `reembed`, `compaction`, `normalize_graph`, `user`, `embedfail`, `extractchunks`. Types that have methods live here so root aliases carry the methods. | stdlib only |
+| `internal/model` | All exported data types, interfaces (`LLM`, `Embedder`, `Extractor`, `Reconciler`, `RelationDetector`, ...), `Option` (`func(*Config)` form) and `Config`, per-call option types plus their `With*` constructors and config structs (exported fields), constants, sentinel errors and error types (`ErrNotFound`, `NotFoundError` plus constructor `NotFound(format, args...)` moved from `user.go`, `ErrEntityNameTaken` struct with pointer-receiver `Error`, `EmbedPartialError`, `ExtractPartialError`), `TemporalMode` (exported, with `Clause`), `EmbedFailures` (exported, with `Add`, `Merge`, `Err`, `AddN`), `coerceConfidence`, and `extraction_json.go` (pure JSON parsing into model types, kept here). Everything from `types.go` plus type decls scattered in `identity`, `graph`, `queries`, `usage`, `reembed`, `compaction`, `normalize_graph`, `user`, `embedfail`, `extractchunks`. Types with methods live here so root aliases carry the methods. | stdlib only |
 | `internal/ontology` | `ontology.go`, `normalize.go` (`NormKey`, `normTypeSQL`, `Canonical*`, vocabulary) | stdlib |
-| `internal/vecmath` | `math.go` (cosine, float32 codec, rrf, mmr, decay math) | stdlib |
-| `internal/llmutil` | `retry.go` (`RetryLLM`, `IsTransientLLMErr`, `AddReportError`, `Backoff` var), `split.go` (`SplitContent`), `Truncate`, `TruncateRunes`, `EscapeLike` | stdlib |
-| `internal/store` | `Handle` (below), `db.go` (`DB`, `Tx`, `Rebind`), `migrate.go`, `migrations/`, `id.go` (`NewID`), `scope.go` (`RequireEntity`, `RequireMemory`, not-found constructors), `NullTimePtr`, `Logf`, `NullConn`, `Open`/`Close` internals (connect timeout, pgconn parse, migrate) | model, stdlib, pgx |
-| `internal/graph` | `entity`, `identity`, `resolve`, `softdelete`, `relationship`, `traverse`, `graph.go`, `normalize_graph`, `lint`, `scope`-dependent graph ops. One package because of the SCCs in finding 2. Exports `Ops`, `ResolveContext`. | model, ontology, llmutil, store |
-| `internal/memory` | `memory`, `memory_edge`, `chunk`, `search`, `vector`, `embedfail` (`EmbedFailures`, `EmbedTarget`), `reembed`, `recall`, `recall_graph`, `bulk`, `augmentForEmbedding` (exported `AugmentForEmbedding`). | model, vecmath, llmutil, ontology, store, graph |
-| `internal/query` | `queries.go` (WhoIs, Describe, Path, Timeline, WhatChanged, Link). Needs graph and memory, so it sits above both. | + memory, graph |
-| `internal/maintain` | `decay`, `expire`, `reconcile`, `relate`, `compaction`, `profile`, `maintain` | + memory, graph |
-| `internal/tenancy` | `user.go` (users, accounts CRUD), `usage.go` | model, store |
-| `internal/ingest` | `cortex.go` (`Remember`, `Forget`, helpers `ownerVoice`, `memoryEntityIDs`), `extractchunks.go` (`ExtractParts`, `MergeExtractions`) | + memory, graph, ontology, llmutil |
+| `internal/vecmath` | `math.go` (cosine, float32 codec, rrf, mmr, decay math) plus `Jaccard` (moved from `profile.go`, used by `identity.go`) | stdlib |
+| `internal/llmutil` | `retry.go` (`RetryLLM`, `IsTransientLLMErr`, `AddReportError`, exported var `Backoff`), `split.go` (`SplitContent`), `Truncate`, `TruncateRunes`, `EscapeLike` | stdlib |
+| `internal/store` | `Handle` (below), `db.go` (`DB`, `Tx`, `Rebind`), `migrate.go` as Handle/store functions (`Migrate`, `MigrateUpTo`, `LoadMigrations`), `migrations/`, `id.go` (`NewID`), `scope.go` (`RequireEntity`, `RequireMemory`; they build errors via `model.NotFound`), `NullTimePtr` (from `memory.go`), `Logf`, `NullConn`, `Open`/`Close` internals (connect timeout, pgconn parse, migrate) | model, stdlib, pgx |
+| `internal/tenancy` | `user.go` (users, accounts CRUD, `OwnerEntityID`; `ForUser`/`UserID` stay in root), `usage.go` (usage, `ListMemories`, `MemoryListFilter` usage). Both are self-contained SQL over `users`/`memories`, so tenancy sits directly above store and below graph. Created in stage 4. | model, llmutil, store |
+| `internal/graph` | `entity`, `identity`, `resolve`, `softdelete`, `relationship`, `traverse`, `graph.go`, `normalize_graph`, `lint`. One package because of the SCCs in finding 2. Exports `Ops`, `ResolveContext`. `EntityMentions` calls `tenancy.New(h).ListMemories`; `identity` and `normalize_graph` call `tenancy.New(h).OwnerEntityID`. | model, ontology, llmutil, vecmath, store, tenancy |
+| `internal/memory` | `memory`, `memory_edge`, `chunk`, `search`, `vector`, `reembed`, `recall`, `recall_graph` (`graphContext` stays unexported here; its only users are in this package, confirm), `bulk`, `AugmentForEmbedding`, `compaction`'s memory-only helpers if any. `recall_graph` uses `tenancy.OwnerEntityID`; `vector` and compaction use `model.NotFound`. | model, vecmath, llmutil, ontology, store, tenancy, graph |
+| `internal/query` | `queries.go` (WhoIs, Describe, Path, Timeline, WhatChanged, Link). | + memory, graph, tenancy |
+| `internal/maintain` | `decay`, `expire`, `reconcile`, `relate`, `compaction`, `profile` (minus `jaccard`), `maintain` | + memory, graph, tenancy |
+| `internal/ingest` | `cortex.go` (`Remember`, `Forget`, helpers `ownerVoice`, `memoryEntityIDs`), `extractchunks.go` (`ExtractParts`, `MergeExtractions`) | + memory, graph, tenancy, ontology, llmutil |
 | `internal/render` | every `*_render.go` (pure string builders over `model` report types) | model |
+
+Cross-package symbol moves required by the layering (all verified against current definitions): `jaccard` (profile.go) to `vecmath.Jaccard`; `notFound`/`notFoundError` (user.go, not scope.go) to `model`; `OwnerEntityID` (user.go) and `ListMemories` (usage.go) to `tenancy`; `nullTimePtr` (memory.go) to `store.NullTimePtr`; `embedFailures` and `temporalMode` to exported `model` types. Method renames on exported-for-cross-package types: `add` to `Add`, `merge` to `Merge`, `err` to `Err`, `addN` to `AddN`, `clause` to `Clause`; `dbConn`/`dbTx` become `store.DB`/`store.Tx`.
 
 If `go build` reports a cycle that this table did not predict, the rule is: move the offending symbol to the lowest package both sides already import, never add an upward import. Record the move in the commit message.
 
@@ -49,7 +51,7 @@ type Handle struct {
 }
 ```
 
-Methods that only need these fields live on `*Handle` in store: `Logf`, `NullConn`, `Embedder`. `Handle` is copied by value for `ForUser` and `WithConnection` (same semantics as `n := *c` today).
+Methods that only need these fields live on `*Handle` in store: `Logf`, `NullConn`, `Embedder`. `ForUser` and `WithConnection` must deep-copy the Handle (`h2 := *c.h`, apply options to `h2.Cfg` only, new `Cortex{h: &h2}`), never copy the pointer; today `n := *c` copies `cfg`, a struct with func fields, by value. Rules: an `Ops` is built per call from the current `*Handle` and never stored in a struct or captured by a goroutine that outlives the call (check compaction and profile job goroutines); every cross-package accessor must pass the same `*Handle` (so `WithConnection` and `pinnedGen` are read from one place). Each stage review greps for `Ops` stored in fields and for `go func` closures capturing one.
 
 Each higher package defines `type Ops struct{ *store.Handle }` and a `New(h *store.Handle) Ops`. Existing method bodies keep their shape: `func (c *Cortex) PutEntity` becomes `func (c Ops) PutEntity`, so same-package calls `c.foo(...)` are untouched. The mechanical edits per file are limited to `c.db` to `c.DB`, `c.userID` to `c.UserID`, `c.cfg.x` to `c.Cfg.X`, `c.connID`, `c.pinnedGen`, and cross-package calls become `graph.New(c.Handle).GetEntity(...)` (a small unexported accessor per consumer package keeps this terse).
 
@@ -62,30 +64,29 @@ Root keeps: `doc.go`, `cortex.go` (type `Cortex struct{ h *store.Handle }`, `Ope
 Compatibility rules:
 - Types: `type Memory = model.Memory`. Never a defined type, so method sets and `errors.As` targets are identical.
 - Constants: `const AbstainThreshold = model.AbstainThreshold` (stay constants, untyped values preserved).
-- Sentinel vars: `var ErrNotFound = model.ErrNotFound` (same value, so `errors.Is` still works).
+- Sentinel vars: `var ErrNotFound = model.ErrNotFound` (same value, so `errors.Is` still works). `ErrEntityNameTaken` is a struct type with a pointer-receiver `Error`, not a sentinel: it is `type ErrEntityNameTaken = model.ErrEntityNameTaken`. Same for `EmbedPartialError`, `ExtractPartialError`.
 - Exported funcs (`With*`, `Canonical*`, `IsEmbedPartial`, `IsExtractPartial`, `Render*Markdown`, `AugmentForEmbedding`, `VocabularyPrompt`, ...) stay funcs, as wrappers, not `var f = pkg.F`.
 - Methods on exported types (`MaintainReport.SkippedItems`, `NamedEdge.String`, error `Error/Unwrap/Is`) are defined in `model`.
 - Error strings, SQL text, and migration file contents are moved verbatim (`git mv`, no edits to the SQL or `fmt.Errorf` strings; the `cortex:` prefix stays).
 
 ## Tests
 
-Rule: a test file whose tests only exercise pure functions moves with the code. A file that opens a database stays at the root (finding 4). Mixed files are split by function: pure tests move, DB tests stay in a root file of the same stem.
-
-Root DB tests become `package cortex_test` where they use only the exported API. Root `export_test.go` (package `cortex`, test-only) exposes what white-box DB tests still touch: raw `store.DB` (`c.h.DB`), `Cfg`, `UserID`, and any unexported function called directly (`migrateUpTo`, `loadMigrations`, `addAliasQuiet`, ...). These are found by compile errors, not guessed; the stage commit message lists them.
+Rule: a test file whose tests only exercise pure functions (or only store/migrations) moves with the code. A file that opens a database through the Cortex API stays at the root as `package cortex`. Mixed files are split by function: pure tests move, DB tests stay in a root file of the same stem; shared helpers defined in a split file (notably `ownerCortex` in `identity_test.go`) stay in the root file. Root test mechanics: sed `c.db` to `c.h.DB`, `c.cfg` to `c.h.Cfg`, `c.userID` to `c.h.UserID`; unexported method calls go through `whitebox_test.go` wrappers (finding 4); the `llmBackoff` swap in `retry_test` imports `internal/llmutil` and sets `llmutil.Backoff` directly (no shim).
 
 | Test file(s) | Destination |
 |---|---|
-| `types_test` | `internal/model` (stub reconciler is local to it) |
-| `math_test` | `internal/vecmath` |
-| `split_test`, pure part of `retry_test` (`TestIsTransientLLMErr`, backoff) | `internal/llmutil`; the `Reconcile_*` retry tests stay root |
-| `db_test` (`TestRebind`) | `internal/store` |
+| `types_test` | `internal/model` (stub reconciler local to it) |
+| `math_test` | `internal/vecmath` (plus a `Jaccard` test) |
+| `split_test`, pure part of `retry_test` (`TestIsTransientLLMErr`, backoff) | `internal/llmutil`; `Reconcile_*` retry tests stay root |
+| `db_test` (`TestRebind`), `migrate_test` (3+2 `migrate`/`migrateUpTo` cases, `loadMigrations`) | `internal/store` (uses `internal/pgtest`) |
 | `temporal_test` clause tests | `internal/model`; DB part stays root |
 | `ontology_test` pure parts | `internal/ontology`; DB parts stay root |
 | `*_render_test` (decay, expire, lint, maintain, profile, reconcile, relate) | `internal/render` |
 | pure parts of `identity_test` (`TestNameSimilarity`, alias normalisation), `graph_quality_test` (`TestNormalizeType`, `ParseExtractionJSON`), `recall_graph_test` (`TestQueryNgrams`), `profile_select_test` (`selectStaticCandidates`), `profile_test` (`isFresh`, partition) | the owning internal package |
-| everything else (`cortex_test`, `entity_test`, `memory_test`, `recall_test`, `softdelete_test`, `migrate_test`, `store_test`, `vector_test`, `search_test`, `reconcile_test`, `relate_test`, `maintain_test`, `decay_test`, `expire_test`, `compaction_test`, `isolation_test`, `team_test`, `bench_test`, `chunked_test`, `embedfail_test`, `provenance_test`, `queries_test`, `traverse_test`, `relationship_test`, `lint_test`, `bulk_test`, `chunk_test`, `memory_edge_test`, `temporal_edges_test`, `example_test`, remainder of the mixed files) | stay at root as `package cortex_test` |
+| everything else (`cortex_test`, `entity_test`, `memory_test`, `recall_test`, `softdelete_test`, `store_test`, `vector_test`, `search_test`, `reconcile_test`, `relate_test`, `maintain_test`, `decay_test`, `expire_test`, `compaction_test`, `isolation_test`, `bench_test`, `chunked_test`, `embedfail_test`, `provenance_test`, `queries_test`, `traverse_test`, `relationship_test`, `lint_test`, `bulk_test`, `chunk_test`, `memory_edge_test`, `temporal_edges_test`, remainder of mixed files) | stay at root, `package cortex` |
+| `team_test`, `example_test` | stay root, unchanged package (`cortex_test`) |
 
-`internal/accounts`, `internal/jobs`, `internal/web`, `internal/sqliteimport`, `internal/testutil`, `internal/pgtest`, `cmd/*`, `connector/`, `extractor/`, `llm/`, `vault/`, `eval/` import only the root package; aliases keep them compiling. Only `internal/testutil` and `internal/pgtest` must remain free of imports of the new internal packages' parents (they already are).
+`internal/accounts`, `internal/jobs`, `internal/web`, `internal/sqliteimport`, `internal/testutil`, `internal/pgtest`, `cmd/*`, `connector/`, `extractor/`, `llm/`, `vault/`, `eval/` import only the root package; aliases keep them compiling. `internal/pgtest` must not import the root (it does not today).
 
 ## Verification used at every stage
 
@@ -98,39 +99,40 @@ Root DB tests become `package cortex_test` where they use only the exported API.
 ## Stages (one commit each, build and tests green after each)
 
 **Stage 1. `chore: tidy repository`**
-- `rm -f cortex cortex-mcp`, `rm -rf bin/*` (ignored, no commit effect).
+- First copy untracked `docs/CORTEX.md` and `docs/cortex-improvements-from-memory-research.md` to `/tmp`.
+- `rm -f cortex cortex-mcp`, `rm -rf bin/*` (ignored).
 - `rm -rf openspec/`; drop `/openspec` from `.gitignore`.
-- `git rm -r testdata/` (unreferenced).
-- `mkdir docs/design docs/ops`; `git mv docs/deploy.md docs/ops/deploy.md`; plain `mv` of untracked `docs/CORTEX.md` and `docs/cortex-improvements-from-memory-research.md` into `docs/design/`. `docs/superpowers` unchanged.
-- Fix references: `README.md` (two links to `docs/deploy.md`), `cmd/cortex/CORTEX.md.template` comment, any script comment found by `grep -rn "docs/"`.
+- `mkdir -p examples && git mv testdata examples/sample-notes` (unreferenced fixtures kept as sample data; note in commit body).
+- `mkdir docs/design docs/ops`; `git mv docs/deploy.md docs/ops/deploy.md`; `mv` the two untracked docs into `docs/design/`; `git add -f docs/design docs/ops`. `docs/superpowers` unchanged.
+- Fix references: `README.md` (links to `docs/deploy.md` and `docs/CORTEX.md`), `cmd/cortex/CORTEX.md.template` comment to `docs/design/CORTEX.md`, any script comment found by `grep -rn "docs/"`.
 - Keep `PRODUCT.md`, `DESIGN.md`, `.impeccable/` untouched.
 
 **Stage 2. `refactor: extract model package`**
-Create `internal/model` with all types, interfaces, constants, errors, option constructors and config structs (exported fields), `TemporalMode`. Root gets `aliases.go`, `consts.go`, `options.go`; remaining root code switches to the `model` names through the aliases (no churn needed in bodies except config field renames `recallConfig.limit` to `RecallConfig.Limit`). Move `types_test`, `temporal_test` clause tests. Run apidiff (this is the stage most likely to expose a signature drift).
+Create `internal/model` with types, interfaces, constants, errors (`NotFound`, `NotFoundError`, `ErrEntityNameTaken`, partial errors), `Option`/`Config`, option constructors and config structs (exported fields), `TemporalMode`, `EmbedFailures`, `extraction_json.go`. Root gets `aliases.go`, `consts.go`, `options.go`; remaining root code uses model names through aliases; unexported `notFound` becomes a thin call to `model.NotFound`, `embedFailures`/`temporalMode` references switch to the exported model types with renamed methods. Move `types_test`, `temporal_test` clause tests. Run apidiff.
 
 **Stage 3. `refactor: extract pure helper packages`**
-Create `internal/ontology`, `internal/vecmath`, `internal/llmutil`. Move `ontology.go`, `normalize.go`, `math.go`, `retry.go`, `split.go` and truncate/escape helpers with their pure tests. Root keeps wrappers for exported functions (`Canonical*`, `VocabularyPrompt`, ...).
+Create `internal/ontology`, `internal/vecmath` (include `Jaccard` moved from `profile.go`), `internal/llmutil` (`Backoff` exported var; update `retry_test` to set `llmutil.Backoff`). Move files and pure tests. Root keeps wrappers for exported functions (`Canonical*`, `VocabularyPrompt`, ...).
 
-**Stage 4. `refactor: extract store package`**
-Create `internal/store`: `Handle`, `DB`/`Tx`/`Rebind`, `NewID`, `NullTimePtr`, scope checks, `Logf`/`NullConn`, `Open`/migrate. `git mv migrations internal/store/migrations` and update the `go:embed` line. Root `Cortex` becomes `struct{ h *store.Handle }`; all remaining root files read `c.h.DB`, `c.h.UserID` and so on (mechanical sed). Move `db_test`. Add root `export_test.go`; convert DB tests that touch internals to `package cortex_test` as needed. This is the stage that changes every root file, so it is deliberately before any package carve-out.
+**Stage 4. `refactor: extract store and tenancy packages`**
+Create `internal/store`: `Handle`, `DB`/`Tx`/`Rebind`, `NewID`, `NullTimePtr`, scope checks, `Logf`/`NullConn`, `Open` internals, and `migrate` as `Handle.Migrate`/`MigrateUpTo`/`LoadMigrations`. The `Option` type, `Config` and `With*` connection options already live in model (stage 2) so `Open` can move whole in this commit. `git mv migrations internal/store/migrations`, update `go:embed`. Root `Cortex` becomes `struct{ h *store.Handle }`; sed root files for `c.db`, `c.cfg`, `c.userID`, `c.pinnedGen`, `c.connID`. Move `db_test` and `migrate_test` to `internal/store`. Create `internal/tenancy` (`user.go` minus `ForUser`/`UserID`, `usage.go`, with `OwnerEntityID` and `ListMemories`); root `api_*` forwarders call `tenancy.New(c.h)`. Add `whitebox_test.go` as needed. This changes every root file, so it is deliberately before the graph carve-out. Implement `ForUser`/`WithConnection` as deep copies of the Handle and keep `isolation_test` green.
 
 **Stage 5. `refactor: extract graph package`**
-Move `entity`, `identity`, `resolve`, `softdelete`, `relationship`, `traverse`, `graph.go`, `normalize_graph`, `lint` into `internal/graph` with `Ops`. Remaining root code calls `graph.New(c.h)`. Pure test fragments move.
+Move `entity`, `identity`, `resolve`, `softdelete`, `relationship`, `traverse`, `graph.go`, `normalize_graph`, `lint` into `internal/graph` with `Ops`. Calls to `jaccard`, `notFound`, `nullTimePtr`, `OwnerEntityID`, `ListMemories` are already in lower packages (stages 2 to 4). Pure test fragments move; add `whitebox_test.go` wrappers (`addAliasQuiet` etc.).
 
 **Stage 6. `refactor: extract memory package`**
-Move `memory`, `memory_edge`, `chunk`, `search`, `vector`, `embedfail`, `reembed`, `recall`, `recall_graph`, `bulk`. Export `AugmentForEmbedding`, `EmbedFailures`, `EmbedTarget`. Pure tests move.
+Move `memory`, `memory_edge`, `chunk`, `search`, `vector`, `reembed`, `recall`, `recall_graph`, `bulk`. Export `AugmentForEmbedding`; `graphContext` stays unexported. Export needed methods (`PutEmbedding`, `GetMemoryByID`, `DistillBucket` if in memory, `EmbeddingByRef`, `SearchVectorRaw`, `SearchMemoriesMode`, `Neighbourhood`, ...) and add wrappers in `whitebox_test.go`. Pure tests move.
 
-**Stage 7. `refactor: extract query, maintain and tenancy packages`**
-Move `queries.go` to `internal/query`; `decay`, `expire`, `reconcile`, `relate`, `compaction`, `profile`, `maintain` to `internal/maintain`; `user.go`, `usage.go` to `internal/tenancy`. Three packages in one commit because they are siblings with no edges between them (confirm with the build); if the diff is too large, split into two commits at maintain.
+**Stage 7. `refactor: extract query and maintain packages`**
+Move `queries.go` to `internal/query`; `decay`, `expire`, `reconcile`, `relate`, `compaction`, `profile`, `maintain` to `internal/maintain` (export `DistillBucket`, `ProfileEligibleIDs` for the white-box wrappers). They are siblings with no edges between them (confirm with the build); split into two commits at maintain if the diff is too large.
 
 **Stage 8. `refactor: extract ingest and render packages`**
-Move `cortex.go` (`Remember`, `Forget`) and `extractchunks.go` to `internal/ingest`; all `*_render.go` plus their tests to `internal/render`.
+Move `cortex.go` (`Remember`, `Forget`) and `extractchunks.go` to `internal/ingest`; all `*_render.go` plus tests to `internal/render`. Check no goroutine or struct keeps an `Ops` beyond a call.
 
 **Stage 9. `refactor: root package is public API only`**
-Root now contains only `doc.go`, `cortex.go`, `aliases.go`, `consts.go`, `options.go`, `api_*.go`, `export_test.go`, `*_test.go` (package `cortex_test`). Remove leftover files, run `gofmt -l .`, `go vet`, `staticcheck` if installed, final apidiff against the baseline and a diff of `go doc -all` for each of the five public packages. Add `doc.go` with the package comment (what cortex is, `Open`, `ForUser`, `Remember`/`Recall`, pointer to README).
+Root now holds only `doc.go`, `cortex.go`, `tooling.go` (DB/Embedder accessors; `AugmentForEmbedding` wrapper), `aliases.go`, `consts.go`, `options.go`, `api_*.go`, and tests (`package cortex` plus the existing `cortex_test` files, `whitebox_test.go`). Remove leftovers, `gofmt -l .`, `go vet`, `staticcheck` if installed, final apidiff for the root, `extractor`, `llm`, `connector`, `vault` against the baseline, and a check against `/tmp/cortex-api-before-full.txt` and `/tmp/cortex-api-before.txt`. Add `doc.go` (what cortex is, `Open`, `ForUser`, `Remember`/`Recall`, pointer to README).
 
 **Stage 10. `docs: update README for new layout`**
-README architecture/layout section (root API, `internal/*` layer table, `cmd/`, `extractor/`, `llm/`, `connector/`, `vault/`, `docs/design`, `docs/ops`, `docs/superpowers`), fix links, mention `make test`. No em dashes. Remove the baseline worktree.
+README architecture/layout section (root API, `internal/*` layer table, `cmd/`, `extractor/`, `llm/`, `connector/`, `vault/`, `examples/`, `docs/design`, `docs/ops`, `docs/superpowers`), fix links, mention `make test`. No em dashes. Remove the baseline worktree.
 
 ## Risks and how they are handled
 
@@ -138,5 +140,6 @@ README architecture/layout section (root API, `internal/*` layer table, `cmd/`, 
 - Aliased type printing in `go doc` differs textually; hence apidiff or a go/types check rather than text diff alone.
 - `Handle` copying: `ForUser` must apply `opts` to the copy's `Cfg` only, as now. A root test (`isolation_test`) already covers cross-user handles; keep it green at every stage.
 - Hot paths gain one pointer indirection through `Ops`; no measurable cost expected, `bench_test` is the check.
-- Lock-step hazards: `llmBackoff` is a package var swapped by tests; it becomes `llmutil.Backoff`, and the root DB retry tests reach it through `export_test.go`.
+- Lock-step hazards: `llmBackoff` is a package var swapped by tests; it becomes the exported var `llmutil.Backoff`, and root tests import `internal/llmutil` and set it directly.
 - Untracked docs cannot be recovered from git; take a copy of `docs/CORTEX.md` and the research note to `/tmp` before Stage 1.
+- Layering was cross-checked against definitions, not only call sites; if the step 4 import listing disagrees with the package map, fix the map or move the symbol down, never import upward.
