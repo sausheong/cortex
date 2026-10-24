@@ -209,7 +209,7 @@ legend{padding:0;margin:0 0 var(--s2);font-size:var(--text-lg);font-weight:var(-
 .field-help{margin:calc(var(--s1) * -1) 0 var(--s3)}
 .settings-form label{margin-bottom:var(--s2)}
 .save-help{margin:0;flex:1 1 16rem}
-.empty-state{padding:var(--s5) var(--s1)}
+.empty-state{padding:var(--s5) 0}
 .empty-state strong{display:block}
 .conn-empty strong{color:var(--fg);font-weight:var(--w-label)}
 .job h2{font-size:var(--text-base);letter-spacing:0;margin:0 0 var(--s2)}.job p{margin:0}
@@ -293,6 +293,9 @@ label.check input{margin:0}
 .g-label-more{display:none}
 .g-node:hover .g-label-more,.g-node.is-hot .g-label-more,.g-node.is-open .g-label-more{display:block}
 .graph-hint{margin:var(--s2) 0 0}
+.graph-stage-empty{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:var(--s5) 0}
+.graph-stage-empty h2{font-size:var(--text-base);margin:0 0 var(--s1)}
+.graph-stage-empty .note{margin:0}
 .legend{display:flex;flex-wrap:wrap;gap:0 var(--s4);list-style:none;margin:var(--s2) 0 0;padding:0;font-size:var(--text-sm);color:var(--muted)}
 .legend li{display:inline-flex;align-items:center;gap:var(--s2);min-height:28px}
 .graph-panel h2{margin:0 0 var(--s1);overflow-wrap:anywhere}

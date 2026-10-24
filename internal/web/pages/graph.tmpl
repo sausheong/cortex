@@ -3,7 +3,7 @@
 <script src="/static/graph.js" defer></script>{{end}}
 {{define "content"}}
 {{with .Data}}
-<div class="graph-page">
+<div class="graph-page breakout">
 <h1>Graph</h1>
 <p class="lede">The people, organisations, projects and events your assistants have noted, and how they connect.</p>
 {{if .Undo}}
@@ -66,7 +66,17 @@
 </details>
 
 {{if .CenterID}}
-<div class="graph-layout breakout">
+<div class="graph-layout">
+  {{if or .Nodes .Filtered}}<section class="graph-stage" aria-labelledby="stage-h">
+    <h2 id="stage-h" class="sr-only">Map of {{.Panel.Name}} and nearby items</h2>
+    <div class="graph-canvas" id="graph-canvas" data-src="{{.DataURL}}"></div>
+    <p class="note js-only graph-hint">Select a shape to move the map to it. The list below has the same items.</p>
+    <ul class="legend" aria-label="Shapes by type">{{range .Legend}}<li>{{.Shape}}{{.Label}}</li>{{end}}</ul>
+  </section>{{else}}<section class="graph-stage graph-stage-empty" aria-labelledby="stage-h">
+    <h2 id="stage-h">No connections to map yet</h2>
+    <p class="note">{{.Panel.Name}} has no relationships so far. As your assistants save memories that link it to other people, organisations or projects, the map fills in here.</p>
+  </section>{{end}}
+
   {{with .Panel}}
   <aside class="graph-panel" aria-labelledby="panel-h">
     <h2 id="panel-h">{{.Name}}</h2>
@@ -149,13 +159,6 @@
     </details>
   </aside>
   {{end}}
-
-  {{if or .Nodes .Filtered}}<section class="graph-stage" aria-labelledby="stage-h">
-    <h2 id="stage-h" class="sr-only">Map of {{.Panel.Name}} and nearby items</h2>
-    <div class="graph-canvas" id="graph-canvas" data-src="{{.DataURL}}"></div>
-    <p class="note js-only graph-hint">Select a shape to move the map to it. The list below has the same items.</p>
-    <ul class="legend" aria-label="Shapes by type">{{range .Legend}}<li>{{.Shape}}{{.Label}}</li>{{end}}</ul>
-  </section>{{end}}
 
 
   {{if or .Nodes .Filtered}}<section class="graph-list" aria-labelledby="near-h">
