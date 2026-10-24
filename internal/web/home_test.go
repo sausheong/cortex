@@ -294,7 +294,7 @@ func TestHomeHealthRows(t *testing.T) {
 	}
 	set(nil)
 	_, body = e.get("/")
-	if !strings.Contains(body, "Ran 3 hours ago. Everything went through.") || strings.Contains(body, "Measured overnight") {
+	if !strings.Contains(body, "Ran 3 hours ago. Everything went through.") || strings.Contains(body, "Not measured yet") {
 		t.Errorf("ok state: %s", body)
 	}
 	set("maintenance completed; 2 item(s) skipped after provider errors")
