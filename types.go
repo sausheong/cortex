@@ -332,10 +332,8 @@ func WithContentType(ct string) RememberOption {
 // WithMaxChunkChars caps each stored chunk to roughly n characters.
 // Long content is split on paragraph and sentence boundaries, then on
 // hard boundaries if needed. Each split is stored as its own Chunk and
-// embedded independently. Pass 0 to disable splitting (default).
-//
-// A safe default for typical embedding models (nomic-embed-text, bge-*,
-// OpenAI text-embedding-3-*) is 6000 chars (~1500 tokens).
+// embedded independently. The default is DefaultMaxChunkChars; pass 0 to
+// disable splitting.
 func WithMaxChunkChars(n int) RememberOption {
 	return func(c *rememberConfig) { c.maxChunkSize = n }
 }

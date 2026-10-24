@@ -79,6 +79,13 @@ func Nightly(ctx context.Context, root *cortex.Cortex, st *accounts.Store, o Nig
 
 var errSkipped = errors.New("jobs: skipped")
 
+// Nightly embedding backfill bounds: at most backfillRounds*backfillBatch
+// rows per user per night; the rest wait for the next run.
+const (
+	backfillBatch  = 64
+	backfillRounds = 50
+)
+
 // MaintainUser runs phase 1 for one user (the --user admin path). A user
 // without valid settings or a deleted user returns an error.
 func MaintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, userID string, o NightlyOptions) error {
@@ -137,6 +144,22 @@ func maintainUser(ctx context.Context, root *cortex.Cortex, st *accounts.Store, 
 	if _, err := cx.RefreshUsage(ctx); err != nil {
 		record("maintenance failed: usage refresh")
 		return errors.New("maintenance failed: usage refresh")
+	}
+	// Embed anything Remember stored without a vector (provider errors).
+	pending := 0
+	for i := 0; i < backfillRounds; i++ {
+		n, err := cx.BackfillEmbeddings(ctx, backfillBatch)
+		if err != nil {
+			pending = -1
+			break
+		}
+		if n < backfillBatch {
+			break
+		}
+	}
+	if pending < 0 {
+		record("maintenance completed; some items still wait for an embedding")
+		return nil
 	}
 	if n := rep.SkippedItems(); n > 0 {
 		// Degraded, not failed: the run completed and skipped items are

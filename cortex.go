@@ -8,7 +8,7 @@ import (
 // Remember extracts entities, relationships, memories, and chunks from the
 // provided content and stores them in the knowledge graph.
 func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberOption) error {
-	cfg := &rememberConfig{}
+	cfg := &rememberConfig{maxChunkSize: DefaultMaxChunkChars}
 	for _, o := range opts {
 		o(cfg)
 	}
@@ -59,6 +59,10 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// stored as its own Chunk row with its own embedding, but they share
 	// the same source and (when split) carry part metadata so a recall can
 	// reassemble or reference the originating thread.
+	// Embedding failures do not abort the save: everything is stored, the
+	// missing vectors are backfilled by nightly maintenance, and the caller
+	// gets an *EmbedPartialError saying how many items are waiting.
+	var unembedded embedFailures
 	parts := splitContent(content, cfg.maxChunkSize)
 	for i, part := range parts {
 		ch := &Chunk{Content: part}
@@ -77,15 +81,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 			return fmt.Errorf("cortex: store chunk: %w", err)
 		}
 		if c.cfg.embedder != nil {
-			vecs, err := c.cfg.embedder.Embed(ctx, []string{ch.Content})
-			if err != nil {
-				return fmt.Errorf("cortex: embed chunk: %w", err)
-			}
-			if len(vecs) > 0 {
-				if err := c.putEmbedding(ctx, ch.ID, "chunk", vecs[0]); err != nil {
-					return fmt.Errorf("cortex: store chunk embedding: %w", err)
-				}
-			}
+			unembedded.add(c.embedAndStore(ctx, ch.ID, "chunk", ch.Content))
 		}
 	}
 
@@ -118,20 +114,11 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		// content, so thin memories are findable by their entities. The
 		// stored content and FTS index keep the original text.
 		if c.cfg.embedder != nil {
-			augmented := augmentForEmbedding(m.Content, entityNames)
-			vecs, err := c.cfg.embedder.Embed(ctx, []string{augmented})
-			if err != nil {
-				return fmt.Errorf("cortex: embed memory: %w", err)
-			}
-			if len(vecs) > 0 {
-				if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
-					return fmt.Errorf("cortex: store memory embedding: %w", err)
-				}
-			}
+			unembedded.add(c.embedAndStore(ctx, m.ID, "memory", augmentForEmbedding(m.Content, entityNames)))
 		}
 	}
 
-	return nil
+	return unembedded.err()
 }
 
 // Forget removes knowledge from the graph based on the provided filter

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -90,6 +91,11 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 				opts = append(opts, cortex.WithSpeaker(spk))
 			}
 			if err := cx.Remember(ctx, content, opts...); err != nil {
+				var p *cortex.EmbedPartialError
+				if errors.As(err, &p) {
+					// Stored in full; only the vectors are pending.
+					return mcp.NewToolResultText(fmt.Sprintf("remembered (keyword search works now; %d item(s) will be added to semantic search by tonight's maintenance)", p.Count)), nil
+				}
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return mcp.NewToolResultText("remembered"), nil
