@@ -59,7 +59,7 @@ type homeNew struct {
 type homeAssistant struct {
 	Name, Used, UsedISO string
 	Written7            int
-	Flag                string // "unused" | "idle" | ""
+	Status              string // statusActive | statusIdle | statusUnused
 }
 
 type homeAssistants struct {
@@ -81,6 +81,9 @@ type homeHealth struct {
 	// Recently deleted
 	DeletedCount int
 	DeletedText  string
+	// OKLine is set when nothing needs attention; Home then shows it instead
+	// of the four rows.
+	OKLine string
 }
 
 type homeView struct {
@@ -157,24 +160,28 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 func homeStrip(v homeView) []string {
 	var parts []string
 	if !v.Assistants.Err && len(v.Assistants.Rows) > 0 {
-		var active, unused int
+		var n = map[string]int{}
 		for _, a := range v.Assistants.Rows {
-			switch a.Flag {
-			case "":
-				active++
-			case "unused":
-				unused++
-			}
+			n[a.Status]++
 		}
-		switch {
-		case active > 0 && unused > 0:
-			parts = append(parts, plural(active, "assistant", "assistants")+" active, "+strconv.Itoa(unused)+" not used yet")
-		case active > 0:
-			parts = append(parts, plural(active, "assistant", "assistants")+" active")
-		case unused == len(v.Assistants.Rows):
-			parts = append(parts, plural(unused, "assistant", "assistants")+" connected, not used yet")
-		default:
-			parts = append(parts, "No assistants active")
+		total := len(v.Assistants.Rows)
+		// The clauses always add up to the rows listed below.
+		var bits []string
+		if n[statusActive] > 0 {
+			bits = append(bits, strconv.Itoa(n[statusActive])+" active")
+		}
+		if n[statusIdle] > 0 {
+			bits = append(bits, strconv.Itoa(n[statusIdle])+" idle")
+		}
+		if n[statusUnused] > 0 {
+			bits = append(bits, strconv.Itoa(n[statusUnused])+" not used yet")
+		}
+		if n[statusUnused] == total {
+			parts = append(parts, plural(total, "assistant", "assistants")+" connected, not used yet")
+		} else if total == n[statusActive] {
+			parts = append(parts, plural(total, "assistant", "assistants")+" active")
+		} else {
+			parts = append(parts, plural(total, "assistant", "assistants")+": "+strings.Join(bits, ", "))
 		}
 	}
 	if !v.New.Err {
@@ -222,7 +229,7 @@ func quote(s string) string {
 
 func connLabel(byID map[string]accounts.Connection, id string) string {
 	if id == "" {
-		return "Added by you or imported"
+		return "Added by hand or imported"
 	}
 	c, ok := byID[id]
 	if !ok {
@@ -314,7 +321,7 @@ func (s *server) homeAssistants(ctx context.Context, cx *cortex.Cortex, conns []
 	})
 	var h homeAssistants
 	for _, c := range live {
-		row := homeAssistant{Name: c.Name, Written7: week[c.ID], Flag: assistantFlag(c, now)}
+		row := homeAssistant{Name: c.Name, Written7: week[c.ID], Status: assistantStatus(c, now)}
 		if c.LastUsed == nil {
 			row.Used = "Not used yet"
 		} else {
@@ -326,17 +333,26 @@ func (s *server) homeAssistants(ctx context.Context, cx *cortex.Cortex, conns []
 	return h
 }
 
-// assistantFlag is the one definition of an assistant's state, shared by the
-// Home rows, the status strip and the "You are set up" line: "unused" (never
-// called), "idle" (not called for homeIdleDays) or "" (active).
-func assistantFlag(c accounts.Connection, now time.Time) string {
+// Assistant states. assistantStatus is the one derivation, used by Home, the
+// Connections page and the set-up check, so an assistant never reads Active
+// on one page and Idle on another.
+const (
+	statusActive  = "active"
+	statusIdle    = "idle"    // no call for homeIdleDays
+	statusUnused  = "unused"  // never called
+	statusRevoked = "revoked" // access removed
+)
+
+func assistantStatus(c accounts.Connection, now time.Time) string {
 	switch {
+	case c.RevokedAt != nil:
+		return statusRevoked
 	case c.LastUsed == nil:
-		return "unused"
+		return statusUnused
 	case now.Sub(*c.LastUsed) > homeIdleDays*24*time.Hour:
-		return "idle"
+		return statusIdle
 	}
-	return ""
+	return statusActive
 }
 
 // humanBytes renders a size the way people read it.
@@ -367,7 +383,7 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 		switch {
 		case at == nil:
 			h.MaintState = "none"
-			h.MaintText = "Runs overnight once your AI provider is set up."
+			h.MaintText = "Runs overnight once your AI provider is set up." // refined below once the provider is known
 		case merr == nil || *merr == "":
 			h.MaintState = "ok"
 			h.MaintShort = "ran " + relTime(now, *at)
@@ -402,6 +418,10 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 		h.ProviderText += ". It was tested when you saved it " + relTime(now, set.UpdatedAt) + "."
 	}
 
+	if h.MaintState == "none" && h.ProviderOK {
+		h.MaintText = "Has not run yet. It runs overnight."
+	}
+
 	// Storage: the nightly figure only.
 	switch us, ok, err := cx.CachedUsage(ctx); {
 	case err != nil:
@@ -423,6 +443,14 @@ func (s *server) homeHealth(ctx context.Context, cx *cortex.Cortex, userID strin
 			h.DeletedText = "Nothing waiting to be restored."
 		} else {
 			h.DeletedText = plural(h.DeletedCount, "item", "items") + " can still be restored for 30 days."
+		}
+	}
+	if !h.Err && h.ProviderOK && h.DeletedCount == 0 && (h.MaintState == "ok" || h.MaintState == "none") {
+		h.OKLine = "Everything is working. Your AI provider is configured and maintenance "
+		if h.MaintState == "ok" {
+			h.OKLine += h.MaintShort + "."
+		} else {
+			h.OKLine += "runs overnight."
 		}
 	}
 	return h

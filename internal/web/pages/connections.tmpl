@@ -2,9 +2,7 @@
 {{define "conn"}}<li class="conn{{if .Revoked}} is-revoked{{end}}">
   <div class="conn-row">
     <strong class="conn-name">{{.Name}}</strong>
-    {{if .Revoked}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>
-    {{else if .LastUsed}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>
-    {{else}}<span class="status status-unused"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Not used yet</span>{{end}}
+    {{template "status" .Status}}
     <p class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{end}}{{if .LastUsed}} &middot; {{end}}{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written</p>
   </div>
   <div class="conn-actions">
@@ -91,7 +89,7 @@
 </section>
 <section class="section" aria-labelledby="h-assistants">
   <h2 id="h-assistants">Connected assistants</h2>
-  <p class="note conn-legend"><strong>Not used yet</strong> turns to <strong>Active</strong> after the first request. <strong>Revoked</strong> can no longer connect.</p>
+  <p class="note conn-legend"><strong>Not used yet</strong> turns to <strong>Active</strong> after the first request, and to <strong>Idle</strong> after 30 days without one. <strong>Revoked</strong> can no longer connect.</p>
   <ul class="conns">
   {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected yet.</strong> Follow the steps above. It appears here after it first connects.</li>{{end}}
   </ul>

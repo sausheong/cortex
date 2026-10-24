@@ -441,3 +441,24 @@ func TestMemoriesDeleteRedirectClampsPage(t *testing.T) {
 		t.Fatalf("page 1 needs no page param: %q", got)
 	}
 }
+
+func TestBulkDeleteConfirmShowsWhatGoes(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	for i := 0; i < 8; i++ {
+		e.write(ua.ID, "", fmt.Sprintf("tea fact number %d", i))
+	}
+	long := strings.Repeat("long ", 60)
+	e.write(ua.ID, "", "tea "+long)
+	_, body := e.post("/memories/delete", url.Values{"csrf": {e.csrf()}, "scope": {"matching"}, "match": {"tea"}})
+	if !strings.Contains(body, "Delete 9 memories?") || !strings.Contains(body, "and 4 more") {
+		t.Fatalf("title/more missing: %s", body)
+	}
+	if n := strings.Count(body, "tea fact number") + strings.Count(body, "tea long"); n != 5 {
+		t.Errorf("want 5 snippets listed, got %d", n)
+	}
+	if strings.Contains(body, strings.TrimSpace(long)) {
+		t.Error("long memory not truncated")
+	}
+}

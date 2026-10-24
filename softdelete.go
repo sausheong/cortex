@@ -98,6 +98,31 @@ func (c *Cortex) CountMemories(ctx context.Context, f DeleteFilter) (int, error)
 	return n, nil
 }
 
+// SampleMemories returns up to limit of the live memories SoftDeleteMemories
+// would mark for f, newest first, so a caller can show what is about to go.
+func (c *Cortex) SampleMemories(ctx context.Context, f DeleteFilter, limit int) ([]Memory, error) {
+	where, args, err := c.deleteWhere(f)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT id, content, created_at FROM memories WHERE `+where+` ORDER BY created_at DESC, id LIMIT ?`,
+		append(args, limit)...)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: sample memories: %w", err)
+	}
+	defer rows.Close()
+	var out []Memory
+	for rows.Next() {
+		var m Memory
+		if err := rows.Scan(&m.ID, &m.Content, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("cortex: scan memory: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // CountByConnection returns how many rows SoftDeleteByConnection would mark
 // for connID (memories, entities, chunks and relationships, including
 // relationships that touch the connection's entities).

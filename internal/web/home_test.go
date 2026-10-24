@@ -110,7 +110,7 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	if !strings.Contains(body, "You are set up.") {
 		t.Error("complete setup should show the quiet set-up line")
 	}
-	for _, want := range []string{"About you", "Nightly maintenance", `class="home-strip"`, "1 assistant active"} {
+	for _, want := range []string{"About you", "Everything is working", `class="home-strip"`, "1 assistant active"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("complete setup should show %q", want)
 		}
@@ -259,7 +259,7 @@ func TestHomeAssistantsFlags(t *testing.T) {
 	e.write(ua.ID, fresh.ID, "a")
 	e.write(ua.ID, fresh.ID, "b")
 	_, body := e.get("/")
-	for _, want := range []string{"FreshOne", "IdleOne", "NeverOne", "Not used yet", "Idle for over 30 days", "2 written in the last 7 days", "0 written in the last 7 days"} {
+	for _, want := range []string{"FreshOne", "IdleOne", "NeverOne", "Not used yet", "Idle (no use for 30+ days)", "2 written in the last 7 days", "0 written in the last 7 days"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -267,7 +267,7 @@ func TestHomeAssistantsFlags(t *testing.T) {
 	if strings.Contains(body, "GoneOne") {
 		t.Error("revoked connection listed")
 	}
-	if strings.Count(body, "Idle for over 30 days") != 1 {
+	if strings.Count(body, "Idle (no use for 30+ days)") != 1 {
 		t.Error("only the idle connection is flagged")
 	}
 }
@@ -280,10 +280,10 @@ func TestHomeHealthRows(t *testing.T) {
 	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
 	e.write(ua.ID, conn.ID, "seed")
 	_, body := e.get("/")
-	for _, want := range []string{"Runs overnight once", "Configured with gpt-test", "Not measured yet. Updated overnight."} {
-		if !strings.Contains(body, want) {
-			t.Errorf("missing %q", want)
-		}
+	// Provider configured and nothing wrong: one line, and no advice to set up
+	// a provider that is already set up.
+	if !strings.Contains(body, "Everything is working.") || strings.Contains(body, "once your AI provider") || strings.Contains(body, "Nightly maintenance") {
+		t.Errorf("healthy state should collapse to one line: %s", body)
 	}
 	cx := e.root.ForUser(ua.ID)
 	if _, err := cx.RefreshUsage(t.Context()); err != nil {
@@ -294,12 +294,12 @@ func TestHomeHealthRows(t *testing.T) {
 	}
 	set(nil)
 	_, body = e.get("/")
-	if !strings.Contains(body, "Ran 3 hours ago. Everything went through.") || strings.Contains(body, "Not measured yet") {
+	if !strings.Contains(body, "maintenance ran 3 hours ago.") || strings.Contains(body, "Nightly maintenance") {
 		t.Errorf("ok state: %s", body)
 	}
 	set("maintenance completed; 2 item(s) skipped after provider errors")
 	_, body = e.get("/")
-	if !strings.Contains(body, "2 items were skipped") {
+	if !strings.Contains(body, "2 items were skipped") || !strings.Contains(body, "Configured with gpt-test") || strings.Contains(body, "Everything is working") {
 		t.Error("partial state")
 	}
 	set("provider settings could not be loaded")
@@ -425,5 +425,42 @@ func TestHomeStatusNeverContradicts(t *testing.T) {
 	}
 	if strings.Contains(body, "not used yet</span>") && strings.Contains(body, "connected, not used yet") {
 		t.Errorf("contradiction: %s", body)
+	}
+}
+
+// Home and Connections must agree on every assistant's state, and Home's
+// strip must add up to the rows it lists.
+func TestAssistantStatusAgreesAcrossPages(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	e.setProvider(ua.ID)
+	e.write(ua.ID, "", "seed")
+	_, act, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "ActiveOne")
+	_, idle, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "IdleOne")
+	_, _, _ = e.st.CreateAgentToken(t.Context(), ua.ID, "NeverOne")
+	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, act.ID, e.now.Add(-time.Hour))
+	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, idle.ID, e.now.Add(-45*24*time.Hour))
+
+	_, home := e.get("/")
+	_, conns := e.get("/connections")
+	// The status label that follows each name, on both pages.
+	label := func(body, name string) string {
+		m := regexp.MustCompile(`(?s)` + name + `</strong>.*?class="status status-(\w+)"`).FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("no status after %s", name)
+		}
+		return m[1]
+	}
+	for name, want := range map[string]string{"ActiveOne": "active", "IdleOne": "idle", "NeverOne": "unused"} {
+		if h, c := label(home, name), label(conns, name); h != want || c != want {
+			t.Errorf("%s: home %q, connections %q, want %q", name, h, c, want)
+		}
+	}
+	if !strings.Contains(home, "3 assistants: 1 active, 1 idle, 1 not used yet") {
+		t.Errorf("strip does not sum to the rows: %s", home)
+	}
+	if strings.Count(conns, "Idle (no use for 30+ days)") != 1 {
+		t.Error("connections should flag exactly the idle assistant")
 	}
 }

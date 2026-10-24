@@ -590,3 +590,15 @@ func TestMemoriesEntityFilter(t *testing.T) {
 		t.Fatalf("foreign entity filter leaked or matched: %s", body)
 	}
 }
+
+func TestGraphOwnerMentionsCountsAllMemories(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	e.write(ua.ID, "", "likes tea")
+	e.write(ua.ID, "", "lives in Oslo")
+	_, body := e.get("/graph")
+	if !strings.Contains(body, "Saved about you") || strings.Contains(body, "Mentioned in</dt><dd>0 ") || !strings.Contains(body, "<dd>2 memories</dd>") {
+		t.Errorf("owner panel should count all memories: %s", body)
+	}
+}
