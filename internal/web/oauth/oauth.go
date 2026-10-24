@@ -81,6 +81,20 @@ func (h *handler) gate(next func(http.ResponseWriter, *http.Request, web.Session
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		if st == "none" {
+			// A new account connects nothing before it is protected.
+			if req, err := h.st.EnrollRequired(r.Context(), u.UserID); err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			} else if req {
+				if r.Method == http.MethodGet || r.Method == http.MethodHead {
+					http.Redirect(w, r, "/enroll", http.StatusSeeOther)
+					return
+				}
+				http.Error(w, "protect your memory with a passkey first", http.StatusForbidden)
+				return
+			}
+		}
 		if st != "none" && (!u.Unlocked || u.Key == nil) {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
 				http.Redirect(w, r, "/unlock?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)

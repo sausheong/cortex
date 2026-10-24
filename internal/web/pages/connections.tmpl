@@ -4,7 +4,7 @@
     <strong class="conn-name">{{.Name}}</strong>
     {{template "status" .Status}}
     <p class="conn-meta">{{if .LastUsed}}Last used <time datetime="{{.LastUsed}}" title="{{.LastUsed}}">{{.LastUsedAgo}}</time>{{end}}{{if .LastUsed}} &middot; {{end}}{{.Written}} {{if eq .Written 1}}memory{{else}}memories{{end}} written{{if .Expires}} &middot; {{if .Expired}}Expired {{else}}Expires {{end}}{{.Expires}}{{end}}</p>
-    {{if .NeedsReconnect}}<p class="note">cortex is now encrypted. {{if .Agent}}Reconnect to issue a new key.{{else}}Remove this connector in your assistant and add it again.{{end}}</p>{{end}}
+    {{if .NeedsReconnect}}<p class="note">cortex is now encrypted. {{if .Agent}}Reconnect to issue a new key.{{else}}Open this connector in your assistant and approve access again. You will sign in to cortex again to finish.{{end}}</p>{{end}}
   </div>
   <div class="conn-actions">
   <details class="rename">

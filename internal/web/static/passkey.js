@@ -172,6 +172,54 @@
     return;
   }
 
+  // createWithPRF runs the registration ceremony for begin's options and
+  // returns the attestation with the PRF output (some authenticators give the
+  // PRF output only on a follow-up assertion).
+  function createWithPRF(b) {
+    return create(b.options).then(function (c) {
+      if (c.prf) return { b: b, c: c, prf: c.prf };
+      var salt = b.options.publicKey.extensions && b.options.publicKey.extensions.prf &&
+        b.options.publicKey.extensions.prf.eval;
+      if (!salt) throw new Error(NO_PRF);
+      var idb = bufToB64u(c.credId);
+      var ext = { prf: { evalByCredential: {} } };
+      ext.prf.evalByCredential[idb] = { first: salt.first };
+      // This assertion only yields the PRF output; the server verifies
+      // the later proof round, not this one.
+      var req = { publicKey: {
+        challenge: b.options.publicKey.challenge,
+        rpId: b.options.publicKey.rp.id,
+        timeout: b.options.publicKey.timeout,
+        userVerification: "required",
+        allowCredentials: [{ type: "public-key", id: idb }]
+      } };
+      return get(req, ext).then(function (g) {
+        if (!g.prf) throw new Error(NO_PRF);
+        return { b: b, c: c, prf: g.prf };
+      });
+    });
+  }
+
+  // Account page: add another passkey to an unlocked, enrolled account.
+  if (mode === "add") {
+    var addBtn = document.getElementById("add-btn");
+    if (addBtn) {
+      addBtn.addEventListener("click", guard(function () {
+        if (!window.PublicKeyCredential) throw new Error(NO_PRF);
+        status("pk-status", "Waiting for your passkey.");
+        return post("/account/passkeys/add/begin").then(createWithPRF).then(function (x) {
+          return post("/account/passkeys/add/finish", {
+            ceremony: x.b.ceremony, attestation: x.c.attestation, prf_output: x.prf,
+            name: document.getElementById("passkey-name").value
+          });
+        }).then(function () {
+          window.location.assign("/account?added=1");
+        }).catch(function (e) { status("pk-status", ""); throw e; });
+      }, addBtn));
+    }
+    return;
+  }
+
   // Enrollment.
   var state = {};
   var startBtn = document.getElementById("start-btn");
@@ -184,31 +232,7 @@
       }
       if (!window.PublicKeyCredential) throw new Error(NO_PRF);
       status("pk-status", "Waiting for your passkey.");
-      return post("/enroll/begin").then(function (b) {
-        return create(b.options).then(function (c) {
-          if (c.prf) return { b: b, c: c, prf: c.prf };
-          // Some authenticators return PRF output only on a later assertion.
-          var salt = b.options.publicKey.extensions && b.options.publicKey.extensions.prf &&
-            b.options.publicKey.extensions.prf.eval;
-          if (!salt) throw new Error(NO_PRF);
-          var idb = bufToB64u(c.credId);
-          var ext = { prf: { evalByCredential: {} } };
-          ext.prf.evalByCredential[idb] = { first: salt.first };
-          // This assertion only yields the PRF output; the server verifies
-          // the later proof round, not this one.
-          var req = { publicKey: {
-            challenge: b.options.publicKey.challenge,
-            rpId: b.options.publicKey.rp.id,
-            timeout: b.options.publicKey.timeout,
-            userVerification: "required",
-            allowCredentials: [{ type: "public-key", id: idb }]
-          } };
-          return get(req, ext).then(function (g) {
-            if (!g.prf) throw new Error(NO_PRF);
-            return { b: b, c: c, prf: g.prf };
-          });
-        });
-      }).then(function (x) {
+      return post("/enroll/begin").then(createWithPRF).then(function (x) {
         return post("/enroll/finish", {
           ceremony: x.b.ceremony, attestation: x.c.attestation, prf_output: x.prf,
           name: document.getElementById("passkey-name").value, confirm_loss: true

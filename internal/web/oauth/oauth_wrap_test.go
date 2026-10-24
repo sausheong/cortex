@@ -270,3 +270,25 @@ func TestConcurrentRefreshSingleWinner(t *testing.T) {
 func web_sessions(e *env) *web.Sessions {
 	return web.NewSessions(e.st, func() time.Time { return e.now })
 }
+
+// An OAuth connection flagged to reconnect after enrollment works again once
+// the user consents anew: the same connection is re-keyed and un-flagged.
+func TestOAuthReconnectClearsNeedsReconnect(t *testing.T) {
+	e := newEnv(t, Options{})
+	s, uk := e.encUser("a")
+	id := e.register("App", cb)
+	first := e.connect(&s, id)
+	if _, err := e.st.DB.Exec(`UPDATE connections SET needs_reconnect = TRUE WHERE user_id = $1`, s.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := e.st.ResolveBearer(t.Context(), first.Access); !errors.Is(err, model.ErrNeedsReconnect) {
+		t.Fatalf("flagged connection: %v", err)
+	}
+	again := e.connect(&s, id)
+	_, _, got, err := e.st.ResolveBearer(t.Context(), again.Access)
+	if err != nil {
+		t.Fatalf("after re-consent: %v", err)
+	}
+	sameKey(t, s.userID, uk, got)
+	got.Zero()
+}

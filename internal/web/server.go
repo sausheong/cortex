@@ -152,6 +152,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /settings/reembed", s.authUnlocked(s.settingsReembed))
 	mux.HandleFunc("GET /settings/job/{id}", s.authUnlocked(s.jobProgress))
 	s.mountPasskeys(mux)
+	s.mountAccountKeys(mux)
 	s.mountMemories(mux)
 	s.mountGraph(mux)
 	s.mountVault(mux)
@@ -276,10 +277,18 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 		p.Nonce = n
 		w.Header().Set("Content-Security-Policy", cspHeader(n, name != "consent"))
 	}
-	if u, ok := s.sessionFor(r); ok {
+	// The key is read here only so the checklist can see an encrypted
+	// account's memories; it is zeroed when the page is built.
+	if u, ok := s.lookup(r, true); ok {
+		defer u.Key.Zero()
 		p.CSRF, p.SignedIn = u.CSRF, true
 		// Every signed-in page needs it: the nav shrinks while setup is open.
-		p.Setup, p.SetUp = s.setupRead(r.Context(), u.UserID)
+		p.Setup, p.SetUp = s.setupRead(r.Context(), u.UserID, u.Key)
+		if s.st.EnrollEnabled() {
+			if info, err := s.st.EnrollInfo(r.Context(), u.UserID); err == nil {
+				p.EnrollBanner = info.State == "none" && !info.Cohort
+			}
+		}
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {

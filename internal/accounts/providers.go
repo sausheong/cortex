@@ -144,6 +144,13 @@ func (st *Store) ResolveUser(ctx context.Context, root *cortex.Cortex, userID, c
 	if state != "none" && uk == nil {
 		return nil, model.ErrLocked
 	}
+	if state == "none" {
+		if req, err := st.EnrollRequired(ctx, userID); err != nil {
+			return nil, err
+		} else if req {
+			return nil, model.ErrEnrollRequired
+		}
+	}
 	chat, err := st.GetSettings(ctx, userID, uk)
 	if errors.Is(err, ErrNoSettings) {
 		return nil, ErrNoProvider

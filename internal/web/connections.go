@@ -12,6 +12,10 @@ import (
 	"github.com/sausheong/cortex/internal/model"
 )
 
+// enrollRequiredMsg is what a new account is told when it tries to save
+// anything or connect an assistant before protecting its memory.
+const enrollRequiredMsg = "Protect your memory with a passkey before you save anything or connect an assistant."
+
 // connectionInstructions is the custom-instruction text shown on the page.
 const connectionInstructions = "You have access to my cortex memory. Before answering anything that depends on my preferences, how I'd do things, or people and things I know, call the cortex `context` tool. Whenever you learn something new about me (a preference, a person or organisation I know, a capability, my background), save it with cortex `remember`."
 
@@ -189,7 +193,16 @@ func (h *connHandler) newToken(w http.ResponseWriter, r *http.Request, u Session
 		return
 	}
 	tok, _, err := h.d.Accounts.CreateAgentToken(r.Context(), u.UserID, name, u.Key)
-	if err != nil {
+	switch {
+	case errors.Is(err, model.ErrEnrollRequired):
+		h.pageStatus(w, r, u, http.StatusForbidden, func(v *connectionsView) { v.Error = enrollRequiredMsg })
+		return
+	case errors.Is(err, model.ErrLocked):
+		h.pageStatus(w, r, u, http.StatusLocked, func(v *connectionsView) {
+			v.Error = "Unlock cortex with your passkey, then try again. Nothing was changed."
+		})
+		return
+	case err != nil:
 		h.d.Cfg.Logger.Error("create token", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

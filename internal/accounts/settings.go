@@ -386,6 +386,13 @@ func (st *Store) PutSettings(ctx context.Context, userID string, s Settings, uk 
 	if encrypted && uk == nil {
 		return false, model.ErrLocked
 	}
+	if !encrypted {
+		if req, err := st.EnrollRequired(ctx, userID); err != nil {
+			return false, err
+		} else if req {
+			return false, model.ErrEnrollRequired
+		}
+	}
 	tx, err := st.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err

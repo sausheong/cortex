@@ -24,7 +24,13 @@
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
   </nav>{{end}}
 </header>
-<main id="main" tabindex="-1">{{template "content" .}}</main>
+<main id="main" tabindex="-1">
+{{if and .EnrollBanner (ne .Path "/enroll")}}<section class="notice" aria-labelledby="enc-h">
+  <h2 id="enc-h">Your memory is not encrypted yet</h2>
+  <p>Protect it with a passkey and cortex encrypts everything it stores about you. Your assistants will need to reconnect afterwards, and you do that from Connections.</p>
+  <p><a href="/enroll">Set up a passkey</a></p>
+</section>{{end}}
+{{template "content" .}}</main>
 <script nonce="{{$.Nonce}}">
 (function(){
 // Progressive enhancement: on submit, disable the form's buttons and show the
@@ -53,22 +59,27 @@ addEventListener("pageshow",function(e){if(!e.persisted)return;
 {{define "status"}}{{if eq . "revoked"}}<span class="status status-revoked"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M4 12 12 4"/></svg>Revoked</span>{{else if eq . "active"}}<span class="status status-active"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="m5.5 8.2 1.7 1.7 3.3-3.6"/></svg>Active</span>{{else if eq . "idle"}}<span class="status status-idle"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>Idle (no use for 30+ days)</span>{{else}}<span class="status status-unused"><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="8" cy="8" r="6" stroke-dasharray="2.5 2.5"/></svg>Not used yet</span>{{end}}{{end}}
 {{define "setup"}}{{with .Setup}}
 <section class="setup" aria-labelledby="setup-h">
-  <h2 id="setup-h">Get started <span class="note">{{.Done}} of 3 done</span></h2>
+  <h2 id="setup-h">Get started <span class="note">{{.Done}} of {{.Total}} done</span></h2>
   <ol class="steps">
+    {{if .ShowPasskey}}<li class="{{if .Passkey}}is-done{{end}}">
+      <span class="step-mark">{{if .Passkey}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>1{{end}}</span>
+      <div><strong>Protect your memory with a passkey</strong>
+      <p class="note">cortex encrypts what it stores about you. Nothing is saved until you do this.{{if and (not .Passkey) (ne $.Path "/enroll")}} <a href="/enroll">Protect it now</a>{{end}}</p></div>
+    </li>{{end}}
     <li class="{{if .Provider}}is-done{{end}}">
-      <span class="step-mark">{{if .Provider}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>1{{end}}</span>
+      <span class="step-mark">{{if .Provider}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>{{if .ShowPasskey}}2{{else}}1{{end}}{{end}}</span>
       <div><strong>Set up your AI provider</strong>
-      <p class="note">cortex uses your own key to read and organise what is saved.{{if and (not .Provider) (ne $.Path "/settings")}} <a href="/settings">Open settings</a>{{end}}</p></div>
+      <p class="note">cortex uses your own key to read and organise what is saved.{{if and (not .Provider) (not .Gated) (ne $.Path "/settings")}} <a href="/settings">Open settings</a>{{end}}</p></div>
     </li>
     <li class="{{if .Connect}}is-done{{end}}">
-      <span class="step-mark">{{if .Connect}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>2{{end}}</span>
+      <span class="step-mark">{{if .Connect}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>{{if .ShowPasskey}}3{{else}}2{{end}}{{end}}</span>
       <div><strong>Connect an assistant</strong>
-      <p class="note">Add cortex to ChatGPT, Claude or your own agent.{{if and (not .Connect) (ne $.Path "/connections")}} <a href="/connections">Connect one</a>{{end}}</p></div>
+      <p class="note">Add cortex to ChatGPT, Claude or your own agent.{{if and (not .Connect) (not .Gated) (ne $.Path "/connections")}} <a href="/connections">Connect one</a>{{end}}</p></div>
     </li>
     <li class="{{if .Memory}}is-done{{end}}">
-      <span class="step-mark">{{if .Memory}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>3{{end}}</span>
+      <span class="step-mark">{{if .Memory}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>{{if .ShowPasskey}}4{{else}}3{{end}}{{end}}</span>
       <div><strong>Save your first memory</strong>
-      <p class="note">Tell your assistant something to remember. It appears on the Memories page.{{if and (not .Memory) (ne $.Path "/memories")}} <a href="/memories">See Memories</a>{{end}}</p></div>
+      <p class="note">Tell your assistant something to remember. It appears on the Memories page.{{if and (not .Memory) (not .Gated) (ne $.Path "/memories")}} <a href="/memories">See Memories</a>{{end}}</p></div>
     </li>
   </ol>
 </section>{{end}}{{end}}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // jobView is a background job as shown on the settings page.
@@ -131,6 +132,10 @@ func (s *server) settingsGet(w http.ResponseWriter, r *http.Request, u SessionUs
 
 func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
+	if req, err := s.st.EnrollRequired(ctx, u.UserID); err == nil && req {
+		s.settingsPage(w, r, u, http.StatusForbidden, nil, enrollRequiredMsg, false)
+		return
+	}
 	if !s.testLimit.Allow(u.UserID) {
 		http.Error(w, "too many provider tests; wait a minute", http.StatusTooManyRequests)
 		return
@@ -171,6 +176,10 @@ func (s *server) settingsPost(w http.ResponseWriter, r *http.Request, u SessionU
 		return
 	}
 	needsReembed, err := s.st.PutSettings(ctx, u.UserID, in, u.Key)
+	if errors.Is(err, model.ErrEnrollRequired) {
+		s.settingsPage(w, r, u, http.StatusForbidden, nil, enrollRequiredMsg, false)
+		return
+	}
 	if err != nil {
 		s.settingsPage(w, r, u, http.StatusBadRequest, &redisplay, err.Error(), false)
 		return

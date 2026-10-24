@@ -1,8 +1,20 @@
 {{define "title"}}Account{{end}}
+{{define "head"}}{{if and .Data.Keys.Enrolled .Data.Keys.Unlocked}}<script src="/static/passkey.js" nonce="{{$.Nonce}}" defer></script>{{end}}{{end}}
 {{define "content"}}
 {{with .Data}}
 <h1>Account</h1>
-<p class="lede">What cortex holds for you, and how to close your account.</p>
+<p class="lede">What cortex holds for you, how it is protected, and how to close your account.</p>
+{{with .Keys}}
+{{if .Notice}}<p class="notice" role="status"><strong>{{.Notice}}</strong></p>{{end}}
+{{if .Error}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+{{if .NewRecovery}}
+<section class="notice" id="new-recovery-panel" role="alert" tabindex="-1" aria-labelledby="new-recovery-h">
+  <h2 id="new-recovery-h">Your new recovery key</h2>
+  <p>This is the only time it is shown. Print it or store it somewhere safe and private. Your old recovery key no longer works.</p>
+  <p class="recovery-key" id="new-recovery" tabindex="0">{{.NewRecovery}}</p>
+</section>
+{{end}}
+{{end}}
 <h2>Storage</h2>
 <dl class="facts">
   <div><dt>Space used</dt><dd>{{.MB}}</dd></div>
@@ -10,6 +22,73 @@
   <div><dt>People, places and things</dt><dd>{{.Usage.Entities}}</dd></div>
   {{if .Usage.Deleted}}<div><dt>Deleted, can be restored for 30 days</dt><dd>{{.Usage.Deleted}}</dd></div>{{end}}
 </dl>
+
+{{with .Keys}}
+<h2 class="section">Protection</h2>
+{{if not .Enrolled}}
+<p>Your memory is not protected by a passkey yet.{{if .Enabled}} <a href="/enroll">Protect it with a passkey</a>.{{end}}</p>
+{{else}}
+<p>Your memory is encrypted. Only your passkeys or your recovery key can open it. If you lose every passkey and the recovery key, your memory cannot be recovered, not by you, not by the operator, and not from the 30-day restore or from backups.</p>
+{{if not .Unlocked}}<p class="notice" role="status">Unlock cortex with your passkey to change these settings. <a href="/unlock?next=%2Faccount">Unlock</a></p>{{end}}
+
+<h3>Passkeys</h3>
+{{$one := eq (len .Passkeys) 1}}
+<ul class="conns">
+{{range .Passkeys}}<li class="conn">
+  <div class="conn-row">
+    <strong class="conn-name">{{.Name}}</strong>
+    <p class="conn-meta">Added {{.Created}} &middot; {{if .LastUsed}}Last used {{.LastUsed}}{{else}}Not used to unlock yet{{end}}</p>
+  </div>
+  {{if $.Data.Keys.Unlocked}}<div class="conn-actions">
+  <details class="revoke">
+    <summary>Remove&hellip;</summary>
+    <form method="post" action="/account/passkeys/{{.ID}}/remove" class="revoke-panel">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <p><strong>Remove {{.Name}}?</strong> It can no longer unlock your memory.{{if $one}} It is your last passkey, so enter your recovery key to confirm. After this, only the recovery key opens your memory until you add another passkey.{{end}}</p>
+      {{if $one}}<label>Recovery key
+        <input name="recovery" required autocomplete="off" autocapitalize="characters" spellcheck="false"></label>{{end}}
+      <div class="actions"><button class="btn-danger-quiet" data-pending="Removing&hellip;">Remove passkey</button></div>
+    </form>
+  </details>
+  </div>{{end}}
+</li>{{else}}<li class="conn-empty"><strong>No passkeys.</strong> Your recovery key is the only way to open your memory. Add a passkey to unlock with one touch.</li>{{end}}
+</ul>
+{{if .Unlocked}}
+<div id="passkey-root" data-mode="add" data-csrf="{{$.CSRF}}">
+  <p class="error" id="pk-error" role="alert" hidden></p>
+  <label for="passkey-name">Name the new passkey (optional)
+    <input id="passkey-name" maxlength="80" autocomplete="off" placeholder="For example, Phone"></label>
+  <p class="note" id="pk-status" role="status"></p>
+  <p><button class="btn-secondary js-only" id="add-btn" type="button">Add a passkey</button></p>
+  <p class="note">The passkey must support the PRF extension, such as a recent iPhone, Mac, Android phone or a security key with hmac-secret.</p>
+</div>
+{{end}}
+
+<h3>Recovery key</h3>
+<p>The recovery key opens your memory if you lose your passkeys, and it is the only way to unlock on a device without PRF support. Making a new one stops the old one working at once.</p>
+{{if .Unlocked}}
+<details class="fold">
+  <summary>Make a new recovery key&hellip;</summary>
+  <form method="post" action="/account/recovery/regenerate">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="pk-consent" for="regen-confirm">
+      <input id="regen-confirm" name="confirm_loss" value="on" type="checkbox" required>
+      <span>I understand that lost keys cannot be recovered.</span></label>
+    <div class="actions"><button class="btn-secondary" data-pending="Working&hellip;">Make a new recovery key</button>
+    <span class="note">It is shown once, right after.</span></div>
+  </form>
+</details>
+{{end}}
+
+<h3>Forget all devices</h3>
+<p>This locks every other browser again and disconnects assistants that use OAuth, so they need to reconnect. This browser stays unlocked. Agent keys are not affected.</p>
+<form method="post" action="/account/forget-devices">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="actions"><button class="btn-secondary" data-pending="Working&hellip;">Forget all devices</button></div>
+</form>
+{{end}}
+{{end}}
+
 <h2 class="section">Delete account</h2>
 <p>This signs you out and disconnects every assistant at once. Your data is kept for 30 days; signing in again within that time restores it, without connections.</p>
 <form method="post" action="/account/delete">

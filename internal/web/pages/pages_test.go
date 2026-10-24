@@ -1,6 +1,12 @@
 package pages
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -128,4 +134,103 @@ func TestPasskeyTemplates(t *testing.T) {
 			t.Errorf("%s: passkey.js not loaded with the nonce", name)
 		}
 	}
+}
+
+// The account page, with every optional block on, carries no inline style or
+// handler, loads its script with the nonce and uses no em dash.
+func TestAccountPageNoInlineStyles(t *testing.T) {
+	tm, ok := Load()["account"]
+	if !ok {
+		t.Fatal("no account template")
+	}
+	data := map[string]any{
+		"MB": "1.00 MB", "Usage": map[string]any{"Memories": 3, "Entities": 2, "Deleted": 1},
+		"Keys": map[string]any{
+			"Enrolled": true, "CanRemoveLast": true,
+			"Passkeys":    []map[string]any{{"ID": "pk_1", "Name": "Laptop", "Created": "1 Jan 2026", "LastUsed": "2 Jan 2026"}, {"ID": "pk_2", "Name": "Phone", "Created": "3 Jan 2026"}},
+			"NewRecovery": "AAAA-BBBB-CCCC-DDDD", "Error": "x", "Notice": "y", "Unlocked": true,
+		},
+	}
+	var b strings.Builder
+	if err := tm.Execute(&b, Page{Data: data, SignedIn: true, Nonce: "n0nce", CSRF: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if strings.Contains(out, "style=") || eventAttr.MatchString(out) || strings.Contains(out, "<style") {
+		t.Error("inline style or handler")
+	}
+	if strings.Contains(out, "—") {
+		t.Error("em dash")
+	}
+	if !strings.Contains(out, `<script src="/static/passkey.js" nonce="n0nce" defer>`) {
+		t.Error("passkey.js not loaded with the nonce")
+	}
+	if !strings.Contains(out, `id="new-recovery"`) || !strings.Contains(out, "Forget all devices") {
+		t.Error("recovery or forget block missing")
+	}
+}
+
+// No em dash (U+2014) in any template, in README.md, or in an error string
+// literal in the Go sources.
+func TestNoEmDashInCopy(t *testing.T) {
+	const dash = "—"
+	ents, _ := files.ReadDir(".")
+	for _, e := range ents {
+		b, _ := files.ReadFile(e.Name())
+		if strings.Contains(string(b), dash) {
+			t.Errorf("%s: em dash", e.Name())
+		}
+	}
+	root := "../../.."
+	// README.md predates the rule, so only the lines this branch adds count.
+	if base, err := exec.Command("git", "-C", root, "merge-base", "master", "HEAD").Output(); err == nil {
+		out, err := exec.Command("git", "-C", root, "diff", "-U0", strings.TrimSpace(string(base)), "--", "README.md").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++") && strings.Contains(l, dash) {
+				t.Errorf("README.md: em dash in added line: %s", l)
+			}
+		}
+	}
+	fset := token.NewFileSet()
+	_ = filepath.WalkDir(filepath.Join(root), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if n := d.Name(); n == ".git" || n == "docs" || n == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return nil
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if x, ok := sel.X.(*ast.Ident); !ok || !((x.Name == "errors" && sel.Sel.Name == "New") || (x.Name == "fmt" && sel.Sel.Name == "Errorf")) {
+				return true
+			}
+			for _, a := range call.Args {
+				if lit, ok := a.(*ast.BasicLit); ok && strings.Contains(lit.Value, dash) {
+					t.Errorf("%s: em dash in error literal %s", fset.Position(lit.Pos()), lit.Value)
+				}
+			}
+			return true
+		})
+		return nil
+	})
 }

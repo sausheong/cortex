@@ -26,12 +26,19 @@ type Page struct {
 	Setup *Setup
 	// SetUp is true once the whole checklist is done.
 	SetUp bool
+	// EnrollBanner is true for a legacy account that has not enrolled yet:
+	// the "not encrypted yet" notice shows on every page but /enroll.
+	EnrollBanner bool
 }
 
 // Setup is the first-run checklist, ticked from real state.
 type Setup struct {
 	Provider, Connect, Memory bool
-	Done                      int
+	// ShowPasskey adds step 1 (protect your memory with a passkey) for an
+	// account that must enroll; Passkey is its tick. Gated is true while it
+	// is undone, and the later steps then offer no way in.
+	ShowPasskey, Passkey, Gated bool
+	Done, Total                 int
 }
 
 // Current returns aria-current="page" markup when href is the top-level

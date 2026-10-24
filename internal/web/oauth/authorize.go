@@ -163,6 +163,11 @@ func (h *handler) authorizePost(w http.ResponseWriter, r *http.Request, u web.Se
 		return
 	}
 	if u.Key != nil {
+		// Consenting again re-keys a connection that was waiting to reconnect.
+		if _, err := tx.ExecContext(ctx, `UPDATE connections SET needs_reconnect = FALSE WHERE id = $1`, connID); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		exp := now.Add(codeTTL)
 		wrapped, err := keys.Wrap(keys.WrapKeySecret(accounts.WrapKindOAuthCode, code), u.UserID, accounts.WrapKindOAuthCode, codeHash, u.Key)
 		if err == nil {

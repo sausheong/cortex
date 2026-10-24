@@ -28,7 +28,6 @@ func (s *server) mountMemories(mux *http.ServeMux) {
 	mux.HandleFunc("POST /memories/delete", s.authUnlocked(s.memoriesDelete))
 	mux.HandleFunc("GET /memories/deleted", s.authUnlocked(s.memoriesDeleted))
 	mux.HandleFunc("POST /memories/restore/{batch}", s.authUnlocked(s.memoriesRestore))
-	mux.HandleFunc("GET /account", s.auth(s.accountGet))
 	mux.HandleFunc("POST /account/delete", s.auth(s.accountDelete))
 }
 
@@ -788,25 +787,6 @@ func (s *server) memoriesRestore(w http.ResponseWriter, r *http.Request, u Sessi
 		dest = "/connections"
 	}
 	http.Redirect(w, r, dest+"?restored="+strconv.Itoa(n), http.StatusSeeOther)
-}
-
-type accountView struct {
-	Usage cortex.Usage
-	MB    string
-}
-
-func (s *server) accountGet(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	us, err := s.root.ForUser(u.UserID).Usage(r.Context())
-	if err != nil {
-		s.cfg.Logger.Error("usage", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	mb := "Under 0.01 MB"
-	if us.Bytes >= (1<<20)/100 {
-		mb = strconv.FormatFloat(float64(us.Bytes)/(1<<20), 'f', 2, 64) + " MB"
-	}
-	s.render(w, r, http.StatusOK, "account", accountView{Usage: us, MB: mb})
 }
 
 func (s *server) accountDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 // Passkey enrollment and unlock.
@@ -705,6 +706,20 @@ func (st *Store) ConfirmEnroll(ctx context.Context, userID, confirmID string, as
 			return "", nil, err
 		}
 	}
+	if next == "encrypted" {
+		// A new account has no data yet except the owner entity that sign-up
+		// wrote in plaintext. Nothing else would encrypt it (the migration
+		// job only runs for 'migrating' accounts), and the row-form guard
+		// rejects a plaintext row in an encrypted account.
+		if err := sealOwnerEntity(ctx, tx, uk, userID); err != nil {
+			return "", nil, err
+		}
+	}
+	// Tokens issued before encryption carry no key wrap: flag them so
+	// Connections offers Reconnect and the MCP error says what to do.
+	if err := markNeedsReconnect(ctx, tx, userID); err != nil {
+		return "", nil, err
+	}
 	if userID == cortex.BootstrapUserID {
 		// The static owner token would amount to a server-held key.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM connections WHERE user_id = $1 AND kind = 'agent' AND name = $2`,
@@ -940,4 +955,59 @@ func (st *Store) PurgeEnrollments(ctx context.Context, now time.Time) error {
 		`DELETE FROM webauthn_credentials c WHERE NOT EXISTS
 		   (SELECT 1 FROM user_key_wraps w WHERE w.user_id = c.user_id AND w.kind = 'passkey' AND w.ref_id = c.id)`)
 	return err
+}
+
+// sealOwnerEntity rewrites the user's plaintext owner entity as encrypted:
+// the same shape graph.writeEntityEnc produces (ciphertext columns, blind
+// indexes on normalised name and type, plain columns cleared).
+func sealOwnerEntity(ctx context.Context, tx *sql.Tx, uk *keys.UK, userID string) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, COALESCE(name,''), COALESCE(type,''), COALESCE(source,''), COALESCE(attributes::text,'{}')
+		 FROM entities WHERE user_id = $1 AND is_owner AND enc IS NOT TRUE FOR UPDATE`, userID)
+	if err != nil {
+		return err
+	}
+	type row struct{ id, name, typ, source, attrs string }
+	var owners []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.name, &r.typ, &r.source, &r.attrs); err != nil {
+			rows.Close()
+			return err
+		}
+		owners = append(owners, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, r := range owners {
+		seal := func(col, v string) ([]byte, error) { return uk.Seal(userID, store.TblEntities, r.id, col, []byte(v)) }
+		nameCT, err := seal("name", r.name)
+		if err != nil {
+			return err
+		}
+		typeCT, err := seal("type", r.typ)
+		if err != nil {
+			return err
+		}
+		sourceCT, err := seal("source", r.source)
+		if err != nil {
+			return err
+		}
+		attrsCT, err := seal("attributes", r.attrs)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entities SET enc = TRUE, name = NULL, type = NULL, source = NULL, attributes = NULL,
+			   name_ct = $3, type_ct = $4, source_ct = $5, attributes_ct = $6, name_blind = $7, type_blind = $8
+			 WHERE id = $1 AND user_id = $2`,
+			r.id, userID, nameCT, typeCT, sourceCT, attrsCT,
+			uk.Blind(store.NormName(r.name)), uk.Blind(store.NormName(r.typ))); err != nil {
+			return err
+		}
+	}
+	return nil
 }
