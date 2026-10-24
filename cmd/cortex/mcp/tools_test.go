@@ -73,6 +73,7 @@ func TestRegisterTools_AllToolsListed(t *testing.T) {
 		"traverse", "search",
 		"merge", "lint",
 		"profile",
+		"who_is", "connections", "timeline", "what_changed", "add_alias", "link_entities",
 	}
 	for _, name := range want {
 		if !got[name] {

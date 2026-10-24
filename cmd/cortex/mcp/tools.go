@@ -284,9 +284,10 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 	// --- get_relationships ---
 	s.AddTool(
 		mcp.NewTool("get_relationships",
-			mcp.WithDescription("Get relationships for an entity, optionally filtered by type."),
+			mcp.WithDescription("Get the current relationships of an entity, optionally filtered by type. Set include_invalid to see relationships that have ended too."),
 			mcp.WithString("entity_id", mcp.Required(), mcp.Description("The entity ID")),
 			mcp.WithString("type", mcp.Description("Filter by relationship type")),
+			mcp.WithBoolean("include_invalid", mcp.Description("Include relationships that have ended. Default false.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			cx, bad := h.get(ctx)
@@ -300,6 +301,9 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			var filters []cortex.RelFilter
 			if relType := req.GetString("type", ""); relType != "" {
 				filters = append(filters, cortex.RelTypeFilter(relType))
+			}
+			if req.GetBool("include_invalid", false) {
+				filters = append(filters, cortex.RelIncludeInvalid())
 			}
 			rels, err := cx.GetRelationships(ctx, entityID, filters...)
 			if err != nil {
@@ -498,6 +502,8 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			return jsonResult(p)
 		},
 	)
+
+	registerGraphTools(s, h)
 }
 
 type contextProfile struct {

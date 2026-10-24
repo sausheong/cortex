@@ -20,6 +20,17 @@ Treat cortex as your long-term memory. Read from it before answering questions. 
 - **`remember <text>`** — extract entities, relationships, and memories from the text and add them to the graph. Use after the user shares a new fact.
 - **`forget --source <s>` / `--entity <id>`** — remove knowledge. Use when the user corrects a prior belief or asks you to delete something.
 
+Over MCP there are also direct graph questions, cheaper than chaining recalls:
+
+- **`who_is`** — look someone (or something) up by name, alias, email, phone or handle: aliases, current relationships, memories.
+- **`connections`** — how two entities are linked: the shortest chain of current relationships.
+- **`timeline`** — an entity's history, including facts and relationships that are no longer true.
+- **`what_changed`** — what was added or retired since a time.
+- **`add_alias`** — record that an email, phone, handle or other name belongs to an entity, so later mentions resolve to it.
+- **`link_entities`** — record a relationship you know for certain from structured data (an email header, a calendar invite) without free-text extraction.
+
+When remembering text in the user's own voice, pass `speaker: "user"` so "I" and "me" resolve to the user; text written by someone else (an email, a document) should not carry it.
+
 These are available via:
 
 - **CLI** — `cortex recall "..."`, `cortex remember "..."`, etc.

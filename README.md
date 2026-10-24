@@ -436,10 +436,16 @@ Full instructions, security notes and conversion of older installs: [docs/deploy
 | `forget` | Remove knowledge from the graph | `entity_id` or `source` | |
 | `get_entity` | Retrieve an entity by ID | `id` | |
 | `find_entities` | Search for entities | | `type`, `name`, `source` |
-| `get_relationships` | Get relationships for an entity | `entity_id` | `type` |
+| `get_relationships` | Get the current relationships of an entity | `entity_id` | `type`, `include_invalid` |
 | `traverse` | BFS walk of the knowledge graph | `start_id` | `depth`, `edge_types` |
 | `search` | Direct keyword, vector, or memory search | `query`, `mode` | `limit` |
 | `profile` | Cached two-part (static + dynamic) digest of an entity's memories; owner by default | | `entity_id` |
+| `who_is` | Resolve a name, alias, email, phone or handle; returns aliases, current relationships and memories | `name` | |
+| `connections` | Shortest chain of current relationships between two entities | `from`, `to` | `max_hops` |
+| `timeline` | An entity's history, including ended relationships and retired memories | `entity` | `since`, `limit` |
+| `what_changed` | Entities, memories and relationships added or retired since a time | `since` | `limit` |
+| `add_alias` | Record another identifier for an entity | `entity`, `value` | `kind` |
+| `link_entities` | Record a known relationship directly, creating ends that match nothing | `source`, `type`, `target` | `source_type`, `target_type`, `provenance` |
 
 The `search` tool's `mode` parameter accepts `keyword`, `vector`, or `memory` to select the search strategy directly, bypassing query decomposition.
 

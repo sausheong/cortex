@@ -384,6 +384,10 @@ func TestMCPIsolationForeignIDs(t *testing.T) {
 		{"search-keyword", "search", func(_, _ string) map[string]any { return map[string]any{"query": "lighthouse", "mode": "keyword"} }},
 		{"search-memory", "search", func(_, _ string) map[string]any { return map[string]any{"query": "lighthouse", "mode": "memory"} }},
 		{"lint", "lint", func(_, _ string) map[string]any { return map[string]any{} }},
+		{"who_is", "who_is", func(a, _ string) map[string]any { return map[string]any{"name": a} }},
+		{"connections", "connections", func(a, b string) map[string]any { return map[string]any{"from": a, "to": b} }},
+		{"timeline", "timeline", func(a, _ string) map[string]any { return map[string]any{"entity": a} }},
+		{"add_alias", "add_alias", func(a, _ string) map[string]any { return map[string]any{"entity": a, "value": "zelda@b.example"} }},
 	}
 	for _, tc := range cases {
 		foreign, fErr := call(t, ca, tc.tool, tc.mk(e1.ID, e2.ID))
