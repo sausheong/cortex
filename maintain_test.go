@@ -140,6 +140,7 @@ func TestMaintain_RunsProfilePass(t *testing.T) {
 	if err := c.PutEntity(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
+	markOwner(t, c, owner.ID)
 
 	rep, err := c.Maintain(ctx, WithoutReconcile(), WithoutRelate(), WithoutDecay())
 	if err != nil {
@@ -160,6 +161,7 @@ func TestMaintain_DryRunSkipsProfile(t *testing.T) {
 	if err := c.PutEntity(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
+	markOwner(t, c, owner.ID)
 	rep, err := c.Maintain(ctx, WithMaintainDryRun())
 	if err != nil {
 		t.Fatal(err)

@@ -61,7 +61,7 @@ func createOwnerEntity(ctx context.Context, tx *store.Tx, userID, name, email st
 	}
 	entID := store.NewID()
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO entities (id, user_id, type, name, source) VALUES (?, ?, 'person', ?, 'owner')`,
+		`INSERT INTO entities (id, user_id, type, name, source, is_owner) VALUES (?, ?, 'person', ?, 'owner', TRUE)`,
 		entID, userID, display); err != nil {
 		return fmt.Errorf("cortex: create owner entity: %w", err)
 	}

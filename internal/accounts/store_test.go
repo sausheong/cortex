@@ -349,6 +349,8 @@ func TestMigrateBootstrapNeedsKey(t *testing.T) {
 	}
 }
 
+func TestBootstrapOwnerEntityIsOwner(t *testing.T) { TestMigrateBootstrapSetsOwnerEntity(t) }
+
 func TestMigrateBootstrapSetsOwnerEntity(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -361,13 +363,15 @@ func TestMigrateBootstrapSetsOwnerEntity(t *testing.T) {
 		t.Fatal("owner_entity_id not set")
 	}
 	var src string
-	e.st.DB.QueryRow(`SELECT source FROM entities WHERE id=$1`, owner.String).Scan(&src)
-	if src != "owner" {
-		t.Fatalf("source %q", src)
+	var isOwner bool
+	e.st.DB.QueryRow(`SELECT source, is_owner FROM entities WHERE id=$1`, owner.String).Scan(&src, &isOwner)
+	if src != "owner" || !isOwner {
+		t.Fatalf("source %q is_owner %v", src, isOwner)
 	}
 	// existing owner entity is adopted
 	e2 := newEnv(t)
-	e2.st.DB.Exec(`INSERT INTO entities (id, user_id, type, name, source) VALUES ('legacy','u_bootstrap','person','Sau','owner')`)
+	e2.st.DB.Exec(`INSERT INTO entities (id, user_id, type, name, source) VALUES ('legacy','u_bootstrap','person','Sau','x')`)
+	e2.st.DB.Exec(`UPDATE entities SET is_owner = TRUE WHERE id = 'legacy'`)
 	if err := MigrateBootstrap(ctx, e2.st, bootEnv()); err != nil {
 		t.Fatal(err)
 	}

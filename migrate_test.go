@@ -238,9 +238,11 @@ func TestSyncStatePerUser(t *testing.T) {
 func TestPutEntityDoesNotDemoteOwner(t *testing.T) {
 	ctx := context.Background()
 	c := openTestDB(t)
-	if err := c.PutEntity(ctx, &Entity{Type: "person", Name: "Sau", Source: "owner"}); err != nil {
+	o := &Entity{Type: "person", Name: "Sau", Source: "owner"}
+	if err := c.PutEntity(ctx, o); err != nil {
 		t.Fatal(err)
 	}
+	markOwner(t, c, o.ID)
 	if err := c.PutEntity(ctx, &Entity{Type: "person", Name: "Sau", Source: "extracted"}); err != nil {
 		t.Fatal(err)
 	}

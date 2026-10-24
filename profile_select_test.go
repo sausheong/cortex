@@ -16,6 +16,7 @@ func TestMaintain_SurvivesLLMFailureAndRunsLaterPasses(t *testing.T) {
 	if err := c.PutEntity(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
+	markOwner(t, c, owner.ID)
 	for i := 0; i < 2; i++ {
 		if err := c.PutMemory(ctx, &Memory{Content: fmt.Sprintf("fact %d", i), EntityIDs: []string{owner.ID}}); err != nil {
 			t.Fatal(err)
@@ -54,6 +55,7 @@ func TestProfile_StaticSelectionIsDiverse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	markOwner(t, c, owner.ID)
 	// 20 recent, near-identical static memories about one acquaintance.
 	for i := 0; i < 20; i++ {
 		m := &Memory{Content: fmt.Sprintf("Sam Tan had coffee with the owner at the Starbucks near work on day %d", i),

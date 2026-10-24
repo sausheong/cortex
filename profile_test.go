@@ -59,6 +59,7 @@ func TestProfileEligibleIDs_OwnerAndTracked(t *testing.T) {
 	if err := c.PutEntity(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
+	markOwner(t, c, owner.ID)
 	tracked := &Entity{Type: "person", Name: "Alice"}
 	if err := c.PutEntity(ctx, tracked); err != nil {
 		t.Fatal(err)
@@ -262,6 +263,7 @@ func TestRefreshProfiles_BuildsEligible(t *testing.T) {
 	if err := c.PutEntity(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
+	markOwner(t, c, owner.ID)
 	tracked := &Entity{Type: "person", Name: "Alice"}
 	if err := c.PutEntity(ctx, tracked); err != nil {
 		t.Fatal(err)

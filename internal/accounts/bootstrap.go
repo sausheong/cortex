@@ -112,7 +112,7 @@ func ensureBootstrapOwner(ctx context.Context, tx *sql.Tx) error {
 		return nil
 	}
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM entities WHERE source = 'owner' AND user_id = $1 AND deleted_at IS NULL
+	err := tx.QueryRowContext(ctx, `SELECT id FROM entities WHERE is_owner AND user_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at, id LIMIT 1`, cortex.BootstrapUserID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		display := name
@@ -123,7 +123,7 @@ func ensureBootstrapOwner(ctx context.Context, tx *sql.Tx) error {
 			display = "Owner"
 		}
 		id = ulid.Make().String()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO entities (id, user_id, type, name, source) VALUES ($1,$2,'person',$3,'owner')`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO entities (id, user_id, type, name, source, is_owner) VALUES ($1,$2,'person',$3,'owner',TRUE)`,
 			id, cortex.BootstrapUserID, display); err != nil {
 			return fmt.Errorf("accounts: bootstrap owner entity: %w", err)
 		}

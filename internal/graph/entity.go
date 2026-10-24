@@ -45,7 +45,7 @@ func (c Ops) PutEntity(ctx context.Context, e *model.Entity) error {
 			}
 			if err := c.DB.QueryRowContext(ctx,
 				`UPDATE entities SET type = ?, name = ?, attributes = ?::jsonb,
-				   source = CASE WHEN source = 'owner' THEN source ELSE ? END,
+				   source = CASE WHEN is_owner THEN source ELSE ? END,
 				   confidence = ?, updated_at = ?,
 				   written_by_connection_id = COALESCE(?, written_by_connection_id)
 				 WHERE id = ? AND user_id = ?
@@ -69,7 +69,7 @@ func (c Ops) PutEntity(ctx context.Context, e *model.Entity) error {
 		 VALUES (?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, name, type) WHERE deleted_at IS NULL AND enc IS NOT TRUE DO UPDATE SET
 		   attributes = EXCLUDED.attributes,
-		   source = CASE WHEN entities.source = 'owner' THEN entities.source ELSE EXCLUDED.source END,
+		   source = CASE WHEN entities.is_owner THEN entities.source ELSE EXCLUDED.source END,
 		   confidence = EXCLUDED.confidence,
 		   updated_at = EXCLUDED.updated_at,
 		   written_by_connection_id = COALESCE(EXCLUDED.written_by_connection_id, entities.written_by_connection_id)

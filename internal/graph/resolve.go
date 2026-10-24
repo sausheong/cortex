@@ -133,7 +133,7 @@ func (c Ops) absorbIntoEntity(ctx context.Context, stored, e *model.Entity) erro
 	now := time.Now().UTC()
 	if _, err := c.DB.ExecContext(ctx,
 		`UPDATE entities SET attributes = ?::jsonb, confidence = ?, updated_at = ?,
-		   source = CASE WHEN source = 'owner' OR ? = '' THEN source ELSE ? END
+		   source = CASE WHEN is_owner OR ? = '' THEN source ELSE ? END
 		 WHERE id = ? AND user_id = ?`,
 		string(attrsJSON), conf, now, e.Source, e.Source, stored.ID, c.UserID,
 	); err != nil {

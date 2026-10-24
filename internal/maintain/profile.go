@@ -52,22 +52,33 @@ func (c Ops) UntrackProfile(ctx context.Context, entityID string) error {
 }
 
 // ProfileEligibleIDs returns the IDs of entities that get auto-refreshed
-// profiles: the owner entity (source=owner) plus any entity flagged via
+// profiles: the owner entity (is_owner) plus any entity flagged via
 // TrackProfile. Order is owner(s) first, then tracked; duplicates removed.
 func (c Ops) ProfileEligibleIDs(ctx context.Context) ([]string, error) {
 	seen := map[string]bool{}
 	var ids []string
 
-	owners, err := graph.New(c.Handle).FindEntities(ctx, model.EntityFilter{Type: "person", Source: "owner"})
+	rows, err := c.DB.QueryContext(ctx,
+		`SELECT id FROM entities WHERE user_id = ? AND is_owner AND deleted_at IS NULL ORDER BY created_at, id`, c.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: find owner entities: %w", err)
 	}
-	for _, e := range owners {
-		if !seen[e.ID] {
-			seen[e.ID] = true
-			ids = append(ids, e.ID)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("cortex: find owner entities: %w", err)
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("cortex: find owner entities: %w", err)
+	}
+	rows.Close()
 
 	all, err := graph.New(c.Handle).FindEntities(ctx, model.EntityFilter{})
 	if err != nil {
