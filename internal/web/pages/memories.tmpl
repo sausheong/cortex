@@ -29,24 +29,28 @@
       <select name="by"><option value="">Anyone</option><option value="none"{{if eq $.Data.By "none"}} selected{{end}}>Added directly</option>
         {{range .ConnOpts}}<option value="{{.ID}}" {{if eq .ID $.Data.By}}selected{{end}}>{{.Label}}</option>{{end}}
       </select></label>
-  </div>
-  <div class="search-row dates">
-    <label>From <input name="from" type="date" value="{{.From}}"{{if .RangeErr}} aria-invalid="true" aria-describedby="err-range"{{end}}></label>
-    <label>To <input name="to" type="date" value="{{.To}}"{{if .RangeErr}} aria-invalid="true" aria-describedby="err-range"{{end}}></label>
-    <label>Sort
-      <select name="sort">
-        <option value="newest"{{if eq .Sort "newest"}} selected{{end}}>Newest first</option>
-        <option value="oldest"{{if eq .Sort "oldest"}} selected{{end}}>Oldest first</option>
-      </select></label>
-    <label>Per page
-      <select name="size">{{range .Sizes}}<option value="{{.}}"{{if eq . $.Data.Size}} selected{{end}}>{{.}}</option>{{end}}</select></label>
     <button class="btn-secondary" data-pending="Applying&hellip;">Apply</button>
   </div>
-  <p class="field-error" id="err-range" role="alert">{{.RangeErr}}</p>
-  <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included.</p>
-  <nav class="presets" aria-label="Date presets"><span class="note">Quick range:</span>
-    {{range .Presets}}<a href="{{.Href}}"{{if .Current}} aria-current="true" class="on"{{end}}>{{.Label}}</a>{{end}}
-  </nav>
+  <details class="more"{{if .MoreOpen}} open{{end}}>
+    <summary>More filters{{if .MoreOpen}} (on){{end}}</summary>
+    <div class="search-row dates">
+      <label>From <input name="from" type="date" value="{{.From}}"{{if .RangeErr}} aria-invalid="true" aria-describedby="err-range"{{end}}></label>
+      <label>To <input name="to" type="date" value="{{.To}}"{{if .RangeErr}} aria-invalid="true" aria-describedby="err-range"{{end}}></label>
+      <label>Sort
+        <select name="sort">
+          <option value="newest"{{if eq .Sort "newest"}} selected{{end}}>Newest first</option>
+          <option value="oldest"{{if eq .Sort "oldest"}} selected{{end}}>Oldest first</option>
+        </select></label>
+      <label>Per page
+        <select name="size">{{range .Sizes}}<option value="{{.}}"{{if eq . $.Data.Size}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+      <button class="btn-secondary" data-pending="Applying&hellip;">Apply</button>
+    </div>
+    <p class="field-error" id="err-range" role="alert">{{.RangeErr}}</p>
+    <p class="note" id="tz-hint">Dates are whole days in {{.TZHint}}, and both ends are included.</p>
+    <nav class="presets" aria-label="Date presets"><span class="note">Quick range:</span>
+      {{range .Presets}}<a href="{{.Href}}"{{if .Current}} aria-current="true" class="on"{{end}}>{{.Label}}</a>{{end}}
+    </nav>
+  </details>
 </form>{{end}}
 <form method="post" action="/memories/delete" id="memform">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -59,15 +63,22 @@
     <span class="note js-hide">Tick memories to delete. You confirm the count on the next screen.</span>
   </div>{{end}}
   {{if .Memories}}<p class="selall"><a id="selall" class="selact" href="{{.SelectHref}}">Select all on this page{{if gt .SelCount 0}} ({{.SelCount}}){{end}}</a></p>{{end}}
-  <ul class="memlist" id="memlist" aria-describedby="err-ids">
-  {{range .Memories}}
-    <li><label class="mem"><input type="checkbox" name="ids" value="{{.ID}}"{{if $.Data.SelectPage}} checked{{end}}>
-      <span class="mem-body"><span class="mem-text">{{.Content}}</span>
-      <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Who}} &middot; {{.Who}}{{end}}</span></span>
-    </label></li>
-  {{else}}<li class="empty-state">{{if $.Data.HasMore}}<strong>Nothing matches.</strong> <span class="note">Try fewer filters, or <a href="/memories">clear the search</a>.</span>{{else}}<strong>No memories yet.</strong>
-    <span class="note">cortex only remembers what a connected assistant saves. <a href="/connections">Connect an assistant</a>, then ask it to remember something about you.</span>{{end}}</li>{{end}}
-  </ul>
+  <div id="memlist" aria-describedby="err-ids">
+  {{range .Days}}
+    <section class="memday" aria-labelledby="day-{{.ISO}}">
+    <h2 class="day" id="day-{{.ISO}}"><time datetime="{{.ISO}}">{{.Label}}</time></h2>
+    <ul class="memlist">
+    {{range .Rows}}
+      <li><label class="mem"><input type="checkbox" name="ids" value="{{.ID}}"{{if $.Data.SelectPage}} checked{{end}}>
+        <span class="mem-body"><span class="mem-text">{{.Content}}</span>
+        <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Who}} &middot; {{.Who}}{{end}}</span></span>
+      </label></li>
+    {{end}}
+    </ul>
+    </section>
+  {{else}}<ul class="memlist"><li class="empty-state">{{if $.Data.HasMore}}<strong>Nothing matches.</strong> <span class="note">Try fewer filters, or <a href="/memories">clear the search</a>.</span>{{else}}<strong>No memories yet.</strong>
+    <span class="note">cortex only remembers what a connected assistant saves. <a href="/connections">Connect an assistant</a>, then ask it to remember something about you.</span>{{end}}</li></ul>{{end}}
+  </div>
   <p class="field-error" id="err-ids" role="alert">{{if eq .ErrField "ids"}}{{.Error}}{{end}}</p>
 </form>
 {{if .Memories}}<nav class="pager" aria-label="Pagination">

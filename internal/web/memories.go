@@ -48,10 +48,20 @@ type memoryRow struct {
 	New         bool   // written since the viewer's previous visit
 }
 
+// memDay is the rows written on one local day, under one heading.
+type memDay struct {
+	Label string // Today, Yesterday, or a date
+	ISO   string // yyyy-mm-dd, for the machine-readable heading
+	Rows  []memoryRow
+}
+
 type connOpt struct{ ID, Label string }
 
 type memoriesView struct {
 	Memories []memoryRow
+	Days     []memDay
+	// MoreOpen opens "More filters" when any filter inside it is active.
+	MoreOpen bool
 	Conns    []accounts.Connection
 	// ConnOpts feeds the "Written by" selects: removed connections appear
 	// only while they still have live memories.
@@ -388,6 +398,28 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 			Ago: relTime(now, m.CreatedAt), Abs: absTime(m.CreatedAt), ISO: m.CreatedAt.UTC().Format(time.RFC3339),
 			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
 	}
+	// Day headings use the viewer's local days, same offset as the date filters.
+	todayLocal := s.now().UTC().Add(-shift)
+	todayLocal = time.Date(todayLocal.Year(), todayLocal.Month(), todayLocal.Day(), 0, 0, 0, 0, time.UTC)
+	for i, m := range ms {
+		d := m.CreatedAt.UTC().Add(-shift)
+		d = time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+		iso := d.Format("2006-01-02")
+		if n := len(v.Days); n == 0 || v.Days[n-1].ISO != iso {
+			label := d.Format("Monday, 2 January 2006")
+			switch {
+			case d.Equal(todayLocal):
+				label = "Today"
+			case d.Equal(todayLocal.AddDate(0, 0, -1)):
+				label = "Yesterday"
+			case d.Year() == todayLocal.Year():
+				label = d.Format("Monday, 2 January")
+			}
+			v.Days = append(v.Days, memDay{Label: label, ISO: iso})
+		}
+		v.Days[len(v.Days)-1].Rows = append(v.Days[len(v.Days)-1].Rows, v.Memories[i])
+	}
+	v.MoreOpen = v.From != "" || v.To != "" || v.Range != "" || v.Sort == "oldest" || v.Size != defaultPageSize || v.RangeErr != ""
 	v.HasMore = v.Entity != "" || v.Since != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
 	last := (total + v.Size - 1) / v.Size
 	if v.Page > 1 {

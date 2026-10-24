@@ -137,8 +137,13 @@ details.rename>summary::-webkit-details-marker{display:none}
 .search-row input,.search-row select{min-height:44px}
 details.more,details.cleanup{margin-top:var(--s2)}
 details.more>summary,details.cleanup>summary{display:flex;align-items:center;width:fit-content;min-height:44px;color:var(--accent);cursor:pointer}
-details.more .search-row{grid-template-columns:repeat(2,minmax(0,12rem));margin-bottom:var(--s2)}
+details.more .search-row:not(.dates){grid-template-columns:repeat(2,minmax(0,12rem));margin-bottom:var(--s2)}
 .memlist{margin:var(--s4) 0 0}
+#memlist .memlist{margin:0}
+#memlist{margin-top:var(--s4)}
+.memday+.memday{margin-top:var(--s5)}
+h2.day{margin:0 0 var(--s2);font-size:var(--text-base);font-weight:var(--w-strong);letter-spacing:0;color:var(--muted)}
+.mem-text{max-width:75ch}
 .memlist li{padding:0}
 .mem{display:flex;align-items:flex-start;gap:var(--s3);margin:0;padding:var(--s3) var(--s1);font-size:inherit;font-weight:var(--w-body);line-height:var(--lh-body);color:var(--fg);cursor:pointer}
 .mem input[type=checkbox]{flex:none;margin:3px 0 0;width:20px;height:20px}
@@ -162,7 +167,7 @@ details.more .search-row{grid-template-columns:repeat(2,minmax(0,12rem));margin-
 a.pg,a.pg-step{color:var(--accent)}
 .pg.on{border:1px solid var(--line);font-weight:var(--w-strong);color:var(--fg)}
 .pg-step.off{color:var(--muted)}
-.search-row.dates{grid-template-columns:repeat(4,minmax(0,1fr)) auto;margin-top:var(--s3)}
+.search-row.dates{grid-template-columns:repeat(4,minmax(0,1fr)) auto;margin-top:var(--s2)}
 .search .field-error:empty{display:none}
 .presets{display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--s3)}
 .presets a{display:inline-flex;align-items:center;min-height:44px;color:var(--accent)}
@@ -171,8 +176,8 @@ details.cleanup{border-top:1px solid var(--line);padding-top:var(--s2)}
 .cleanup-form{margin:var(--s5) 0 0;max-width:28rem}
 .cleanup-form h2{font-size:var(--text-base);letter-spacing:0;margin:0 0 var(--s2)}
 .cleanup-form .field-error:empty{display:none}
-@media (max-width:760px){.search-row.dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:560px){.search-row,details.more .search-row{grid-template-columns:1fr}.search-row.dates{grid-template-columns:repeat(2,minmax(0,1fr))}.search-row.dates .btn-secondary{grid-column:1/-1}}
+@media (max-width:760px){.search-row.dates{grid-template-columns:repeat(2,minmax(0,1fr))}.search-row.dates .btn-secondary{grid-column:1/-1}}
+@media (max-width:560px){.search-row,details.more .search-row:not(.dates){grid-template-columns:1fr}.search-row.dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* First run and trust */
 .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
