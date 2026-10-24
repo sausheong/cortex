@@ -487,3 +487,30 @@ make dist         # cross-compiled release binaries
 Database tests need `CORTEX_TEST_DATABASE_URL` (set by `make test`; `make test-db` just starts the container) and are skipped without it; each test gets its own schema. No API keys are needed — providers are mocked. Live provider tests: `OPENAI_API_KEY=... go test ./llm/openai/` and `ANTHROPIC_API_KEY=... go test ./llm/anthropic/`.
 
 Retrieval quality is measured with `cortex-eval` (`generate` an eval set from a graph, then `run` it across configurations, including `hybrid+graph`).
+
+### Repository layout
+
+The root package `cortex` is the public API only. `Cortex`, its methods, options, errors and constants live there as thin forwarders. Domain types are type aliases (for example `type Memory = model.Memory`), so existing imports keep compiling. All implementation sits under `internal/`.
+
+| Path | Role |
+|------|------|
+| `internal/model` | Shared domain types |
+| `internal/ontology`, `internal/vecmath`, `internal/llmutil` | Ontology rules, vector math, LLM helpers |
+| `internal/store` | Database access, migrations, ids, soft delete, usage |
+| `internal/tenancy` | Per-user scoping |
+| `internal/graph` | Entities, aliases, relationships, traversal |
+| `internal/memory` | Memories, chunks, memory edges |
+| `internal/query` | Recall and search |
+| `internal/maintain` | Reconcile, relate, decay, expire, profiles, lint |
+| `internal/ingest` | Ingestion pipeline |
+| `internal/render` | Rendering of entity cards and profiles |
+| `internal/accounts`, `internal/jobs`, `internal/web` | Hosted multi-user service |
+| `cmd/cortex`, `cmd/cortex-eval` | CLI, MCP server and eval tool |
+| `extractor/`, `llm/`, `connector/`, `vault/` | Public extension packages |
+| `eval/` | Retrieval evaluation harness |
+| `examples/sample-notes` | Sample vault |
+| `docs/design` | Design notes: `CORTEX.md`, improvement research |
+| `docs/ops` | Operations: `deploy.md` |
+| `docs/superpowers` | Specs and plans |
+
+`PRODUCT.md`, `DESIGN.md` and `.impeccable/` stay at the root for the design tooling. Run `make test` before sending changes.
