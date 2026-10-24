@@ -393,3 +393,37 @@ func TestHomeIsolation(t *testing.T) {
 		t.Errorf("bob's own note missing: %s", body)
 	}
 }
+
+func TestHomeStatusNeverContradicts(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	ua := e.userBySub("g-alice")
+	e.setProvider(ua.ID)
+
+	// None connected: no assistant clause and no set-up line.
+	e.write(ua.ID, "", "likes tea")
+	_, body := e.get("/")
+	if strings.Contains(body, "You are set up") || strings.Contains(body, "assistant active") || strings.Contains(body, "not used yet") {
+		t.Fatalf("no assistants: unexpected status: %s", body)
+	}
+
+	// Connected but never used: honest strip, no set-up line.
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	_, body = e.get("/")
+	if !strings.Contains(body, "1 assistant connected, not used yet") {
+		t.Errorf("connected-but-unused strip missing: %s", body)
+	}
+	if strings.Contains(body, "You are set up") || strings.Contains(body, "assistant active") {
+		t.Errorf("unused assistant must not read as set up or active: %s", body)
+	}
+
+	// Used: active in both places.
+	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
+	_, body = e.get("/")
+	if !strings.Contains(body, "You are set up.") || !strings.Contains(body, "1 assistant active") {
+		t.Errorf("active assistant should show set-up line and strip: %s", body)
+	}
+	if strings.Contains(body, "not used yet</span>") && strings.Contains(body, "connected, not used yet") {
+		t.Errorf("contradiction: %s", body)
+	}
+}

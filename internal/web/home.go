@@ -157,16 +157,24 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 func homeStrip(v homeView) []string {
 	var parts []string
 	if !v.Assistants.Err && len(v.Assistants.Rows) > 0 {
-		active := 0
+		var active, unused int
 		for _, a := range v.Assistants.Rows {
-			if a.Flag == "" {
+			switch a.Flag {
+			case "":
 				active++
+			case "unused":
+				unused++
 			}
 		}
-		if active == 0 {
-			parts = append(parts, "No assistants active")
-		} else {
+		switch {
+		case active > 0 && unused > 0:
+			parts = append(parts, plural(active, "assistant", "assistants")+" active, "+strconv.Itoa(unused)+" not used yet")
+		case active > 0:
 			parts = append(parts, plural(active, "assistant", "assistants")+" active")
+		case unused == len(v.Assistants.Rows):
+			parts = append(parts, plural(unused, "assistant", "assistants")+" connected, not used yet")
+		default:
+			parts = append(parts, "No assistants active")
 		}
 	}
 	if !v.New.Err {
@@ -306,20 +314,29 @@ func (s *server) homeAssistants(ctx context.Context, cx *cortex.Cortex, conns []
 	})
 	var h homeAssistants
 	for _, c := range live {
-		row := homeAssistant{Name: c.Name, Written7: week[c.ID]}
-		switch {
-		case c.LastUsed == nil:
-			row.Flag, row.Used = "unused", "Not used yet"
-		default:
+		row := homeAssistant{Name: c.Name, Written7: week[c.ID], Flag: assistantFlag(c, now)}
+		if c.LastUsed == nil {
+			row.Used = "Not used yet"
+		} else {
 			row.Used = "Used " + relTime(now, *c.LastUsed)
 			row.UsedISO = c.LastUsed.UTC().Format(time.RFC3339)
-			if now.Sub(*c.LastUsed) > homeIdleDays*24*time.Hour {
-				row.Flag = "idle"
-			}
 		}
 		h.Rows = append(h.Rows, row)
 	}
 	return h
+}
+
+// assistantFlag is the one definition of an assistant's state, shared by the
+// Home rows, the status strip and the "You are set up" line: "unused" (never
+// called), "idle" (not called for homeIdleDays) or "" (active).
+func assistantFlag(c accounts.Connection, now time.Time) string {
+	switch {
+	case c.LastUsed == nil:
+		return "unused"
+	case now.Sub(*c.LastUsed) > homeIdleDays*24*time.Hour:
+		return "idle"
+	}
+	return ""
 }
 
 // humanBytes renders a size the way people read it.

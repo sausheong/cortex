@@ -18,6 +18,7 @@ func (s *server) setupState(ctx context.Context, userID string) *pages.Setup {
 // setupRead is setupState plus whether every step is done.
 func (s *server) setupRead(ctx context.Context, userID string) (*pages.Setup, bool) {
 	var st pages.Setup
+	var active bool // a live assistant that is in use, in the terms Home uses
 	if set, err := s.st.GetSettings(ctx, userID); err == nil && set.APIKey != "" {
 		st.Provider = true
 	}
@@ -25,7 +26,9 @@ func (s *server) setupRead(ctx context.Context, userID string) (*pages.Setup, bo
 		for _, c := range conns {
 			if c.RevokedAt == nil && c.RemovedAt == nil {
 				st.Connect = true
-				break
+				if assistantFlag(c, s.now()) == "" {
+					active = true
+				}
 			}
 		}
 	} else {
@@ -42,6 +45,11 @@ func (s *server) setupRead(ctx context.Context, userID string) (*pages.Setup, bo
 		}
 	}
 	if st.Done == 3 {
+		if !active {
+			// Connected but unused or idle: not "set up" in the strip's terms,
+			// and nothing left to tick, so show neither the checklist nor the line.
+			return nil, false
+		}
 		return nil, true
 	}
 	return &st, false
