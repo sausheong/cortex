@@ -1,7 +1,7 @@
 <!--
   This file is embedded into the cortex binary at build time.
-  Edit docs/CORTEX.md (the canonical source) and copy here:
-    cp docs/CORTEX.md cmd/cortex/CORTEX.md.template
+  Edit docs/design/CORTEX.md (the canonical source) and copy here:
+    cp docs/design/CORTEX.md cmd/cortex/CORTEX.md.template
 -->
 
 # CORTEX.md

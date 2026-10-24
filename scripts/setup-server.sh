@@ -41,7 +41,7 @@ CORTEX_BIN="/usr/local/bin/cortex"
 while [ $# -gt 0 ]; do
   case "$1" in
     --app-host) APP_HOST="${2:?--app-host needs a value}"; shift 2 ;;
-    --public-host) echo "--public-host was removed: Postgres is no longer exposed publicly. Use --app-host FQDN (see docs/deploy.md)" >&2; exit 2 ;;
+    --public-host) echo "--public-host was removed: Postgres is no longer exposed publicly. Use --app-host FQDN (see docs/ops/deploy.md)" >&2; exit 2 ;;
     --email) LE_EMAIL="${2:?--email needs a value}"; shift 2 ;;
     --cert) CERT_FILE="${2:?--cert needs a value}"; shift 2 ;;
     --key) KEY_FILE="${2:?--key needs a value}"; shift 2 ;;

@@ -98,7 +98,7 @@ The web app has pages for:
 - **Connections** — MCP address, per-assistant tokens, revoke and rename.
 - **Settings / Account** — provider, re-embedding, storage, account deletion.
 
-Deployment to a small server (Postgres on localhost, Caddy for HTTPS, a nightly maintenance timer) is scripted: `scripts/setup-server.sh --app-host <fqdn>` once, then `scripts/deploy-app.sh root@<fqdn>` for each release. Every deploy takes a database dump before migrating; `scripts/rollback-app.sh` restores it. See [docs/deploy.md](docs/deploy.md).
+Deployment to a small server (Postgres on localhost, Caddy for HTTPS, a nightly maintenance timer) is scripted: `scripts/setup-server.sh --app-host <fqdn>` once, then `scripts/deploy-app.sh root@<fqdn>` for each release. Every deploy takes a database dump before migrating; `scripts/rollback-app.sh` restores it. See [docs/ops/deploy.md](docs/ops/deploy.md).
 
 ---
 
@@ -446,7 +446,7 @@ anthropicllm.NewLLM("sk-ant-...", anthropicllm.WithModel("claude-haiku-4-5"))
 | `CORTEX_AUTH_TOKEN` | | bearer token for HTTP MCP |
 | `CORTEX_SECRET_KEY` | | encrypts per-user provider keys (`serve`, `--user`) |
 
-The provider variables configure single-user CLI and MCP use. On the multi-user service each user's settings hold their provider; see [docs/deploy.md](docs/deploy.md) for the service's variables.
+The provider variables configure single-user CLI and MCP use. On the multi-user service each user's settings hold their provider; see [docs/ops/deploy.md](docs/ops/deploy.md) for the service's variables.
 
 ---
 

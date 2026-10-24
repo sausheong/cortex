@@ -143,3 +143,7 @@ README architecture/layout section (root API, `internal/*` layer table, `cmd/`, 
 - Lock-step hazards: `llmBackoff` is a package var swapped by tests; it becomes the exported var `llmutil.Backoff`, and root tests import `internal/llmutil` and set it directly.
 - Untracked docs cannot be recovered from git; take a copy of `docs/CORTEX.md` and the research note to `/tmp` before Stage 1.
 - Layering was cross-checked against definitions, not only call sites; if the step 4 import listing disagrees with the package map, fix the map or move the symbol down, never import upward.
+
+## Stage 1 notes
+
+Root testdata/ was referenced by no Go test, script or doc, so it was moved to examples/sample-notes instead of next to a test. docs/ is gitignored, so docs/design and docs/ops were added with `git add -f`.

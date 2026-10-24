@@ -19,7 +19,6 @@ coverage.html
 
 # Internal docs and specs
 /docs
-/openspec
 
 # Exported vault (regenerable via: cortex export --vault ./vault)
 # Local `cortex export` output lands in vault/, which is also the Go package:
