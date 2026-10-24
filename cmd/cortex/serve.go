@@ -82,6 +82,8 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 			return jobs.CompactJob(ctx, root, st, j.UserID, id)
 		}
 		switch j.Kind {
+		case jobs.RememberKind:
+			return jobs.RememberJob(ctx, root, st, j.UserID, j.Payload)
 		case "index":
 			return jobs.IndexJob(ctx, root, st, j.UserID)
 		case "reembed":
@@ -108,7 +110,12 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 		return st.ResolveUser(ctx, root, userID, connID)
 	}
 	s := server.NewMCPServer("cortex", "1.0.0", server.WithToolCapabilities(false))
-	mcpserver.RegisterToolsFor(s, nil, publicURL)
+	mcpserver.RegisterToolsFor(s, nil, publicURL, mcpserver.WithBackgroundRemember(
+		func(ctx context.Context, cx *cortex.Cortex, content, source, speaker string) error {
+			_, err := jobs.EnqueueRemember(ctx, pool, cx.UserID(), jobs.RememberPayload{
+				Content: content, Source: source, Speaker: speaker, ConnID: cx.ConnectionID()})
+			return err
+		}))
 	mcpHandler := mcpserver.NewHTTPHandler(s, resolve, publicURL, accounts.NewLimiter(30, 30, nil))
 
 	h := buildHandler(handlerDeps{

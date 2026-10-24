@@ -34,6 +34,9 @@ func (c *Cortex) WithConnection(connID string) *Cortex {
 	return &n
 }
 
+// ConnectionID is the connection this handle stamps on its writes, "" when none.
+func (c *Cortex) ConnectionID() string { return c.connID }
+
 // nullConn returns the connection ID as a SQL value, NULL when unset.
 func (c *Cortex) nullConn() any {
 	if c.connID == "" {

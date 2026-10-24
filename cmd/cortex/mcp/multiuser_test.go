@@ -64,7 +64,9 @@ type muEnv struct {
 	limiter *accounts.Limiter
 }
 
-func newMUEnv(t *testing.T) *muEnv {
+func newMUEnv(t *testing.T) *muEnv { return newMUEnvOpts(t) }
+
+func newMUEnvOpts(t *testing.T, opts ...ToolOption) *muEnv {
 	t.Helper()
 	dsn := pgtest.DSN(t)
 	root, err := cortex.Open(dsn, cortex.WithExtractor(deterministic.New()))
@@ -91,7 +93,7 @@ func newMUEnv(t *testing.T) *muEnv {
 		return st.ResolveUser(ctx, root, uid, cid)
 	}
 	s := server.NewMCPServer("cortex-test", "0.0.0", server.WithToolCapabilities(false))
-	RegisterToolsFor(s, nil, testPublicURL)
+	RegisterToolsFor(s, nil, testPublicURL, opts...)
 	e.handler = NewHTTPHandler(s, resolve, testPublicURL, e.limiter)
 	e.srv = httptest.NewServer(e.handler)
 	t.Cleanup(e.srv.Close)

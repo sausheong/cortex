@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -98,9 +99,12 @@ type memoriesView struct {
 	// ("ids", "older_than", "match", "").
 	Error, ErrField string
 	Undo            *undoNotice
-	Restored        int // memories restored by the last Undo
-	WasRestored     bool
-	HasMore         bool // a filter is active, so the filter row shows it
+	// DocsProcessing counts large documents still being processed in the
+	// background; DocsFailed counts ones that gave up in the last three days.
+	DocsProcessing, DocsFailed int
+	Restored                   int // memories restored by the last Undo
+	WasRestored                bool
+	HasMore                    bool // a filter is active, so the filter row shows it
 	// SelectPage pre-ticks every row (the no-JS "Select all on this page").
 	SelectPage bool
 	SelCount   int    // rows on this page
@@ -287,6 +291,20 @@ func (s *server) clampedView(r *http.Request, u SessionUser) url.Values {
 	return q
 }
 
+// backgroundDocs counts the user's background remember jobs that are queued
+// or running, and those that failed in the last three days.
+func (s *server) backgroundDocs(ctx context.Context, userID string) (processing, failed int) {
+	err := s.st.DB.QueryRowContext(ctx,
+		`SELECT count(*) FILTER (WHERE status IN ('queued','running')),
+		        count(*) FILTER (WHERE status = 'failed' AND updated_at > now() - interval '3 days')
+		   FROM jobs WHERE user_id = $1 AND kind = 'remember'`, userID).Scan(&processing, &failed)
+	if err != nil {
+		s.cfg.Logger.Error("background docs", "err", err)
+		return 0, 0
+	}
+	return processing, failed
+}
+
 func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, field, msg string) {
 	ctx := r.Context()
 	q := r.URL.Query()
@@ -376,6 +394,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	v.Total, v.Conns = total, conns
+	v.DocsProcessing, v.DocsFailed = s.backgroundDocs(ctx, u.UserID)
 	if v.Entity != "" {
 		if e, err := cx.GetEntity(ctx, v.Entity); err == nil {
 			v.EntityName = e.Name

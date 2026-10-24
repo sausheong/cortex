@@ -12,7 +12,24 @@ import (
 )
 
 // Job is one queued unit of background work.
-type Job struct{ ID, UserID, Kind string }
+type Job struct {
+	ID, UserID, Kind string
+	// Payload is the job's input text, loaded when a worker claims the job.
+	Payload string
+}
+
+// RememberKind is the kind of a background "remember" job (see remember.go).
+const RememberKind = "remember"
+
+// maxAttempts is how many times a retryable job runs before it is marked
+// failed; retryDelays are the waits after the first, second and third failure.
+const maxAttempts = 4
+
+var retryDelays = []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute}
+
+// retryable reports whether a failed job of this kind is run again. Only
+// remember jobs are: the others are re-triggered by the user or nightly.
+func retryable(kind string) bool { return kind == RememberKind }
 
 // Pool runs jobs on a fixed number of workers. Jobs live in the jobs table;
 // the in-memory queue only wakes workers.
@@ -53,12 +70,18 @@ func newJobID() string {
 // Enqueue records a queued job for userID and wakes a worker. It matches
 // web.Options.Enqueue.
 func (p *Pool) Enqueue(ctx context.Context, userID, kind string) (string, error) {
+	return p.EnqueueWith(ctx, userID, kind, "")
+}
+
+// EnqueueWith is Enqueue for a job that carries an input payload, stored in
+// the jobs row so the job survives a restart.
+func (p *Pool) EnqueueWith(ctx context.Context, userID, kind, payload string) (string, error) {
 	if p.db == nil {
 		return "", errors.New("jobs: pool has no database")
 	}
 	id := newJobID()
 	if _, err := p.db.ExecContext(ctx,
-		`INSERT INTO jobs (id, user_id, kind, status) VALUES ($1,$2,$3,'queued')`, id, userID, kind); err != nil {
+		`INSERT INTO jobs (id, user_id, kind, status, payload) VALUES ($1,$2,$3,'queued',$4)`, id, userID, kind, payload); err != nil {
 		return "", fmt.Errorf("jobs: enqueue: %w", err)
 	}
 	select {
@@ -131,7 +154,7 @@ func (p *Pool) sweep(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		rows, err := p.db.QueryContext(ctx, `SELECT id, user_id, kind FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 100`)
+		rows, err := p.db.QueryContext(ctx, `SELECT id, user_id, kind FROM jobs WHERE status='queued' AND run_after <= now() ORDER BY created_at LIMIT 100`)
 		if err != nil {
 			continue
 		}
@@ -183,7 +206,28 @@ func (p *Pool) setStatus(j Job, status, msg string) {
 	// A cancelled pool context must still be able to record the outcome.
 	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	p.db.ExecContext(c, `UPDATE jobs SET status=$2, error=$3, updated_at=now() WHERE id=$1`, j.ID, status, msg)
+	// A finished job no longer needs its input text.
+	clear := ""
+	if status == "done" {
+		clear = ", payload=''"
+	}
+	p.db.ExecContext(c, `UPDATE jobs SET status=$2, error=$3, updated_at=now()`+clear+` WHERE id=$1`, j.ID, status, msg)
+}
+
+// retryLater puts a failed job back in the queue after a backoff, or reports
+// false when it has used all its attempts. The sweep picks it up once
+// run_after has passed.
+func (p *Pool) retryLater(j Job, attempts int, msg string) bool {
+	if p.db == nil || !retryable(j.Kind) || attempts+1 >= maxAttempts {
+		return false
+	}
+	delay := retryDelays[min(attempts, len(retryDelays)-1)]
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := p.db.ExecContext(c,
+		`UPDATE jobs SET status='queued', error=$2, attempts=$3, run_after=now()+make_interval(secs => $4), updated_at=now() WHERE id=$1`,
+		j.ID, msg, attempts+1, delay.Seconds())
+	return err == nil
 }
 
 func (p *Pool) exec(ctx context.Context, j Job) {
@@ -195,16 +239,25 @@ func (p *Pool) exec(ctx context.Context, j Job) {
 			p.setStatus(j, "skipped", "")
 			return
 		}
-		// Claim atomically: a job may be in the channel and swept twice.
+		// Claim atomically: a job may be in the channel and swept twice, and
+		// a retry waits out its backoff even if a stale copy is still queued.
 		res, err := p.db.ExecContext(ctx,
-			`UPDATE jobs SET status='running', updated_at=now() WHERE id=$1 AND status='queued'`, j.ID)
+			`UPDATE jobs SET status='running', updated_at=now() WHERE id=$1 AND status='queued' AND run_after <= now()`, j.ID)
 		if err == nil {
 			if n, _ := res.RowsAffected(); n == 0 {
 				return
 			}
 		}
 	}
+	attempts := 0
+	if p.db != nil {
+		// A missing row (never for a real job) just means no payload.
+		_ = p.db.QueryRowContext(ctx, `SELECT payload, attempts FROM jobs WHERE id=$1`, j.ID).Scan(&j.Payload, &attempts)
+	}
 	if err := p.run(ctx, j); err != nil {
+		if ctx.Err() == nil && p.retryLater(j, attempts, err.Error()) {
+			return
+		}
 		if ctx.Err() != nil {
 			// Interrupted by Stop: leave it queued so the next Start resumes it.
 			p.setStatus(j, "queued", "")

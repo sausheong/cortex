@@ -13,6 +13,25 @@ import (
 	"github.com/sausheong/cortex"
 )
 
+// BackgroundRemember queues a large remember to run in the background for the
+// handle's user and connection. It returns once the text is stored durably.
+type BackgroundRemember func(ctx context.Context, cx *cortex.Cortex, content, source, speaker string) error
+
+// ToolOption configures RegisterToolsFor.
+type ToolOption func(*handles)
+
+// WithBackgroundRemember lets the remember tool hand large content to bg
+// instead of processing it before replying. Without it every save is
+// synchronous (stdio, tests).
+func WithBackgroundRemember(bg BackgroundRemember) ToolOption {
+	return func(h *handles) { h.background = bg }
+}
+
+// backgroundRememberChars is the size above which remember is deferred: more
+// than two chunks of text, where extraction and embedding take long enough
+// that a client would time out waiting.
+const backgroundRememberChars = 2 * cortex.DefaultMaxChunkChars
+
 // RegisterTools attaches the cortex tool set to an MCP server. Exposed so
 // the cortex CLI can wire it up before serving on stdio or HTTP.
 func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
@@ -23,8 +42,11 @@ func RegisterTools(s *server.MCPServer, cx *cortex.Cortex) {
 // layer put in the request context; fallback is used only when the context
 // carries none (stdio and the legacy single-user transport). publicURL
 // builds the "set up your AI provider" message.
-func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL string) {
+func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL string, opts ...ToolOption) {
 	h := handles{fallback: fallback, publicURL: publicURL}
+	for _, o := range opts {
+		o(&h)
+	}
 	// --- context ---
 	s.AddTool(
 		mcp.NewTool("context",
@@ -89,6 +111,12 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 			}
 			if spk := req.GetString("speaker", ""); spk != "" {
 				opts = append(opts, cortex.WithSpeaker(spk))
+			}
+			if h.background != nil && len(content) > backgroundRememberChars {
+				if err := h.background(ctx, cx, content, req.GetString("source", ""), req.GetString("speaker", "")); err != nil {
+					return mcp.NewToolResultError("could not queue this for processing, please try again"), nil
+				}
+				return mcp.NewToolResultText(fmt.Sprintf("saved; processing %d KB in the background, facts and semantic search will appear within a few minutes", (len(content)+1023)/1024)), nil
 			}
 			if err := cx.Remember(ctx, content, opts...); err != nil {
 				// Stored in full; only some vectors or some entity and

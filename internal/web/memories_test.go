@@ -401,3 +401,30 @@ func TestMemoriesSelectPageFallback(t *testing.T) {
 		t.Fatalf("select=page wrong: %s", body)
 	}
 }
+
+func TestMemoriesPageShowsBackgroundDocuments(t *testing.T) {
+	e, _, id := memEnv(t)
+	_, body := e.get("/memories")
+	if strings.Contains(body, "in the background") || strings.Contains(body, "could not be processed") {
+		t.Fatalf("notes shown with no jobs: %s", body)
+	}
+	e.insertJob("j_q", id, "remember", "queued", "")
+	_, body = e.get("/memories")
+	if !strings.Contains(body, "Processing 1 document in the background") {
+		t.Fatalf("no processing line: %s", body)
+	}
+	e.insertJob("j_r", id, "remember", "running", "")
+	e.insertJob("j_other", id, "reembed", "running", "")
+	_, body = e.get("/memories")
+	if !strings.Contains(body, "Processing 2 documents in the background") {
+		t.Fatalf("count wrong: %s", body)
+	}
+	if _, err := e.st.DB.Exec(`UPDATE jobs SET status='done' WHERE kind='remember'`); err != nil {
+		t.Fatal(err)
+	}
+	e.insertJob("j_f", id, "remember", "failed", "provider down")
+	_, body = e.get("/memories")
+	if strings.Contains(body, "in the background") || !strings.Contains(body, "1 document could not be processed") {
+		t.Fatalf("failure note wrong: %s", body)
+	}
+}

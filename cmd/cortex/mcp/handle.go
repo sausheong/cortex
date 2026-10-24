@@ -26,6 +26,8 @@ func withHandle(ctx context.Context, cx *cortex.Cortex, err error) context.Conte
 type handles struct {
 	fallback  *cortex.Cortex
 	publicURL string
+	// background, when set, takes remembers too large to do inline.
+	background BackgroundRemember
 }
 
 // get returns the handle for this call, or a ready tool error result.
