@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/graph"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/tenancy"
@@ -218,7 +219,7 @@ func (c *Cortex) Timeline(ctx context.Context, entityID string, since time.Time,
 	if limit <= 0 {
 		limit = 100
 	}
-	mems, err := c.getMemoriesByEntityMode(ctx, entityID, model.TemporalMode{IncludeInvalid: true})
+	mems, err := memory.New(c.h).GetMemoriesByEntityMode(ctx, entityID, model.TemporalMode{IncludeInvalid: true})
 	if err != nil {
 		return nil, err
 	}

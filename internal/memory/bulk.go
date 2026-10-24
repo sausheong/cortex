@@ -1,4 +1,4 @@
-package cortex
+package memory
 
 import (
 	"context"
@@ -15,10 +15,10 @@ import (
 // GetMemoriesByEntity for whole-graph builds (the vault), which would
 // otherwise make one round trip per entity plus one per memory. Memories are
 // ordered oldest first; EntityIDs is filled from the same links.
-func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, error) {
+func (c Ops) MemoriesByEntityAll(ctx context.Context) (map[string][]model.Memory, error) {
 	clause, targs := model.TemporalMode{}.Clause("m")
-	args := append([]any{c.h.UserID}, targs...)
-	rows, err := c.h.DB.QueryContext(ctx,
+	args := append([]any{c.UserID}, targs...)
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT me.entity_id, m.id, m.content, m.source, m.speaker, m.confidence, m.created_at, m.updated_at, m.valid_at, m.invalid_at, m.expired_at, m.static, m.forget_after, COALESCE(m.written_by_connection_id, '')
 		 FROM memories m
 		 JOIN memory_entities me ON m.id = me.memory_id AND me.user_id = m.user_id
@@ -32,11 +32,11 @@ func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, 
 	}
 	defer rows.Close()
 
-	out := map[string][]Memory{}
+	out := map[string][]model.Memory{}
 	links := map[string][]string{} // memory id -> linked entity ids
 	for rows.Next() {
 		var eid string
-		var m Memory
+		var m model.Memory
 		var spk sql.NullString
 		var vat, iat, eat, fa sql.NullTime
 		if err := rows.Scan(&eid, &m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat, &m.Static, &fa, &m.WrittenBy); err != nil {
@@ -66,22 +66,22 @@ func (c *Cortex) MemoriesByEntityAll(ctx context.Context) (map[string][]Memory, 
 
 // AllRelationships returns every live relationship for the user in one
 // query, ordered by id. It is the bulk form of GetRelationships.
-func (c *Cortex) AllRelationships(ctx context.Context) ([]Relationship, error) {
-	rows, err := c.h.DB.QueryContext(ctx,
+func (c Ops) AllRelationships(ctx context.Context) ([]model.Relationship, error) {
+	rows, err := c.DB.QueryContext(ctx,
 		`SELECT id, source_id, target_id, type, attributes, source, confidence, created_at
 		 FROM relationships
 		 WHERE user_id = ? AND deleted_at IS NULL
 		 ORDER BY id`,
-		c.h.UserID,
+		c.UserID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: all relationships: %w", err)
 	}
 	defer rows.Close()
 
-	var rels []Relationship
+	var rels []model.Relationship
 	for rows.Next() {
-		var r Relationship
+		var r model.Relationship
 		var attrsJSON sql.NullString
 		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Type, &attrsJSON, &r.Source, &r.Confidence, &r.CreatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan relationship: %w", err)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sausheong/cortex/internal/graph"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/store"
 	"github.com/sausheong/cortex/internal/vecmath"
@@ -247,7 +248,7 @@ func (c *Cortex) compactCandidates(ctx context.Context) ([]compactCand, error) {
 		if err := rows.Scan(&k.id, &k.content, &k.static, &k.created, &lit); err != nil {
 			return nil, fmt.Errorf("cortex: scan compaction candidate: %w", err)
 		}
-		if k.vec, err = parseVectorLiteral(lit); err != nil {
+		if k.vec, err = memory.ParseVectorLiteral(lit); err != nil {
 			return nil, err
 		}
 		out = append(out, k)
@@ -358,7 +359,7 @@ func (c *Cortex) ApplyCompaction(ctx context.Context, changes []Change) (string,
 		return "", fmt.Errorf("cortex: commit compaction: %w", err)
 	}
 	for i, v := range vecs {
-		if err := c.putEmbedding(ctx, resultIDs[i], "memory", v); err != nil {
+		if err := memory.New(c.h).PutEmbedding(ctx, resultIDs[i], "memory", v); err != nil {
 			return batchID, fmt.Errorf("cortex: store compaction embedding: %w", err)
 		}
 	}

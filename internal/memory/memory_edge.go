@@ -1,4 +1,4 @@
-package cortex
+package memory
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/store"
 )
 
@@ -14,11 +15,11 @@ import (
 // error, no duplicate). The passed struct's ID (generated if empty) and
 // CreatedAt are set; on a conflict no-op the row already in the table is kept
 // and its id may differ from e.ID.
-func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
-	if err := store.RequireMemory(ctx, c.h.DB, c.h.UserID, e.SourceID); err != nil {
+func (c Ops) PutMemoryEdge(ctx context.Context, e *model.MemoryEdge) error {
+	if err := store.RequireMemory(ctx, c.DB, c.UserID, e.SourceID); err != nil {
 		return err
 	}
-	if err := store.RequireMemory(ctx, c.h.DB, c.h.UserID, e.TargetID); err != nil {
+	if err := store.RequireMemory(ctx, c.DB, c.UserID, e.TargetID); err != nil {
 		return err
 	}
 	if e.ID == "" {
@@ -30,11 +31,11 @@ func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
 	if e.Source != "" {
 		source = e.Source
 	}
-	_, err := c.h.DB.ExecContext(ctx,
+	_, err := c.DB.ExecContext(ctx,
 		`INSERT INTO memory_edges (id, user_id, source_id, target_id, type, source, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, source_id, target_id, type) DO NOTHING`,
-		e.ID, c.h.UserID, e.SourceID, e.TargetID, e.Type, source, e.CreatedAt,
+		e.ID, c.UserID, e.SourceID, e.TargetID, e.Type, source, e.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cortex: insert memory edge: %w", err)
@@ -44,8 +45,8 @@ func (c *Cortex) PutMemoryEdge(ctx context.Context, e *MemoryEdge) error {
 
 // GetMemoryEdges returns every edge where memoryID is the source or the
 // target — the memory's full edge neighborhood.
-func (c *Cortex) GetMemoryEdges(ctx context.Context, memoryID string) ([]MemoryEdge, error) {
-	if err := store.RequireMemory(ctx, c.h.DB, c.h.UserID, memoryID); err != nil {
+func (c Ops) GetMemoryEdges(ctx context.Context, memoryID string) ([]model.MemoryEdge, error) {
+	if err := store.RequireMemory(ctx, c.DB, c.UserID, memoryID); err != nil {
 		return nil, err
 	}
 	return c.queryMemoryEdges(ctx,
@@ -53,14 +54,14 @@ func (c *Cortex) GetMemoryEdges(ctx context.Context, memoryID string) ([]MemoryE
 		 FROM memory_edges
 		 WHERE user_id = ? AND (source_id = ? OR target_id = ?)
 		 ORDER BY created_at`,
-		c.h.UserID, memoryID, memoryID,
+		c.UserID, memoryID, memoryID,
 	)
 }
 
 // GetMemoryEdgesByType returns edges of the given type where memoryID is the
 // source or the target.
-func (c *Cortex) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType string) ([]MemoryEdge, error) {
-	if err := store.RequireMemory(ctx, c.h.DB, c.h.UserID, memoryID); err != nil {
+func (c Ops) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType string) ([]model.MemoryEdge, error) {
+	if err := store.RequireMemory(ctx, c.DB, c.UserID, memoryID); err != nil {
 		return nil, err
 	}
 	return c.queryMemoryEdges(ctx,
@@ -68,20 +69,20 @@ func (c *Cortex) GetMemoryEdgesByType(ctx context.Context, memoryID, edgeType st
 		 FROM memory_edges
 		 WHERE user_id = ? AND (source_id = ? OR target_id = ?) AND type = ?
 		 ORDER BY created_at`,
-		c.h.UserID, memoryID, memoryID, edgeType,
+		c.UserID, memoryID, memoryID, edgeType,
 	)
 }
 
-func (c *Cortex) queryMemoryEdges(ctx context.Context, query string, args ...any) ([]MemoryEdge, error) {
-	rows, err := c.h.DB.QueryContext(ctx, query, args...)
+func (c Ops) queryMemoryEdges(ctx context.Context, query string, args ...any) ([]model.MemoryEdge, error) {
+	rows, err := c.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query memory edges: %w", err)
 	}
 	defer rows.Close()
 
-	var edges []MemoryEdge
+	var edges []model.MemoryEdge
 	for rows.Next() {
-		var e MemoryEdge
+		var e model.MemoryEdge
 		var source sql.NullString
 		if err := rows.Scan(&e.ID, &e.SourceID, &e.TargetID, &e.Type, &source, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("cortex: scan memory edge: %w", err)

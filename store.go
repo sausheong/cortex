@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/store"
 )
 
@@ -40,7 +41,7 @@ func Open(dsn string, opts ...Option) (*Cortex, error) {
 		h.Close()
 		return nil, err
 	}
-	if err := c.ensureVectorSchema(mctx); err != nil {
+	if err := memory.New(c.h).EnsureVectorSchema(mctx); err != nil {
 		h.Close()
 		return nil, err
 	}

@@ -177,3 +177,11 @@ Root testdata/ was referenced by no Go test, script or doc, so it was moved to e
 - Tests moved: `TestNameSimilarity`, `TestDetectAliasKindAndNormalize` and `TestNormalizeType` (now using `ontology.NormalizeType`). No new whitebox wrappers were needed since no root test calls the moved unexported methods.
 - `Ops` is only ever a per-call value; no struct field or goroutine holds one.
 - apidiff: only the known `RelationshipVerbs` element type difference plus the alias-to-internal reports.
+
+## Stage 6 notes
+
+- `internal/memory` imports only `graph`, `model`, `store`, `tenancy` and `vecmath`. Identifiers were qualified with a throwaway go/types program; root forwarders in `api_memories.go` and `api_recall.go` were generated from the method signatures.
+- `WithGeneration` returns `*Cortex`, so it stays in root (`api_memories.go`). `EnsureVectorSchema` moved with `vector.go`; root `Open` calls it through `memory.New(c.h)`.
+- Exported inside the internal package: `PutEmbedding`, `GetMemoryByID`, `GetMemoriesByEntityMode`, `EmbeddingByRef`, `SearchVectorRaw` (returns `VectorResult` with exported `RefID`, `Similarity`), `SearchMemoriesMode`, `Neighbourhood`, `EnsureVectorSchema`, `ParseVectorLiteral`, `VectorLiteral`, `TruncateEmbedText`, `AugmentForEmbedding`, `ReembedLockSQL`. `graphContext` is used only inside the package and stays unexported.
+- Pure tests moved: `TestOrTSQuery`, `TestQueryNgrams`, `TestPopularityIsCapped`, `TestCheckPgvectorVersion`, `TestAugmentForEmbedding`. The one root test edit is `search_test.go` using `RefID` instead of `refID`.
+- The only goroutine in the package (`Recall` sub-queries) is joined before the call returns; no `Ops` is stored.

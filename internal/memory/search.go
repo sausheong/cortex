@@ -1,4 +1,4 @@
-package cortex
+package memory
 
 import (
 	"context"
@@ -10,41 +10,41 @@ import (
 	"github.com/sausheong/cortex/internal/store"
 )
 
-// vectorResult holds a reference ID and its cosine similarity score.
-type vectorResult struct {
-	refID      string
-	similarity float32
+// VectorResult holds a reference ID and its cosine similarity score.
+type VectorResult struct {
+	RefID      string
+	Similarity float32
 }
 
-// embeddingByRef loads the stored embedding vector for a ref (chunk/memory),
+// EmbeddingByRef loads the stored embedding vector for a ref (chunk/memory),
 // or nil if none exists. Lets the reranker reuse vectors written at ingest
 // instead of re-embedding ranked results.
-func (c *Cortex) embeddingByRef(ctx context.Context, refID, refType string) []float32 {
+func (c Ops) EmbeddingByRef(ctx context.Context, refID, refType string) []float32 {
 	var lit string
-	err := c.h.DB.QueryRowContext(ctx,
+	err := c.DB.QueryRowContext(ctx,
 		`SELECT embedding::text FROM embeddings WHERE user_id = ? AND ref_id = ? AND ref_type = ?
 		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?) LIMIT 1`,
-		c.h.UserID, refID, refType, c.h.UserID,
+		c.UserID, refID, refType, c.UserID,
 	).Scan(&lit)
 	if err != nil {
 		return nil
 	}
-	v, err := parseVectorLiteral(lit)
+	v, err := ParseVectorLiteral(lit)
 	if err != nil {
 		return nil
 	}
 	return v
 }
 
-// searchVectorRaw performs cosine nearest-neighbour search over embeddings of
+// SearchVectorRaw performs cosine nearest-neighbour search over embeddings of
 // the given refType using the partial HNSW index, returning the top limit
 // results with similarity = 1 - cosine distance.
-func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refType string, limit int) ([]vectorResult, error) {
+func (c Ops) SearchVectorRaw(ctx context.Context, queryVec []float32, refType string, limit int) ([]VectorResult, error) {
 	dims := len(queryVec)
 	if dims < 1 || dims > 4000 {
 		return nil, fmt.Errorf("cortex: query vector has %d dims, want 1..4000", dims)
 	}
-	tx, err := c.h.DB.BeginTx(ctx, nil)
+	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: begin vector search: %w", err)
 	}
@@ -52,7 +52,7 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 	if _, err := tx.ExecContext(ctx, `SET LOCAL hnsw.iterative_scan = strict_order`); err != nil {
 		return nil, fmt.Errorf("cortex: set iterative_scan: %w", err)
 	}
-	lit := vectorLiteral(queryVec)
+	lit := VectorLiteral(queryVec)
 	// Soft-deleted rows keep their embeddings (restore needs them), so the live
 	// check must be part of the query: otherwise they crowd out live hits in the
 	// top-K. Only memory and chunk refs are soft-deletable.
@@ -68,21 +68,21 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 		 FROM embeddings WHERE user_id = ? AND ref_type = ? AND dims = %d
 		 AND generation = (SELECT active_embedding_generation FROM users WHERE id = ?)%s
 		 ORDER BY embedding::halfvec(%d) <=> ?::halfvec LIMIT ?`, dims, dims, live, dims),
-		lit, c.h.UserID, refType, c.h.UserID, lit, limit,
+		lit, c.UserID, refType, c.UserID, lit, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cortex: query embeddings: %w", err)
 	}
 	defer rows.Close()
 
-	var results []vectorResult
+	var results []VectorResult
 	for rows.Next() {
-		var r vectorResult
+		var r VectorResult
 		var sim float64
-		if err := rows.Scan(&r.refID, &sim); err != nil {
+		if err := rows.Scan(&r.RefID, &sim); err != nil {
 			return nil, fmt.Errorf("cortex: scan embedding: %w", err)
 		}
-		r.similarity = float32(sim)
+		r.Similarity = float32(sim)
 		results = append(results, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -94,12 +94,12 @@ func (c *Cortex) searchVectorRaw(ctx context.Context, queryVec []float32, refTyp
 // SearchVector embeds the query text using the configured embedder, then
 // performs a brute-force vector search over chunk embeddings and returns
 // the matching chunks ordered by similarity.
-func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]Chunk, error) {
-	if c.h.Cfg.Embedder == nil {
+func (c Ops) SearchVector(ctx context.Context, query string, limit int) ([]model.Chunk, error) {
+	if c.Cfg.Embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
 
-	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{query})
+	vecs, err := c.Cfg.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: embed query: %w", err)
 	}
@@ -107,26 +107,26 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 		return nil, fmt.Errorf("cortex: embedder returned no vectors")
 	}
 
-	results, err := c.searchVectorRaw(ctx, vecs[0], "chunk", limit)
+	results, err := c.SearchVectorRaw(ctx, vecs[0], "chunk", limit)
 	if err != nil {
 		return nil, err
 	}
 
 	// Look up each chunk by ID.
-	chunks := make([]Chunk, 0, len(results))
+	chunks := make([]model.Chunk, 0, len(results))
 	for _, r := range results {
-		var ch Chunk
+		var ch model.Chunk
 		var entityID sql.NullString
 		var metaJSON sql.NullString
-		err := c.h.DB.QueryRowContext(ctx,
+		err := c.DB.QueryRowContext(ctx,
 			`SELECT id, entity_id, content, metadata, created_at
-			 FROM chunks WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, r.refID, c.h.UserID,
+			 FROM chunks WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, r.RefID, c.UserID,
 		).Scan(&ch.ID, &entityID, &ch.Content, &metaJSON, &ch.CreatedAt)
 		if err == sql.ErrNoRows {
 			continue // embedding exists but chunk was deleted
 		}
 		if err != nil {
-			return nil, fmt.Errorf("cortex: get chunk %s: %w", r.refID, err)
+			return nil, fmt.Errorf("cortex: get chunk %s: %w", r.RefID, err)
 		}
 		if entityID.Valid {
 			ch.EntityID = entityID.String
@@ -145,19 +145,19 @@ func (c *Cortex) SearchVector(ctx context.Context, query string, limit int) ([]C
 // search over memory embeddings (ref_type='memory'), returning the matching
 // memories ordered by cosine similarity. These embeddings are written at
 // ingest by Remember but were previously never searched.
-func (c *Cortex) SearchMemoryVector(ctx context.Context, query string, limit int) ([]Memory, error) {
+func (c Ops) SearchMemoryVector(ctx context.Context, query string, limit int) ([]model.Memory, error) {
 	return c.searchMemoryVectorMode(ctx, query, limit, model.TemporalMode{})
 }
 
 // searchMemoryVectorMode is the temporal-mode-aware backing for
 // SearchMemoryVector. The per-row resolve query's validity predicate is
 // derived from mode (default = currently-valid).
-func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]Memory, error) {
-	if c.h.Cfg.Embedder == nil {
+func (c Ops) searchMemoryVectorMode(ctx context.Context, query string, limit int, mode model.TemporalMode) ([]model.Memory, error) {
+	if c.Cfg.Embedder == nil {
 		return nil, fmt.Errorf("cortex: no embedder configured")
 	}
 
-	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{query})
+	vecs, err := c.Cfg.Embedder.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("cortex: embed query: %w", err)
 	}
@@ -165,22 +165,22 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 		return nil, fmt.Errorf("cortex: embedder returned no vectors")
 	}
 
-	results, err := c.searchVectorRaw(ctx, vecs[0], "memory", limit)
+	results, err := c.SearchVectorRaw(ctx, vecs[0], "memory", limit)
 	if err != nil {
 		return nil, err
 	}
 
 	clause, targs := mode.Clause("")
 
-	memories := make([]Memory, 0, len(results))
+	memories := make([]model.Memory, 0, len(results))
 	for _, r := range results {
-		var m Memory
+		var m model.Memory
 		var spk sql.NullString
 		var vat, iat, eat sql.NullTime
 		// Arg order: ref id, user id, then temporal args.
-		args := []any{r.refID, c.h.UserID}
+		args := []any{r.RefID, c.UserID}
 		args = append(args, targs...)
-		err := c.h.DB.QueryRowContext(ctx,
+		err := c.DB.QueryRowContext(ctx,
 			`SELECT id, content, source, speaker, confidence, created_at, updated_at, valid_at, invalid_at, expired_at
 			 FROM memories WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND `+clause, args...,
 		).Scan(&m.ID, &m.Content, &m.Source, &spk, &m.Confidence, &m.CreatedAt, &m.UpdatedAt, &vat, &iat, &eat)
@@ -188,7 +188,7 @@ func (c *Cortex) searchMemoryVectorMode(ctx context.Context, query string, limit
 			continue // embedding exists but memory was deleted
 		}
 		if err != nil {
-			return nil, fmt.Errorf("cortex: get memory %s: %w", r.refID, err)
+			return nil, fmt.Errorf("cortex: get memory %s: %w", r.RefID, err)
 		}
 		if spk.Valid {
 			m.Speaker = spk.String

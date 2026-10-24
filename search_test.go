@@ -98,8 +98,8 @@ func TestStoreAndSearchEmbedding(t *testing.T) {
 	}
 
 	// The first result should be ch1 (closest to "Go programming language").
-	if results[0].refID != ch1.ID {
-		t.Errorf("expected top result to be ch1 (%s), got %s", ch1.ID, results[0].refID)
+	if results[0].RefID != ch1.ID {
+		t.Errorf("expected top result to be ch1 (%s), got %s", ch1.ID, results[0].RefID)
 	}
 
 	// Test the exported SearchVector method.

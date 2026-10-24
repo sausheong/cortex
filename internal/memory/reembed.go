@@ -1,9 +1,11 @@
-package cortex
+package memory
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/sausheong/cortex/internal/model"
 )
 
 // maxReembedChars caps the text sent to an embedder for one row.
@@ -14,7 +16,7 @@ type rowsQuerier interface {
 	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
 }
 
-func truncateEmbedText(s string) string {
+func TruncateEmbedText(s string) string {
 	r := []rune(s)
 	if len(r) <= maxReembedChars {
 		return s
@@ -31,17 +33,17 @@ var reembedKinds = []struct{ refType, table, col string }{
 // PendingEmbeddings returns up to limit rows (soft-deleted ones included)
 // of this handle's user that have no embedding at generation gen, with the
 // text to embed for each.
-func (c *Cortex) PendingEmbeddings(ctx context.Context, gen, limit int) ([]EmbedItem, error) {
-	return pendingEmbeddings(ctx, c.h.DB.DB, c.h.UserID, gen, limit)
+func (c Ops) PendingEmbeddings(ctx context.Context, gen, limit int) ([]model.EmbedItem, error) {
+	return pendingEmbeddings(ctx, c.DB.DB, c.UserID, gen, limit)
 }
 
 // PendingEmbeddingsTx is PendingEmbeddings inside an open transaction.
-func (c *Cortex) PendingEmbeddingsTx(ctx context.Context, tx *sql.Tx, gen, limit int) ([]EmbedItem, error) {
-	return pendingEmbeddings(ctx, tx, c.h.UserID, gen, limit)
+func (c Ops) PendingEmbeddingsTx(ctx context.Context, tx *sql.Tx, gen, limit int) ([]model.EmbedItem, error) {
+	return pendingEmbeddings(ctx, tx, c.UserID, gen, limit)
 }
 
-func pendingEmbeddings(ctx context.Context, q rowsQuerier, userID string, gen, limit int) ([]EmbedItem, error) {
-	var out []EmbedItem
+func pendingEmbeddings(ctx context.Context, q rowsQuerier, userID string, gen, limit int) ([]model.EmbedItem, error) {
+	var out []model.EmbedItem
 	for _, k := range reembedKinds {
 		if len(out) >= limit {
 			break
@@ -56,7 +58,7 @@ func pendingEmbeddings(ctx context.Context, q rowsQuerier, userID string, gen, l
 		}
 		start := len(out)
 		for rows.Next() {
-			var it EmbedItem
+			var it model.EmbedItem
 			if err := rows.Scan(&it.ID, &it.Text); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("cortex: scan pending embedding: %w", err)
@@ -75,14 +77,14 @@ func pendingEmbeddings(ctx context.Context, q rowsQuerier, userID string, gen, l
 			}
 		}
 		for i := start; i < len(out); i++ {
-			out[i].Text = truncateEmbedText(out[i].Text)
+			out[i].Text = TruncateEmbedText(out[i].Text)
 		}
 	}
 	return out, nil
 }
 
 // fillMemoryContext turns memory items' text into the fact-augmented key.
-func fillMemoryContext(ctx context.Context, q rowsQuerier, userID string, items []EmbedItem) error {
+func fillMemoryContext(ctx context.Context, q rowsQuerier, userID string, items []model.EmbedItem) error {
 	ids := make([]string, len(items))
 	for i, it := range items {
 		ids[i] = it.ID
@@ -107,34 +109,34 @@ func fillMemoryContext(ctx context.Context, q rowsQuerier, userID string, items 
 		return err
 	}
 	for i := range items {
-		items[i].Text = augmentForEmbedding(items[i].Text, names[items[i].ID])
+		items[i].Text = AugmentForEmbedding(items[i].Text, names[items[i].ID])
 	}
 	return nil
 }
 
 // CountPendingEmbeddings counts rows (soft-deleted included) lacking an
 // embedding at generation gen.
-func (c *Cortex) CountPendingEmbeddings(ctx context.Context, gen int) (int, error) {
+func (c Ops) CountPendingEmbeddings(ctx context.Context, gen int) (int, error) {
 	return c.countEmbeddable(ctx, gen, true)
 }
 
 // CountEmbeddable counts all rows that carry an embedding.
-func (c *Cortex) CountEmbeddable(ctx context.Context) (int, error) {
+func (c Ops) CountEmbeddable(ctx context.Context) (int, error) {
 	return c.countEmbeddable(ctx, 0, false)
 }
 
-func (c *Cortex) countEmbeddable(ctx context.Context, gen int, pendingOnly bool) (int, error) {
+func (c Ops) countEmbeddable(ctx context.Context, gen int, pendingOnly bool) (int, error) {
 	total := 0
 	for _, k := range reembedKinds {
 		var n int
 		q := fmt.Sprintf(`SELECT count(*) FROM %s t WHERE t.user_id = $1`, k.table)
-		args := []any{c.h.UserID}
+		args := []any{c.UserID}
 		if pendingOnly {
 			q += ` AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.user_id = t.user_id
 				AND e.ref_type = $2 AND e.ref_id = t.id AND e.generation = $3)`
 			args = append(args, k.refType, gen)
 		}
-		if err := c.h.DB.DB.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+		if err := c.DB.DB.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 			return 0, fmt.Errorf("cortex: count embeddable: %w", err)
 		}
 		total += n

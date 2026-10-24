@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -183,14 +184,14 @@ func (c *Cortex) ApplyReconcileReport(ctx context.Context, report ReconcileRepor
 	}
 
 	for _, p := range report.Proposed {
-		stale, err := c.getMemoryByID(ctx, p.StaleID)
+		stale, err := memory.New(c.h).GetMemoryByID(ctx, p.StaleID)
 		if errors.Is(err, ErrNotFound) {
 			stale, err = nil, nil
 		}
 		if err != nil {
 			return out, err
 		}
-		newer, err := c.getMemoryByID(ctx, p.SupersededByID)
+		newer, err := memory.New(c.h).GetMemoryByID(ctx, p.SupersededByID)
 		if errors.Is(err, ErrNotFound) {
 			newer, err = nil, nil
 		}

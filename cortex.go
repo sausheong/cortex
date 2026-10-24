@@ -9,6 +9,7 @@ import (
 
 	"github.com/sausheong/cortex/internal/graph"
 	"github.com/sausheong/cortex/internal/llmutil"
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/ontology"
 )
@@ -155,7 +156,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		// Embed the fact-augmented key (entity context + content), not the
 		// bare content, so thin memories are findable by their entities.
 		// The stored content and FTS index keep the original text.
-		memTargets = append(memTargets, embedTarget{m.ID, "memory", augmentForEmbedding(m.Content, entityNames)})
+		memTargets = append(memTargets, embedTarget{m.ID, "memory", memory.AugmentForEmbedding(m.Content, entityNames)})
 	}
 	if c.h.Cfg.Embedder != nil {
 		unembedded.Merge(c.embedAndStoreBatch(ctx, memTargets))

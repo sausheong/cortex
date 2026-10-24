@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/sausheong/cortex/internal/memory"
 	"github.com/sausheong/cortex/internal/model"
 )
 
@@ -35,7 +36,7 @@ func (c *Cortex) embedAndStoreBatch(ctx context.Context, targets []embedTarget) 
 		batch := targets[start:end]
 		texts := make([]string, len(batch))
 		for i, t := range batch {
-			texts[i] = truncateEmbedText(t.text)
+			texts[i] = memory.TruncateEmbedText(t.text)
 		}
 		vecs, err := c.h.Cfg.Embedder.Embed(ctx, texts)
 		if err != nil {
@@ -49,7 +50,7 @@ func (c *Cortex) embedAndStoreBatch(ctx context.Context, targets []embedTarget) 
 			fails.AddN(len(batch)-len(vecs), fmt.Errorf("embed %s: got %d vectors for %d texts", batch[0].refType, len(vecs), len(batch)))
 		}
 		for i := 0; i < len(vecs) && i < len(batch); i++ {
-			if err := c.putEmbedding(ctx, batch[i].refID, batch[i].refType, vecs[i]); err != nil {
+			if err := memory.New(c.h).PutEmbedding(ctx, batch[i].refID, batch[i].refType, vecs[i]); err != nil {
 				fails.Add(fmt.Errorf("store %s embedding: %w", batch[i].refType, err))
 			}
 		}

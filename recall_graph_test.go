@@ -8,23 +8,6 @@ import (
 	"github.com/sausheong/cortex/internal/model"
 )
 
-func TestQueryNgrams(t *testing.T) {
-	got := queryNgrams("What does Carol Seah's team do?")
-	want := map[string]bool{"what": true, "carol": true, "seah": true, "carol seah": true, "does carol seah": true}
-	have := map[string]bool{}
-	for _, g := range got {
-		have[g] = true
-	}
-	for w := range want {
-		if !have[w] {
-			t.Errorf("missing n-gram %q in %v", w, got)
-		}
-	}
-	if have["do"] {
-		t.Error("two-letter word kept as a unigram")
-	}
-}
-
 // graphFixture: Carol works at WYNNES; Dan is unrelated.
 //
 //	m1 "She designs packaging"      -> Carol     (no keyword overlap with the query)

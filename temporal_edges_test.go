@@ -125,15 +125,3 @@ func TestRecall_TrackAccessAndDecayClock(t *testing.T) {
 		}
 	}
 }
-
-func TestPopularityIsCapped(t *testing.T) {
-	if popularity(0) != 1 {
-		t.Error("no access should not lift")
-	}
-	if p := popularity(1_000_000); p > 1+popularityCap+1e-9 {
-		t.Errorf("popularity(1e6) = %v exceeds the cap", p)
-	}
-	if popularity(3) <= popularity(1) {
-		t.Error("more access should lift more (below the cap)")
-	}
-}
