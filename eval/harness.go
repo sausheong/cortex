@@ -13,6 +13,7 @@ type Config struct {
 	Name      string
 	Decompose []cortex.StructuredQuery // forced sub-queries (nil = engine default mix)
 	Rerank    bool                     // MMR diversity rerank on/off
+	Graph     bool                     // graph seeds + proximity boost on/off
 	Limit     int                      // top-k retrieved per query
 }
 
@@ -85,6 +86,7 @@ func Run(ctx context.Context, cx *cortex.Cortex, set []QA, cfg Config) (Result, 
 		opts := []cortex.RecallOption{
 			cortex.WithLimit(limit),
 			cortex.WithRerank(cfg.Rerank),
+			cortex.WithGraph(cfg.Graph),
 		}
 		rr, err := cx.RecallWithStrength(ctx, qa.Question, opts...)
 		if err != nil {
@@ -134,7 +136,10 @@ func Run(ctx context.Context, cx *cortex.Cortex, set []QA, cfg Config) (Result, 
 //   - vector-only: memory-vector path only (the embeddings that were written
 //     at ingest but, before the fix, never searched)
 //   - hybrid: the engine's default multi-path RRF mix, rerank off
-//   - hybrid+rerank: the default mix with MMR diversity rerank on (shipped default)
+//   - hybrid+rerank: the default mix with MMR diversity rerank on
+//   - hybrid+graph: the default mix plus graph-aware recall (entity seeds and
+//     proximity boost), which is the engine default; the configs above turn
+//     it off so they stay comparable with earlier runs
 //
 // Confidence weighting is always on (the engine has no off switch), so it is
 // not isolated here — noted as a benchmark limitation.
@@ -151,5 +156,6 @@ func DefaultConfigs(limit int) []Config {
 		{Name: "vector-only", Decompose: q("memory_vector"), Rerank: false, Limit: limit},
 		{Name: "hybrid", Decompose: q("memory_lookup", "memory_vector"), Rerank: false, Limit: limit},
 		{Name: "hybrid+rerank", Decompose: q("memory_lookup", "memory_vector"), Rerank: true, Limit: limit},
+		{Name: "hybrid+graph", Decompose: q("memory_lookup", "memory_vector"), Graph: true, Limit: limit},
 	}
 }

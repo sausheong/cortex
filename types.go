@@ -354,6 +354,7 @@ type recallConfig struct {
 	asOf           *time.Time // non-nil → recall as the graph was valid at this time
 	includeInvalid bool       // true → no validity filter (include retired memories)
 	rerank         bool       // true → post-fusion MMR diversity rerank (default off; see WithRerank)
+	noGraph        bool       // true → skip graph seeds and proximity boost (see WithGraph)
 }
 
 // RerankLambda is the MMR tradeoff: relevance weight vs. diversity weight.
@@ -397,6 +398,14 @@ func WithIncludeInvalid() RecallOption {
 // order is the default.
 func WithRerank(on bool) RecallOption {
 	return func(c *recallConfig) { c.rerank = on }
+}
+
+// WithGraph turns graph-aware recall on or off (default on). When on, the
+// entities a query names (by name or alias) seed it: their memories join the
+// fusion as one more ranked list, and results linked to entities within two
+// hops of a seed are boosted, closer ones more.
+func WithGraph(on bool) RecallOption {
+	return func(c *recallConfig) { c.noGraph = !on }
 }
 
 type RelFilter func(*relFilterConfig)

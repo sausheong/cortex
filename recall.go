@@ -159,6 +159,25 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	}
 	wg.Wait()
 
+	// Graph-aware recall: seed from the entities the query names.
+	var graph graphContext
+	if !cfg.noGraph {
+		graph = c.buildGraphContext(ctx, query)
+		if items, results := c.recallSeedMemories(ctx, graph, cfg.limit, mode); len(items) > 0 {
+			lists = append(lists, items)
+			for k, v := range results {
+				if existing, ok := resultMap[k]; ok {
+					// Keep the other path's richer result (e.g. its source
+					// excerpt) but take the full entity links.
+					existing.EntityIDs = v.EntityIDs
+					resultMap[k] = existing
+				} else {
+					resultMap[k] = v
+				}
+			}
+		}
+	}
+
 	if len(lists) == 0 {
 		return []Result{}, nil
 	}
@@ -172,11 +191,14 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 	// least-trustworthy state and is preserved (not rescued), so it ranks
 	// last. A defensive negative (only reachable via direct struct misuse) is
 	// floored to 0.
-	weightedScore := func(rawScore, conf float64) float64 {
+	// The graph proximity boost multiplies in too: a result linked to an
+	// entity the query names (or one near it) ranks higher.
+	weightedScore := func(rawScore float64, r Result) float64 {
+		conf := r.Confidence
 		if conf < 0 {
 			conf = 0
 		}
-		return rawScore * conf
+		return rawScore * conf * graph.boost(r.EntityIDs)
 	}
 
 	final := make([]Result, 0, len(merged))
@@ -205,7 +227,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 			}
 			cands = append(cands, mmrCandidate{
 				id:    item.id, // prefixed key (mem:/chunk:/entity:)
-				score: weightedScore(item.score, r.Confidence),
+				score: weightedScore(item.score, r),
 				vec:   c.vectorForKey(ctx, item.id),
 			})
 		}
@@ -213,7 +235,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		order := mmrRerank(cands, RerankLambda, len(cands))
 		for _, key := range order {
 			r := resultMap[key]
-			r.Score = weightedScore(rrfScore(merged, key), r.Confidence)
+			r.Score = weightedScore(rrfScore(merged, key), r)
 			final = append(final, r)
 		}
 		// MMR defines the order; skip the plain confidence-weighted sort.
@@ -223,7 +245,7 @@ func (c *Cortex) Recall(ctx context.Context, query string, opts ...RecallOption)
 		// score).
 		for _, item := range merged {
 			if r, ok := resultMap[item.id]; ok {
-				r.Score = weightedScore(item.score, r.Confidence)
+				r.Score = weightedScore(item.score, r)
 				final = append(final, r)
 			}
 		}
@@ -465,37 +487,45 @@ func (c *Cortex) recallVector(ctx context.Context, query string, limit int) ([]r
 }
 
 func (c *Cortex) recallGraph(ctx context.Context, query string, limit int) ([]rankedItem, map[string]Result) {
-	// Find entities matching the query by name.
-	entities, err := c.FindEntities(ctx, EntityFilter{NameLike: "%" + query + "%"})
-	if err != nil || len(entities) == 0 {
+	// Seed from the entities the sub-query names, then list each seed and
+	// its neighbours, nearest first, summarised with their relationships.
+	g := c.buildGraphContext(ctx, query)
+	if len(g.seeds) == 0 {
 		return nil, nil
 	}
-
-	// Traverse from the first matching entity.
-	graph, err := c.Traverse(ctx, entities[0].ID, WithDepth(1))
-	if err != nil || graph == nil {
-		return nil, nil
+	ids := make([]string, 0, len(g.dist))
+	for id, d := range g.dist {
+		if d <= 1 {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if g.dist[ids[i]] != g.dist[ids[j]] {
+			return g.dist[ids[i]] < g.dist[ids[j]]
+		}
+		return ids[i] < ids[j]
+	})
+	if len(ids) > limit {
+		ids = ids[:limit]
 	}
 
-	items := make([]rankedItem, 0, len(graph.Entities))
-	results := make(map[string]Result, len(graph.Entities))
-	for i, e := range graph.Entities {
-		key := "entity:" + e.ID
-		items = append(items, rankedItem{id: key, rank: i})
-
-		// Build a content summary for the entity.
+	items := make([]rankedItem, 0, len(ids))
+	results := make(map[string]Result, len(ids))
+	for _, id := range ids {
+		e, err := c.GetEntity(ctx, id)
+		if err != nil {
+			continue
+		}
 		content := fmt.Sprintf("%s (%s)", e.Name, e.Type)
-		// Include relationship info.
-		var relParts []string
-		for _, r := range graph.Relationships {
-			if r.SourceID == e.ID || r.TargetID == e.ID {
-				relParts = append(relParts, r.Type)
+		if rels, err := c.GetRelationships(ctx, e.ID); err == nil && len(rels) > 0 {
+			var parts []string
+			for _, r := range rels {
+				parts = append(parts, r.Type)
 			}
+			content += " [" + strings.Join(parts, ", ") + "]"
 		}
-		if len(relParts) > 0 {
-			content += " [" + strings.Join(relParts, ", ") + "]"
-		}
-
+		key := "entity:" + e.ID
+		items = append(items, rankedItem{id: key, rank: len(items)})
 		results[key] = Result{
 			ID:         e.ID,
 			Type:       "entity",
