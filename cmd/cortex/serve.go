@@ -123,6 +123,8 @@ func runServe(ctx context.Context, env map[string]string) (*serveApp, error) {
 			PublicURL: publicURL, BootstrapEmail: bootEmail,
 			GoogleClientID: env["GOOGLE_OAUTH_CLIENT_ID"], GoogleClientSecret: env["GOOGLE_OAUTH_CLIENT_SECRET"],
 			AllowPrivate: st.AllowPrivate,
+			// Off until the owner migration ships; see the encryption plan.
+			EncryptionEnroll: envBool(env["CORTEX_ENCRYPTION_ENROLL"]),
 		},
 		Root: root, Store: st, MCP: mcpHandler, Enqueue: pool.Enqueue,
 	})
@@ -195,4 +197,13 @@ func cmdServe() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// envBool reads a boolean environment value ("1", "true", "yes", "on").
+func envBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

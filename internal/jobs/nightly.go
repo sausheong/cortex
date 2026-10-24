@@ -230,6 +230,7 @@ func purgeAll(ctx context.Context, root *cortex.Cortex, st *accounts.Store, o *N
 		_, err := root.ForUser(u.ID).PurgeDeleted(ctx, window)
 		keep(err)
 	}
+	keep(st.PurgeEnrollments(ctx, now))
 	for _, q := range []string{
 		`DELETE FROM oauth_clients WHERE kind = 'dcr' AND authorized_at IS NULL AND (expires_at < $1 OR created_at < $1::timestamptz - interval '24 hours')`,
 		`DELETE FROM authorize_requests WHERE expires_at < $1`,

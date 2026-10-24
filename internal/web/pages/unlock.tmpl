@@ -1,0 +1,29 @@
+{{define "title"}}Unlock{{end}}
+{{define "head"}}<script src="/static/passkey.js" nonce="{{$.Nonce}}" defer></script>{{end}}
+{{define "content"}}
+{{with .Data}}
+<div class="unlock" id="passkey-root" data-mode="unlock" data-csrf="{{$.CSRF}}" data-next="{{.Next}}">
+<h1>Unlock with your passkey</h1>
+<p class="lede">Your memory is encrypted. Use the passkey you set up to open it for this session.</p>
+{{if .Error}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+<p class="error" id="pk-error" role="alert" hidden></p>
+<p class="note" id="pk-status" role="status"></p>
+{{if not .Recovery}}
+<p><button class="btn" id="unlock-btn" type="button" data-pending="Waiting for your passkey&hellip;">Unlock with your passkey</button></p>
+<p class="note"><a href="/unlock?method=recovery&amp;next={{.Next}}">Use your recovery key instead</a></p>
+{{else}}
+<form method="post" action="/unlock/recovery" autocomplete="off" class="recovery-form">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="next" value="{{.Next}}">
+  <label for="recovery-key">Recovery key
+    <input id="recovery-key" name="recovery" required autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="recovery-help"></label>
+  <p class="note field-help" id="recovery-help">The key you saved when you protected your memory, in groups of four letters and digits. Case and dashes do not matter.</p>
+  <div class="actions">
+    <a class="btn-secondary" href="/unlock?next={{.Next}}">Use your passkey</a>
+    <button class="btn" data-pending="Unlocking&hellip;">Unlock</button>
+  </div>
+</form>
+{{end}}
+</div>
+{{end}}
+{{end}}

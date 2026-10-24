@@ -1,0 +1,44 @@
+{{define "title"}}Protect your memory{{end}}
+{{define "head"}}<script src="/static/passkey.js" nonce="{{$.Nonce}}" defer></script>{{end}}
+{{define "content"}}
+<div class="enroll" id="passkey-root" data-mode="enroll" data-csrf="{{$.CSRF}}">
+<p class="error" id="pk-error" role="alert" hidden></p>
+
+<section id="step-passkey">
+<h1>Protect your memory with a passkey</h1>
+<p class="lede">cortex encrypts everything it stores about you. Only your passkey, or the recovery key you are about to receive, can open it.</p>
+<ul class="points">
+  <li>The server cannot read your memory while you are away.</li>
+  <li>Your assistants can use it only while you are connected.</li>
+  <li>Your AI provider still sees the text it is asked to process.</li>
+</ul>
+<div class="notice">
+  <p><strong>If you lose every passkey and your recovery key, your memory cannot be recovered.</strong> Not by you, not by the operator, and not from the 30-day restore or from backups.</p>
+</div>
+<label class="pk-consent" for="confirm-loss">
+  <input id="confirm-loss" type="checkbox">
+  <span>I understand that lost keys cannot be recovered.</span></label>
+<label for="passkey-name">Name this passkey (optional)
+  <input id="passkey-name" maxlength="80" autocomplete="off" placeholder="For example, Work laptop"></label>
+<p class="note" id="pk-status" role="status"></p>
+<p><button class="btn" id="start-btn" type="button">Create passkey</button></p>
+<p class="note">Your device needs a passkey that supports the PRF extension, such as a recent iPhone, Mac, Android phone or a security key with hmac-secret. If it does not, cortex will tell you.</p>
+</section>
+
+<section id="step-recovery" hidden>
+<h1>Save your recovery key</h1>
+<p class="lede">This is the only time it is shown. Print it or store it somewhere safe and private. It opens your memory if you lose your passkey.</p>
+<p class="recovery-key" id="recovery-key" tabindex="0"></p>
+<h2>Check that you saved it</h2>
+<p class="note">Type the two groups below, exactly as printed above, then confirm with your passkey. Your memory is not protected until you do.</p>
+<div class="proof-fields">
+  <label for="group-a"><span id="group-a-label">Group</span>
+    <input id="group-a" maxlength="8" required autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+  <label for="group-b"><span id="group-b-label">Group</span>
+    <input id="group-b" maxlength="8" required autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+</div>
+<p class="note" id="pk-status-2" role="status"></p>
+<p><button class="btn" id="confirm-btn" type="button">Confirm with passkey</button></p>
+</section>
+</div>
+{{end}}

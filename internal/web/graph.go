@@ -27,12 +27,12 @@ const (
 var graphLimits = []int{30, 60, 120}
 
 func (s *server) mountGraph(mux *http.ServeMux) {
-	mux.HandleFunc("GET /graph", s.auth(s.graphGet))
+	mux.HandleFunc("GET /graph", s.authUnlocked(s.graphGet))
 	mux.HandleFunc("GET /graph/data", s.graphData)
-	mux.HandleFunc("POST /graph/rename", s.auth(s.graphRename))
-	mux.HandleFunc("POST /graph/merge", s.auth(s.graphMerge))
-	mux.HandleFunc("POST /graph/delete", s.auth(s.graphDelete))
-	mux.HandleFunc("POST /graph/restore/{batch}", s.auth(s.graphRestore))
+	mux.HandleFunc("POST /graph/rename", s.authUnlocked(s.graphRename))
+	mux.HandleFunc("POST /graph/merge", s.authUnlocked(s.graphMerge))
+	mux.HandleFunc("POST /graph/delete", s.authUnlocked(s.graphDelete))
+	mux.HandleFunc("POST /graph/restore/{batch}", s.authUnlocked(s.graphRestore))
 }
 
 // Shapes are drawn in a 22 by 22 box around the origin. They are the one

@@ -283,9 +283,9 @@ func (s *server) vaultFor(ctx context.Context, userID string) (*vaultSet, error)
 
 func (s *server) mountVault(mux *http.ServeMux) {
 	s.zipLimit = accounts.NewLimiter(vaultZipPerMin, 3, s.now)
-	mux.HandleFunc("GET /vault", s.auth(s.vaultList))
-	mux.HandleFunc("GET /vault/download", s.auth(s.vaultDownload))
-	mux.HandleFunc("GET /vault/{path...}", s.auth(s.vaultPage))
+	mux.HandleFunc("GET /vault", s.authUnlocked(s.vaultList))
+	mux.HandleFunc("GET /vault/download", s.authUnlocked(s.vaultDownload))
+	mux.HandleFunc("GET /vault/{path...}", s.authUnlocked(s.vaultPage))
 }
 
 type vaultRow struct {

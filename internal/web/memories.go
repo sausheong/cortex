@@ -24,10 +24,10 @@ const (
 )
 
 func (s *server) mountMemories(mux *http.ServeMux) {
-	mux.HandleFunc("GET /memories", s.auth(s.memoriesGet))
-	mux.HandleFunc("POST /memories/delete", s.auth(s.memoriesDelete))
-	mux.HandleFunc("GET /memories/deleted", s.auth(s.memoriesDeleted))
-	mux.HandleFunc("POST /memories/restore/{batch}", s.auth(s.memoriesRestore))
+	mux.HandleFunc("GET /memories", s.authUnlocked(s.memoriesGet))
+	mux.HandleFunc("POST /memories/delete", s.authUnlocked(s.memoriesDelete))
+	mux.HandleFunc("GET /memories/deleted", s.authUnlocked(s.memoriesDeleted))
+	mux.HandleFunc("POST /memories/restore/{batch}", s.authUnlocked(s.memoriesRestore))
 	mux.HandleFunc("GET /account", s.auth(s.accountGet))
 	mux.HandleFunc("POST /account/delete", s.auth(s.accountDelete))
 }

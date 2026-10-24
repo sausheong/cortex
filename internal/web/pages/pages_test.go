@@ -103,3 +103,29 @@ func TestVaultHrefsEscapePath(t *testing.T) {
 		t.Errorf("source href not escaped")
 	}
 }
+
+// The unlock and enroll pages exist, render for the layout, carry no inline
+// style or handler, and use no em dash in copy.
+func TestPasskeyTemplates(t *testing.T) {
+	for _, name := range []string{"unlock", "enroll"} {
+		tm, ok := Load()[name]
+		if !ok {
+			t.Fatalf("no %s template", name)
+		}
+		var b strings.Builder
+		data := map[string]any{"Next": "/", "Recovery": true, "Error": "x"}
+		if err := tm.Execute(&b, Page{Data: data, SignedIn: true, Nonce: "n0nce", CSRF: "c"}); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		if strings.Contains(out, "—") {
+			t.Errorf("%s: em dash", name)
+		}
+		if strings.Contains(out, "style=") || eventAttr.MatchString(out) {
+			t.Errorf("%s: inline style or handler", name)
+		}
+		if !strings.Contains(out, `<script src="/static/passkey.js" nonce="n0nce" defer>`) {
+			t.Errorf("%s: passkey.js not loaded with the nonce", name)
+		}
+	}
+}

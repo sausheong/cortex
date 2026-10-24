@@ -19,7 +19,12 @@ const (
 var ErrNoSession = errors.New("web: no session")
 
 // SessionUser is the signed-in user of a request.
-type SessionUser struct{ UserID, CSRF string }
+type SessionUser struct {
+	UserID, CSRF string
+	// Unlocked is true when the request carries a key for an encrypted
+	// account. Task 5 sets it from the unlock cookie; until then it is false.
+	Unlocked bool
+}
 
 // Sessions stores browser sessions. Only the SHA-256 of the cookie value is
 // stored.

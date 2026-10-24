@@ -43,6 +43,9 @@ type Config struct {
 	AllowPrivate                                                  bool
 	Identity                                                      IdentityProvider // nil = Google from the ID/secret
 	Logger                                                        *slog.Logger
+	// EncryptionEnroll enables passkey enrollment (CORTEX_ENCRYPTION_ENROLL).
+	// It stays false in production until the owner migration is complete.
+	EncryptionEnroll bool
 }
 
 // Deps is what mounted handlers receive.
@@ -73,7 +76,12 @@ type server struct {
 	authLimit *accounts.Limiter
 	testLimit *accounts.Limiter
 	zipLimit  *accounts.Limiter
-	vcache    vaultCache
+
+	// Unlock and enrollment throttles (see passkey.go).
+	unlockUser   *accounts.Limiter
+	unlockIP     *accounts.Limiter
+	recoveryUser *accounts.Limiter
+	vcache       vaultCache
 
 	// Seams for tests.
 	testProvider func(ctx context.Context, s accounts.Settings) error
@@ -93,7 +101,12 @@ func newServer(cfg Config, root *cortex.Cortex, st *accounts.Store, opts Options
 		tmpl:      pages.Load(),
 		authLimit: accounts.NewLimiter(30, 30, now),
 		testLimit: accounts.NewLimiter(10, 10, now),
+
+		unlockUser:   accounts.NewLimiter(10, 10, now),
+		unlockIP:     accounts.NewLimiter(30, 30, now),
+		recoveryUser: accounts.NewLimiter(1, 5, now),
 	}
+	s.configurePasskeys()
 	s.idp = cfg.Identity
 	if s.idp == nil {
 		s.idp = newGoogleIdentity(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.PublicURL+"/auth/google/callback")
@@ -126,10 +139,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /auth/google/start", s.googleStart)
 	mux.HandleFunc("GET /auth/google/callback", s.googleCallback)
 	mux.HandleFunc("POST /logout", s.auth(s.logout))
-	mux.HandleFunc("GET /settings", s.auth(s.settingsGet))
-	mux.HandleFunc("POST /settings", s.auth(s.settingsPost))
-	mux.HandleFunc("POST /settings/reembed", s.auth(s.settingsReembed))
-	mux.HandleFunc("GET /settings/job/{id}", s.auth(s.jobProgress))
+	mux.HandleFunc("GET /settings", s.authUnlocked(s.settingsGet))
+	mux.HandleFunc("POST /settings", s.authUnlocked(s.settingsPost))
+	mux.HandleFunc("POST /settings/reembed", s.authUnlocked(s.settingsReembed))
+	mux.HandleFunc("GET /settings/job/{id}", s.authUnlocked(s.jobProgress))
+	s.mountPasskeys(mux)
 	s.mountMemories(mux)
 	s.mountGraph(mux)
 	s.mountVault(mux)

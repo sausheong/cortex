@@ -33,6 +33,16 @@ func MigrateBootstrap(ctx context.Context, st *Store, env map[string]string) err
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(4243)`); err != nil {
 		return err
 	}
+	// An owner who has enrolled a passkey must never get the static token
+	// back: it would amount to a server-held key. Seeding is skipped entirely
+	// once the bootstrap user's encryption_state is not 'none'.
+	var encState string
+	switch err := tx.QueryRowContext(ctx, `SELECT encryption_state FROM users WHERE id = $1`, cortex.BootstrapUserID).Scan(&encState); {
+	case err == nil && encState != "none":
+		return nil
+	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
 	var marker string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM cortex_meta WHERE key = $1`, bootstrapMarker).Scan(&marker)
 	if err == nil {

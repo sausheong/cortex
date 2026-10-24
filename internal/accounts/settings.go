@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/url"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 // Errors returned by the store.
@@ -145,6 +147,10 @@ type Store struct {
 	Sealer       *Sealer
 	AllowPrivate bool
 	Now          func() time.Time // nil = time.Now
+
+	// Passkey configuration; set once at startup by ConfigurePasskeys.
+	wa       *webauthn.WebAuthn
+	enrollOn bool
 }
 
 func (st *Store) now() time.Time {

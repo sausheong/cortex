@@ -413,3 +413,11 @@ details.more .home-bullets{margin-top:var(--s1)}
 :is(details.more,details.cleanup,details.fold)>summary:hover{color:var(--accent)}
 details.rename>summary{padding-left:0;margin-left:0}
 @media (prefers-reduced-motion:reduce){:is(details.more,details.cleanup,details.fold,details.rename,details.revoke,details.details-quiet)>summary::before{transition:none}}
+/* Passkey enrollment and unlock */
+[hidden]{display:none!important}
+.enroll .points,.unlock .points{margin:var(--s4) 0;padding-left:var(--s5)}
+.pk-consent{display:flex;align-items:flex-start;gap:var(--s2);color:var(--fg);font-size:var(--text-base);font-weight:var(--w-body)}
+.pk-consent input{width:20px;height:20px;margin:2px 0 0;flex:0 0 auto}
+.recovery-key{margin:var(--s4) 0;padding:var(--s4);border:1px solid var(--line-strong);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--text-lg);letter-spacing:.06em;line-height:1.6;overflow-wrap:anywhere;user-select:all}
+.proof-fields{display:grid;gap:var(--s3);grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))}
+.unlock .actions,.recovery-form .actions{display:flex;flex-wrap:wrap;gap:var(--s3);margin-top:var(--s4)}
