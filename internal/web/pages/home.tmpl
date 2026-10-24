@@ -4,6 +4,7 @@
 <h1>Home</h1>
 <p class="lede">What cortex knows about you, and what has changed.</p>
 {{template "setup" $}}
+{{if $.SetUp}}<p class="note setup-done">You are set up. An assistant is connected and your memories are saving.</p>{{end}}
 
 {{$first := and $.Setup (not $.Setup.Memory)}}
 {{if and (not $.Setup) .Strip}}<p class="home-strip">{{range $i, $p := .Strip}}{{if $i}} <span aria-hidden="true">&middot;</span> {{end}}<span>{{$p}}</span>{{end}}</p>{{end}}

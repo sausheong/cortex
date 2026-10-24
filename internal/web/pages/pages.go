@@ -24,6 +24,8 @@ type Page struct {
 	Data     any
 	// Setup is the first-run checklist; nil once everything is done.
 	Setup *Setup
+	// SetUp is true once the whole checklist is done.
+	SetUp bool
 }
 
 // Setup is the first-run checklist, ticked from real state.

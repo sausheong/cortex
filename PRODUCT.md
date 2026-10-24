@@ -8,7 +8,7 @@ product
 
 Primarily the owner, Sau Sheong. He opens the cortex web app occasionally to:
 - check what his assistants have remembered,
-- connect or revoke assistants and agent tokens,
+- connect or revoke assistants and access keys for scripts and agents,
 - adjust AI provider settings,
 - clean up memories (bulk delete, restore, compaction).
 

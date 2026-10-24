@@ -227,7 +227,7 @@ func (s *server) render(w http.ResponseWriter, r *http.Request, status int, name
 	if u, ok := s.sessionFor(r); ok {
 		p.CSRF, p.SignedIn = u.CSRF, true
 		if name == "home" || name == "memories" || name == "connections" || name == "settings" {
-			p.Setup = s.setupState(r.Context(), u.UserID)
+			p.Setup, p.SetUp = s.setupRead(r.Context(), u.UserID)
 		}
 	}
 	var buf bytes.Buffer

@@ -116,6 +116,9 @@ details.rename>summary::-webkit-details-marker{display:none}
 .new-token:focus{outline:2px solid var(--accent);outline-offset:2px}
 .new-token code{display:block;padding:var(--s2) var(--s3);background:var(--bg);border:1px solid var(--info-line);border-radius:6px;overflow-wrap:anywhere}
 .token-form label{margin:0 0 var(--s2)}.token-form .field-error{min-height:0}.token-form .field-error:empty{display:none}
+.mcp-url{display:block;padding:var(--s2) var(--s3);background:var(--bg);border:1px solid var(--info-line);border-radius:6px;overflow-wrap:anywhere}
+.how-to{margin:0 0 var(--s3);padding-left:var(--s5)}.how-to li+li{margin-top:var(--s1)}
+.setup-done{margin:var(--s2) 0 0}
 .copy-status{margin-left:var(--s3)}
 .memlist{list-style:none;padding:0}.memlist li{border-top:1px solid var(--line)}
 .change{padding:12px 0;border-top:1px solid var(--line)}

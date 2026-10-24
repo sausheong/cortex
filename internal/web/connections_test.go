@@ -201,7 +201,7 @@ func TestTokenNameErrorTiedToField(t *testing.T) {
 	e := newEnv(t)
 	e.signIn(alice(), "")
 	resp, body := e.post("/connections/tokens", url.Values{"csrf": {e.connCSRF()}, "name": {"   "}})
-	if resp.StatusCode != 200 || !strings.Contains(body, `aria-describedby="err-name"`) || !strings.Contains(body, `aria-invalid="true"`) || !strings.Contains(body, "Enter a name for the token") {
+	if resp.StatusCode != 200 || !strings.Contains(body, `aria-describedby="err-name"`) || !strings.Contains(body, `aria-invalid="true"`) || !strings.Contains(body, "Enter a name, up to 80") {
 		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
 }
@@ -354,5 +354,24 @@ func TestRemovedConnectionWithoutMemoriesLeavesFilter(t *testing.T) {
 	}
 	if _, mem := e.get("/memories"); strings.Contains(mem, "empty-agent") {
 		t.Fatal("removed, memory-less connection still in filter")
+	}
+}
+
+func TestConnectionsLeadsWithConnectAssistant(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	_, body := e.get("/connections")
+	i, j, k := strings.Index(body, "Connect an assistant"), strings.Index(body, "Connected assistants"), strings.Index(body, "For your own scripts and agents")
+	if i < 0 || !(i < j && j < k) {
+		t.Fatalf("section order wrong: %d %d %d", i, j, k)
+	}
+	if !strings.Contains(body, "https://cortex.test/mcp") {
+		t.Error("MCP address missing")
+	}
+	if strings.Contains(body, "Agent token") || strings.Contains(body, "agent token") {
+		t.Error("jargon 'agent token' still shown")
+	}
+	if _, home := e.get("/"); strings.Contains(home, "You are set up.") {
+		t.Error("set-up line shown before setup is done")
 	}
 }

@@ -11,6 +11,12 @@ import (
 // an API key, a live connection, a stored memory. It returns nil when all
 // three are done (or when state cannot be read), so the checklist disappears.
 func (s *server) setupState(ctx context.Context, userID string) *pages.Setup {
+	st, _ := s.setupRead(ctx, userID)
+	return st
+}
+
+// setupRead is setupState plus whether every step is done.
+func (s *server) setupRead(ctx context.Context, userID string) (*pages.Setup, bool) {
 	var st pages.Setup
 	if set, err := s.st.GetSettings(ctx, userID); err == nil && set.APIKey != "" {
 		st.Provider = true
@@ -23,12 +29,12 @@ func (s *server) setupState(ctx context.Context, userID string) *pages.Setup {
 			}
 		}
 	} else {
-		return nil
+		return nil, false
 	}
 	if _, total, err := s.root.ForUser(userID).ListMemories(ctx, cortex.MemoryListFilter{}, 1, 0); err == nil {
 		st.Memory = total > 0
 	} else {
-		return nil
+		return nil, false
 	}
 	for _, b := range []bool{st.Provider, st.Connect, st.Memory} {
 		if b {
@@ -36,7 +42,7 @@ func (s *server) setupState(ctx context.Context, userID string) *pages.Setup {
 		}
 	}
 	if st.Done == 3 {
-		return nil
+		return nil, true
 	}
-	return &st
+	return &st, false
 }

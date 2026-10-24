@@ -107,6 +107,9 @@ func TestHomeFirstRunChecklistLeads(t *testing.T) {
 	if strings.Contains(body, "Get started") {
 		t.Fatal("checklist still shown when setup is complete")
 	}
+	if !strings.Contains(body, "You are set up.") {
+		t.Error("complete setup should show the quiet set-up line")
+	}
 	for _, want := range []string{"About you", "Nightly maintenance", `class="home-strip"`, "1 assistant active"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("complete setup should show %q", want)

@@ -42,7 +42,7 @@
 {{define "content"}}
 {{with .Data}}
 <h1>Connections</h1>
-<p class="lede">Assistants and agents that can read and write your memory.</p>
+<p class="lede">Assistants, scripts and agents that can read and write your memory.</p>
 {{template "setup" $}}
 {{if .Revoked}}
 <section class="notice" id="revoke-notice" role="status">
@@ -66,39 +66,52 @@
 {{if .WasRestored}}<p class="notice" role="status">Restored what it wrote. The connection stays revoked.</p>{{end}}
 {{if .NewToken}}
 <section class="notice new-token" id="new-token" role="alert" tabindex="-1" aria-labelledby="new-token-h">
-  <h2 id="new-token-h">Token created for {{.NewName}}</h2>
+  <h2 id="new-token-h">Key created for {{.NewName}}</h2>
   <p>Copy it now. It is shown only once.</p>
   <p><code id="new-token-value">{{.NewToken}}</code></p>
-  <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy token">Copy token</button></p>
+  <p><button class="btn-secondary js-only" type="button" data-copy="new-token-value" data-copy-label="Copy key">Copy key</button></p>
 </section>
 {{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
+<section class="section connect-assistant" aria-labelledby="h-connect">
+  <h2 id="h-connect">Connect an assistant</h2>
+  <p>Add this address to ChatGPT or Claude as a custom connector. They ask you to approve access, and it appears below once connected.</p>
+  <p><code class="mcp-url" id="mcp-url">{{.MCPURL}}</code></p>
+  <p><button class="btn js-only" type="button" data-copy="mcp-url" data-copy-label="Copy address">Copy address</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
+  <ol class="how-to">
+    <li><strong>ChatGPT:</strong> open Settings, then Connectors, and add a custom connector with this address.</li>
+    <li><strong>Claude:</strong> open Settings, then Connectors, and add a custom connector with this address.</li>
+    <li>Approve access when asked. cortex does not see your assistant account.</li>
+  </ol>
+  <details class="fold">
+    <summary>Optional: tell your assistant how to use it</summary>
+    <p class="note">Paste this into your assistant's custom instructions so it checks and saves memories on its own.</p>
+    <textarea id="instructions" readonly rows="9">{{.Instructions}}</textarea>
+    <p><button class="btn-secondary js-only" type="button" data-copy="instructions" data-copy-label="Copy instructions">Copy instructions</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
+  </details>
+</section>
 <section class="section" aria-labelledby="h-assistants">
-  <h2 id="h-assistants">Assistants</h2>
+  <h2 id="h-assistants">Connected assistants</h2>
   <p class="note conn-legend"><strong>Not used yet</strong> turns to <strong>Active</strong> after the first request. <strong>Revoked</strong> can no longer connect.</p>
   <ul class="conns">
-  {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected.</strong> Paste the instructions under <a href="#h-add">Add a connection</a> into ChatGPT or Claude. It appears here after it first connects.</li>{{end}}
+  {{range .Assistants}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No assistants connected yet.</strong> Follow the steps above. It appears here after it first connects.</li>{{end}}
   </ul>
 </section>
 <section class="section" aria-labelledby="h-agents">
-  <h2 id="h-agents">Agent tokens</h2>
-  <ul class="conns">
-  {{range .Agents}}{{template "conn" .}}{{else}}<li class="conn-empty"><strong>No agent tokens.</strong> Create one below for a script or your own agent. The token is shown once.</li>{{end}}
-  </ul>
-</section>
-<section class="section add-connection" aria-labelledby="h-add">
-  <h2 id="h-add">Add a connection</h2>
-  <h3>Create an agent token</h3>
-  <form method="post" action="/connections/tokens" autocomplete="off" class="token-form">
-    <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <label>Token name <input name="name" required maxlength="80" placeholder="my agent" value="{{.FormName}}" aria-describedby="err-name"{{if eq .ErrField "name"}} aria-invalid="true"{{end}}></label>
-    <p class="field-error" id="err-name" role="alert">{{if eq .ErrField "name"}}{{.Error}}{{end}}</p>
-    <button class="btn" data-pending="Creating&hellip;">Create token</button>
-  </form>
-  <h3>Connect an assistant</h3>
-  <p>Paste this into your assistant's custom instructions.</p>
-  <textarea id="instructions" readonly rows="9">{{.Instructions}}</textarea>
-  <p><button class="btn-secondary js-only" type="button" data-copy="instructions" data-copy-label="Copy">Copy</button><span class="copy-status note" role="status" aria-live="polite"></span></p>
+  <h2 id="h-agents">Scripts and agents</h2>
+  {{if .Agents}}<ul class="conns">
+  {{range .Agents}}{{template "conn" .}}{{end}}
+  </ul>{{end}}
+  <details class="fold"{{if or .NewToken .ErrField .Agents}} open{{end}}>
+    <summary>For your own scripts and agents</summary>
+    <p class="note">Create a private key for code you run yourself. It is shown once, so copy it when it appears.</p>
+    <form method="post" action="/connections/tokens" autocomplete="off" class="token-form">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <label>Name <input name="name" required maxlength="80" placeholder="my agent" value="{{.FormName}}" aria-describedby="err-name"{{if eq .ErrField "name"}} aria-invalid="true"{{end}}></label>
+      <p class="field-error" id="err-name" role="alert">{{if eq .ErrField "name"}}{{.Error}}{{end}}</p>
+      <button class="btn" data-pending="Creating&hellip;">Create key</button>
+    </form>
+  </details>
 </section>
 <script nonce="{{$.Nonce}}">
 var nt=document.getElementById('new-token');if(nt){nt.focus()}

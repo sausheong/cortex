@@ -69,6 +69,7 @@ type connectionsView struct {
 	ErrField           string // "name" ties Error to the token name field
 	FormName           string // token name to redisplay after an error
 	Instructions       string
+	MCPURL             string
 	Revoked            *revokeNotice
 	WasRestored        bool
 	Notice             *connNotice
@@ -89,7 +90,7 @@ type connHandler struct{ d Deps }
 
 func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, error) {
 	conns, err := h.d.Accounts.ListConnections(r.Context(), u.UserID)
-	v := connectionsView{Instructions: connectionInstructions}
+	v := connectionsView{Instructions: connectionInstructions, MCPURL: strings.TrimRight(h.d.Cfg.PublicURL, "/") + "/mcp"}
 	if err != nil {
 		return v, err
 	}
@@ -166,7 +167,7 @@ func (h *connHandler) newToken(w http.ResponseWriter, r *http.Request, u Session
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	if name == "" || len(name) > 80 {
 		h.page(w, r, u, func(v *connectionsView) {
-			v.Error, v.ErrField, v.FormName = "Enter a name for the token, up to 80 characters. For example: laptop agent.", "name", name
+			v.Error, v.ErrField, v.FormName = "Enter a name, up to 80 characters. For example: laptop agent.", "name", name
 		})
 		return
 	}
