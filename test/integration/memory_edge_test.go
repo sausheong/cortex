@@ -1,8 +1,10 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestPutAndGetMemoryEdge(t *testing.T) { forEachMode(t, testPutAndGetMemoryEdge) }

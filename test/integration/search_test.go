@@ -1,8 +1,11 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestStoreAndSearchEmbedding(t *testing.T) { forEachMode(t, testStoreAndSearchEmbedding) }
@@ -29,21 +32,21 @@ func testStoreAndSearchEmbedding(t *testing.T) {
 	}
 
 	// Generate embeddings and store them.
-	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
+	vecs, err := testutil.H(c).Cfg.Embedder.Embed(ctx, []string{ch1.Content, ch2.Content})
 	if err != nil {
 		t.Fatalf("Embed() error: %v", err)
 	}
 
-	if err := c.putEmbedding(ctx, ch1.ID, "chunk", vecs[0]); err != nil {
+	if err := putEmbedding(c, ctx, ch1.ID, "chunk", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding(1) error: %v", err)
 	}
-	if err := c.putEmbedding(ctx, ch2.ID, "chunk", vecs[1]); err != nil {
+	if err := putEmbedding(c, ctx, ch2.ID, "chunk", vecs[1]); err != nil {
 		t.Fatalf("putEmbedding(2) error: %v", err)
 	}
 
 	// Search with a query similar to ch1 (programming-related).
 	queryVec := testDeterministicVector("Go programming language")
-	results, err := c.searchVectorRaw(ctx, queryVec, "chunk", 10)
+	results, err := searchVectorRaw(c, ctx, queryVec, "chunk", 10)
 	if err != nil {
 		t.Fatalf("searchVectorRaw() error: %v", err)
 	}
@@ -87,11 +90,11 @@ func testSearchMemoryVector(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatalf("PutMemory: %v", err)
 	}
-	vecs, err := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
+	vecs, err := testutil.H(c).Cfg.Embedder.Embed(ctx, []string{m.Content})
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
-	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+	if err := putEmbedding(c, ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatalf("putEmbedding: %v", err)
 	}
 
@@ -116,8 +119,8 @@ func testSearchMemoryVector_HidesInvalidated(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
-	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+	vecs, _ := testutil.H(c).Cfg.Embedder.Embed(ctx, []string{m.Content})
+	if err := putEmbedding(c, ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,18 +156,18 @@ func testEmbeddingByRef(t *testing.T) {
 	if err := c.PutMemory(ctx, m); err != nil {
 		t.Fatal(err)
 	}
-	vecs, _ := c.h.Cfg.Embedder.Embed(ctx, []string{m.Content})
-	if err := c.putEmbedding(ctx, m.ID, "memory", vecs[0]); err != nil {
+	vecs, _ := testutil.H(c).Cfg.Embedder.Embed(ctx, []string{m.Content})
+	if err := putEmbedding(c, ctx, m.ID, "memory", vecs[0]); err != nil {
 		t.Fatal(err)
 	}
 
-	got := c.embeddingByRef(ctx, m.ID, "memory")
-	if len(got) != c.h.Cfg.Embedder.Dimensions() {
-		t.Fatalf("expected %d-dim vector, got %d", c.h.Cfg.Embedder.Dimensions(), len(got))
+	got := embeddingByRef(c, ctx, m.ID, "memory")
+	if len(got) != testutil.H(c).Cfg.Embedder.Dimensions() {
+		t.Fatalf("expected %d-dim vector, got %d", testutil.H(c).Cfg.Embedder.Dimensions(), len(got))
 	}
 
 	// Missing ref → nil.
-	if v := c.embeddingByRef(ctx, "nonexistent", "memory"); v != nil {
+	if v := embeddingByRef(c, ctx, "nonexistent", "memory"); v != nil {
 		t.Fatalf("expected nil for missing ref, got %v", v)
 	}
 }

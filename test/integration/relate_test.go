@@ -2,8 +2,9 @@ package integration_test
 
 import (
 	"context"
-	. "github.com/sausheong/cortex"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestBuildMemoryEdges_RecordsExtends(t *testing.T) {

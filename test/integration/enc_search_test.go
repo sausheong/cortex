@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"

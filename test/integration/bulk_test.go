@@ -2,8 +2,9 @@ package integration_test
 
 import (
 	"context"
-	. "github.com/sausheong/cortex"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 // The bulk loaders must return what the per-entity calls return, so the

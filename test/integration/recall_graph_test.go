@@ -1,9 +1,11 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"reflect"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 
 	"github.com/sausheong/cortex/internal/model"
 )
@@ -96,7 +98,7 @@ func TestNeighbourhood_DoesNotWalkThroughOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := c.neighbourhood(ctx, []string{a.ID}, 2, model.TemporalMode{})
+	got, err := neighbourhood(c, ctx, []string{a.ID}, 2, model.TemporalMode{})
 	if err != nil {
 		t.Fatal(err)
 	}

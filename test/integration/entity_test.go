@@ -3,12 +3,13 @@ package integration_test
 import (
 	"context"
 	"fmt"
-	. "github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/internal/testutil"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestPutAndGetEntity(t *testing.T) { forEachMode(t, testPutAndGetEntity) }

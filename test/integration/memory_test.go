@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/sausheong/cortex"
+
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestPutAndSearchMemory(t *testing.T) { forEachMode(t, testPutAndSearchMemory) }
@@ -300,7 +303,7 @@ func testInvalidateMemory(t *testing.T) {
 
 	// Row still exists; expired_at set, invalid_at = eventTime.
 	var expired, invalid sql.NullTime
-	err := c.h.DB.QueryRowContext(ctx,
+	err := testutil.H(c).DB.QueryRowContext(ctx,
 		`SELECT expired_at, invalid_at FROM memories WHERE id = ?`, m.ID,
 	).Scan(&expired, &invalid)
 	if err != nil {
@@ -376,7 +379,7 @@ func testPutMemory_PersistsValidAt(t *testing.T) {
 		t.Fatalf("PutMemory: %v", err)
 	}
 
-	got, err := c.getMemoryByID(ctx, m.ID)
+	got, err := getMemoryByID(c, ctx, m.ID)
 	if err != nil {
 		t.Fatalf("getMemoryByID: %v", err)
 	}
@@ -406,7 +409,7 @@ func testPutMemory_PersistsSpeaker(t *testing.T) {
 		t.Fatalf("PutMemory: %v", err)
 	}
 
-	got, err := c.getMemoryByID(ctx, m.ID)
+	got, err := getMemoryByID(c, ctx, m.ID)
 	if err != nil {
 		t.Fatalf("getMemoryByID: %v", err)
 	}
@@ -447,7 +450,7 @@ func testSearchMemoriesMode_EventTimeWindow(t *testing.T) {
 	to := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	mode := model.TemporalMode{RangeFrom: &from, RangeTo: &to}
 
-	got, err := c.searchMemoriesMode(ctx, "budget", 10, mode)
+	got, err := searchMemoriesMode(c, ctx, "budget", 10, mode)
 	if err != nil {
 		t.Fatalf("searchMemoriesMode: %v", err)
 	}

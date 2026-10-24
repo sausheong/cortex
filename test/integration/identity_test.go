@@ -3,8 +3,9 @@ package integration_test
 import (
 	"context"
 	"errors"
-	. "github.com/sausheong/cortex"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestAddAlias_ConflictAndResolve(t *testing.T) { forEachMode(t, testAddAlias_ConflictAndResolve) }

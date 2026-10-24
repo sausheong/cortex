@@ -2,8 +2,9 @@ package integration_test
 
 import (
 	"context"
-	. "github.com/sausheong/cortex"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestRemember_MapsOntoVocabulary(t *testing.T) { forEachMode(t, testRemember_MapsOntoVocabulary) }

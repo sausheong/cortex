@@ -1,4 +1,4 @@
-package cortex
+package integration_test
 
 import (
 	"context"
@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/sausheong/cortex"
+
 	"github.com/sausheong/cortex/internal/pgtest"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 type dimsEmbedder struct{ n int }
@@ -37,7 +40,7 @@ func TestSearchVectorUsesRowDims(t *testing.T) {
 	}
 	vec := make([]float32, 8)
 	vec[0] = 1
-	if err := c.putEmbedding(ctx, ch.ID, "chunk", vec); err != nil {
+	if err := putEmbedding(c, ctx, ch.ID, "chunk", vec); err != nil {
 		t.Fatal(err)
 	}
 	// A row of a different dimension must not break or match the search.
@@ -47,7 +50,7 @@ func TestSearchVectorUsesRowDims(t *testing.T) {
 	}
 	vec16 := make([]float32, 16)
 	vec16[0] = 1
-	if err := c.putEmbedding(ctx, other.ID, "chunk", vec16); err != nil {
+	if err := putEmbedding(c, ctx, other.ID, "chunk", vec16); err != nil {
 		t.Fatal(err)
 	}
 	got, err := c.SearchVector(ctx, "anything", 5)
@@ -58,7 +61,7 @@ func TestSearchVectorUsesRowDims(t *testing.T) {
 		t.Fatalf("SearchVector = %+v, want only %s", got, ch.ID)
 	}
 	var dims int
-	if err := c.h.DB.QueryRowContext(ctx, `SELECT dims FROM embeddings WHERE ref_id = ?`, ch.ID).Scan(&dims); err != nil || dims != 8 {
+	if err := testutil.H(c).DB.QueryRowContext(ctx, `SELECT dims FROM embeddings WHERE ref_id = ?`, ch.ID).Scan(&dims); err != nil || dims != 8 {
 		t.Fatalf("dims = %d err=%v, want 8", dims, err)
 	}
 }
@@ -81,7 +84,7 @@ func TestPutEmbeddingBounds(t *testing.T) {
 	}
 	defer c.Close()
 	c = modeHandle(t, c)
-	if err := c.putEmbedding(context.Background(), "x", "chunk", nil); err == nil {
+	if err := putEmbedding(c, context.Background(), "x", "chunk", nil); err == nil {
 		t.Fatal("want error for empty embedding")
 	}
 }
@@ -117,10 +120,10 @@ func TestVectorTwoUsersDifferentDims(t *testing.T) {
 	if err := b.PutChunk(ctx, cb); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.putEmbedding(ctx, ca.ID, "chunk", unitVec(8)); err != nil {
+	if err := putEmbedding(a, ctx, ca.ID, "chunk", unitVec(8)); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.putEmbedding(ctx, cb.ID, "chunk", unitVec(16)); err != nil {
+	if err := putEmbedding(b, ctx, cb.ID, "chunk", unitVec(16)); err != nil {
 		t.Fatal(err)
 	}
 	ga, err := a.SearchVector(ctx, "q", 5)
@@ -169,8 +172,8 @@ func TestVectorGenerationIsolation(t *testing.T) {
 func countEmb(t *testing.T, c *Cortex, gen int) int {
 	t.Helper()
 	var n int
-	if err := c.h.DB.QueryRowContext(context.Background(),
-		`SELECT count(*) FROM embeddings WHERE user_id = ? AND generation = ?`, c.h.UserID, gen).Scan(&n); err != nil {
+	if err := testutil.H(c).DB.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM embeddings WHERE user_id = ? AND generation = ?`, testutil.H(c).UserID, gen).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -185,17 +188,17 @@ func TestStaleGenerationWriteRejected(t *testing.T) {
 	defer c.Close()
 	c = modeHandle(t, c)
 	pinned := c.WithGeneration(1)
-	if err := pinned.putEmbedding(ctx, "ok", "chunk", unitVec(8)); err != nil {
+	if err := putEmbedding(pinned, ctx, "ok", "chunk", unitVec(8)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SetActiveGeneration(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := pinned.putEmbedding(ctx, "late", "chunk", unitVec(8)); !errors.Is(err, ErrStaleGeneration) {
+	if err := putEmbedding(pinned, ctx, "late", "chunk", unitVec(8)); !errors.Is(err, ErrStaleGeneration) {
 		t.Fatalf("err = %v, want ErrStaleGeneration", err)
 	}
 	var n int
-	if err := c.h.DB.QueryRowContext(ctx, `SELECT count(*) FROM embeddings WHERE ref_id = 'late'`).Scan(&n); err != nil || n != 0 {
+	if err := testutil.H(c).DB.QueryRowContext(ctx, `SELECT count(*) FROM embeddings WHERE ref_id = 'late'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("late rows = %d err=%v", n, err)
 	}
 	if err := c.PutEmbeddingGen(ctx, "x", "chunk", 5, unitVec(8)); err == nil {
@@ -211,7 +214,7 @@ func TestFlipGenerationAtomic(t *testing.T) {
 	}
 	defer c.Close()
 	c = modeHandle(t, c)
-	if err := c.putEmbedding(ctx, "m1", "memory", unitVec(8)); err != nil {
+	if err := putEmbedding(c, ctx, "m1", "memory", unitVec(8)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.PutEmbeddingGen(ctx, "m1", "memory", 2, unitVec(8)); err != nil {
@@ -268,11 +271,11 @@ func TestVectorWriteTakesSharedLock(t *testing.T) {
 	defer c.Close()
 	c = modeHandle(t, c)
 	bg := context.Background()
-	tx, err := c.h.DB.BeginTx(bg, nil)
+	tx, err := testutil.H(c).DB.BeginTx(bg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(bg, `SELECT pg_advisory_xact_lock(`+reembedLockSQL+`)`, c.h.UserID); err != nil {
+	if _, err := tx.ExecContext(bg, `SELECT pg_advisory_xact_lock(`+reembedLockSQL+`)`, testutil.H(c).UserID); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(bg, 500*time.Millisecond)

@@ -3,9 +3,10 @@ package integration_test
 import (
 	"context"
 	"fmt"
-	. "github.com/sausheong/cortex"
 	"strings"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestPutChunk(t *testing.T) { forEachMode(t, testPutChunk) }

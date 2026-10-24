@@ -2,9 +2,10 @@ package integration_test
 
 import (
 	"context"
-	. "github.com/sausheong/cortex"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
 )
 
 func TestWhoIs_ResolvesAliasAndDescribes(t *testing.T) {

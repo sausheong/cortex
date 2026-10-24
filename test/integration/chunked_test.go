@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	. "github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/internal/testutil"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 
 	"github.com/sausheong/cortex/internal/ingest"
 	"github.com/sausheong/cortex/internal/pgtest"

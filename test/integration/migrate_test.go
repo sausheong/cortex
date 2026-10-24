@@ -3,10 +3,11 @@ package integration_test
 import (
 	"context"
 	"errors"
-	. "github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/internal/testutil"
 	"strings"
 	"testing"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 
 	"github.com/sausheong/cortex/internal/pgtest"
 )

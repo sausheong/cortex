@@ -1,9 +1,12 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	. "github.com/sausheong/cortex"
+	"github.com/sausheong/cortex/internal/testutil"
 )
 
 func TestValidAtNonUTCRoundTrip(t *testing.T) { forEachMode(t, testValidAtNonUTCRoundTrip) }
@@ -19,12 +22,12 @@ func testValidAtNonUTCRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate created_at so only valid_at gates the as-of window.
-	if _, err := c.h.DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`,
+	if _, err := testutil.H(c).DB.ExecContext(ctx, `UPDATE memories SET created_at = ? WHERE id = ?`,
 		time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), m.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := c.getMemoryByID(ctx, m.ID)
+	got, err := getMemoryByID(c, ctx, m.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

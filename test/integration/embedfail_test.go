@@ -1,10 +1,12 @@
-package cortex
+package integration_test
 
 import (
 	"context"
 	"errors"
 	"strings"
 	"testing"
+
+	. "github.com/sausheong/cortex"
 
 	"github.com/sausheong/cortex/internal/pgtest"
 )
