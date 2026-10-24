@@ -91,10 +91,19 @@ func RegisterToolsFor(s *server.MCPServer, fallback *cortex.Cortex, publicURL st
 				opts = append(opts, cortex.WithSpeaker(spk))
 			}
 			if err := cx.Remember(ctx, content, opts...); err != nil {
-				var p *cortex.EmbedPartialError
-				if errors.As(err, &p) {
-					// Stored in full; only the vectors are pending.
-					return mcp.NewToolResultText(fmt.Sprintf("remembered (keyword search works now; %d item(s) will be added to semantic search by tonight's maintenance)", p.Count)), nil
+				// Stored in full; only some vectors or some entity and
+				// fact extraction are missing.
+				var ep *cortex.EmbedPartialError
+				var xp *cortex.ExtractPartialError
+				var notes []string
+				if errors.As(err, &xp) {
+					notes = append(notes, fmt.Sprintf("%d of %d section(s) could not be analysed for entities and facts, but their text is saved and searchable", xp.Failed, xp.Total))
+				}
+				if errors.As(err, &ep) {
+					notes = append(notes, fmt.Sprintf("keyword search works now; %d item(s) will be added to semantic search by tonight's maintenance", ep.Count))
+				}
+				if len(notes) > 0 {
+					return mcp.NewToolResultText("remembered (" + strings.Join(notes, "; ") + ")"), nil
 				}
 				return mcp.NewToolResultError(err.Error()), nil
 			}

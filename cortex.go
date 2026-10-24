@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -17,10 +18,17 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		return fmt.Errorf("cortex: no extractor configured")
 	}
 
-	// 1. Extract structured data from content.
-	extraction, err := c.cfg.extractor.Extract(ctx, content, cfg.contentType)
+	// 1. Extract structured data from content. Long content is extracted
+	// per chunk and merged; a failing chunk does not discard the others, the
+	// caller gets an *ExtractPartialError after everything else is stored.
+	parts := splitContent(content, cfg.maxChunkSize)
+	extraction, err := c.extractParts(ctx, content, parts, cfg.contentType)
+	var extractPartial error
 	if err != nil {
-		return fmt.Errorf("cortex: extract: %w", err)
+		if extraction == nil || !IsExtractPartial(err) {
+			return fmt.Errorf("cortex: extract: %w", err)
+		}
+		extractPartial = err
 	}
 
 	// 2. Store entities and build name→ID map for relationship resolution.
@@ -63,7 +71,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	// missing vectors are backfilled by nightly maintenance, and the caller
 	// gets an *EmbedPartialError saying how many items are waiting.
 	var unembedded embedFailures
-	parts := splitContent(content, cfg.maxChunkSize)
+	var chunkTargets []embedTarget
 	for i, part := range parts {
 		ch := &Chunk{Content: part}
 		md := map[string]any{}
@@ -80,9 +88,10 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if err := c.PutChunk(ctx, ch); err != nil {
 			return fmt.Errorf("cortex: store chunk: %w", err)
 		}
-		if c.cfg.embedder != nil {
-			unembedded.add(c.embedAndStore(ctx, ch.ID, "chunk", ch.Content))
-		}
+		chunkTargets = append(chunkTargets, embedTarget{ch.ID, "chunk", ch.Content})
+	}
+	if c.cfg.embedder != nil {
+		unembedded.merge(c.embedAndStoreBatch(ctx, chunkTargets))
 	}
 
 	// 5. Store memories, linking each to all extracted entities.
@@ -97,6 +106,7 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		entityNames = append(entityNames, name)
 	}
 
+	var memTargets []embedTarget
 	for i := range extraction.Memories {
 		m := &extraction.Memories[i]
 		m.EntityIDs = allEntityIDs
@@ -109,16 +119,16 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		if err := c.PutMemory(ctx, m); err != nil {
 			return fmt.Errorf("cortex: store memory: %w", err)
 		}
-		// Embed the memory if embedder is configured. Embed the
-		// fact-augmented key (entity context + content), not the bare
-		// content, so thin memories are findable by their entities. The
-		// stored content and FTS index keep the original text.
-		if c.cfg.embedder != nil {
-			unembedded.add(c.embedAndStore(ctx, m.ID, "memory", augmentForEmbedding(m.Content, entityNames)))
-		}
+		// Embed the fact-augmented key (entity context + content), not the
+		// bare content, so thin memories are findable by their entities.
+		// The stored content and FTS index keep the original text.
+		memTargets = append(memTargets, embedTarget{m.ID, "memory", augmentForEmbedding(m.Content, entityNames)})
+	}
+	if c.cfg.embedder != nil {
+		unembedded.merge(c.embedAndStoreBatch(ctx, memTargets))
 	}
 
-	return unembedded.err()
+	return errors.Join(extractPartial, unembedded.err())
 }
 
 // Forget removes knowledge from the graph based on the provided filter

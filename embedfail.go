@@ -46,6 +46,16 @@ func (f *embedFailures) add(err error) {
 	}
 }
 
+func (f *embedFailures) merge(o *embedFailures) {
+	if o == nil {
+		return
+	}
+	f.n += o.n
+	if f.first == nil {
+		f.first = o.first
+	}
+}
+
 func (f *embedFailures) err() error {
 	if f.n == 0 {
 		return nil
@@ -53,20 +63,58 @@ func (f *embedFailures) err() error {
 	return &EmbedPartialError{Count: f.n, Err: f.first}
 }
 
-// embedAndStore embeds text (capped to the embedder input limit) and stores
-// the vector for ref. It returns the failure instead of aborting the caller.
-func (c *Cortex) embedAndStore(ctx context.Context, refID, refType, text string) error {
-	vecs, err := c.cfg.embedder.Embed(ctx, []string{truncateEmbedText(text)})
-	if err != nil {
-		return fmt.Errorf("embed %s: %w", refType, err)
+// embedBatchSize is how many texts go into one Embed call. It keeps a
+// multi-megabyte document to a few dozen provider round trips instead of one
+// per chunk, while staying well under per-request token limits.
+const embedBatchSize = 64
+
+// embedTarget is one row waiting for a vector.
+type embedTarget struct {
+	refID, refType, text string
+}
+
+// addN records n items that are waiting for an embedding.
+func (f *embedFailures) addN(n int, err error) {
+	if err == nil || n <= 0 {
+		return
 	}
-	if len(vecs) == 0 {
-		return nil
+	f.n += n
+	if f.first == nil {
+		f.first = err
 	}
-	if err := c.putEmbedding(ctx, refID, refType, vecs[0]); err != nil {
-		return fmt.Errorf("store %s embedding: %w", refType, err)
+}
+
+// embedAndStoreBatch embeds the targets in batches (each text capped to the
+// embedder input limit) and stores the vectors. A failed batch counts all of
+// its items as pending and the next batch is still attempted, so one bad
+// batch never aborts the save.
+func (c *Cortex) embedAndStoreBatch(ctx context.Context, targets []embedTarget) *embedFailures {
+	var fails embedFailures
+	for start := 0; start < len(targets); start += embedBatchSize {
+		end := min(start+embedBatchSize, len(targets))
+		batch := targets[start:end]
+		texts := make([]string, len(batch))
+		for i, t := range batch {
+			texts[i] = truncateEmbedText(t.text)
+		}
+		vecs, err := c.cfg.embedder.Embed(ctx, texts)
+		if err != nil {
+			fails.addN(len(batch), fmt.Errorf("embed %s: %w", batch[0].refType, err))
+			continue
+		}
+		if len(vecs) == 0 {
+			continue
+		}
+		if len(vecs) < len(batch) {
+			fails.addN(len(batch)-len(vecs), fmt.Errorf("embed %s: got %d vectors for %d texts", batch[0].refType, len(vecs), len(batch)))
+		}
+		for i := 0; i < len(vecs) && i < len(batch); i++ {
+			if err := c.putEmbedding(ctx, batch[i].refID, batch[i].refType, vecs[i]); err != nil {
+				fails.add(fmt.Errorf("store %s embedding: %w", batch[i].refType, err))
+			}
+		}
 	}
-	return nil
+	return &fails
 }
 
 // BackfillEmbeddings embeds up to limit rows that have no vector at the
@@ -85,18 +133,22 @@ func (c *Cortex) BackfillEmbeddings(ctx context.Context, limit int) (int, error)
 		return 0, err
 	}
 	done := 0
-	for _, it := range items {
-		vecs, err := c.cfg.embedder.Embed(ctx, []string{it.Text})
+	for start := 0; start < len(items); start += embedBatchSize {
+		batch := items[start:min(start+embedBatchSize, len(items))]
+		texts := make([]string, len(batch))
+		for i, it := range batch {
+			texts[i] = it.Text
+		}
+		vecs, err := c.cfg.embedder.Embed(ctx, texts)
 		if err != nil {
 			return done, fmt.Errorf("cortex: backfill embedding: %w", err)
 		}
-		if len(vecs) == 0 {
-			continue
+		for i := 0; i < len(vecs) && i < len(batch); i++ {
+			if err := c.PutEmbeddingGen(ctx, batch[i].ID, batch[i].RefType, gen, vecs[i]); err != nil {
+				return done, err
+			}
+			done++
 		}
-		if err := c.PutEmbeddingGen(ctx, it.ID, it.RefType, gen, vecs[0]); err != nil {
-			return done, err
-		}
-		done++
 	}
 	return done, nil
 }
