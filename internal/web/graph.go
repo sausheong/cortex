@@ -214,12 +214,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // graphData serves the neighbourhood of an entity as JSON for the signed-in
 // user only. A centre that is absent or belongs to someone else is 404.
 func (s *server) graphData(w http.ResponseWriter, r *http.Request) {
-	u, ok := s.sessionFor(r)
+	u, ok := s.lookup(r, true)
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "sign in required"})
 		return
 	}
-	cx := s.root.ForUser(u.UserID)
+	defer u.Key.Zero()
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	p := parseGraphParams(r.URL.Query())
 	center, ok := resolveCenter(r, cx, p.Center)
 	if !ok {
@@ -357,7 +359,8 @@ func (s *server) graphGet(w http.ResponseWriter, r *http.Request, u SessionUser)
 // values: q (search), mergeq, batch, restored, renamed.
 func (s *server) graphPage(w http.ResponseWriter, r *http.Request, u SessionUser, p graphParams, q url.Values, o graphOpts) {
 	ctx := r.Context()
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	v := graphView{Q: strings.TrimSpace(q.Get("q")), Days: p.Days, Limit: p.Limit, Limits: graphLimits, DayChoices: []int{7, 30, 90, 365},
 		Error: o.err, ErrField: o.errField, RenameVal: o.renameVal, Offer: o.offer, Restored: q.Get("restored"), Renamed: q.Get("renamed") == "1"}
 	status := o.status
@@ -616,7 +619,8 @@ func validName(name string) string {
 
 func (s *server) graphRename(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	id := strings.TrimSpace(r.PostFormValue("id"))
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	ent, err := cx.GetEntity(ctx, id)
@@ -662,7 +666,8 @@ func (s *server) graphRename(w http.ResponseWriter, r *http.Request, u SessionUs
 
 func (s *server) graphMerge(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	keepID := strings.TrimSpace(r.PostFormValue("keep"))
 	dropID := strings.TrimSpace(r.PostFormValue("drop"))
 	if keepID == dropID {
@@ -729,7 +734,8 @@ func (s *server) graphMerge(w http.ResponseWriter, r *http.Request, u SessionUse
 
 func (s *server) graphDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	id := strings.TrimSpace(r.PostFormValue("id"))
 	ent, err := cx.GetEntity(ctx, id)
 	if errors.Is(err, cortex.ErrNotFound) {
@@ -785,7 +791,8 @@ func (s *server) graphDelete(w http.ResponseWriter, r *http.Request, u SessionUs
 
 func (s *server) graphRestore(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	id := r.PathValue("batch")
 	kind := ""
 	if bs, err := cx.ListDeleteBatches(ctx); err == nil {

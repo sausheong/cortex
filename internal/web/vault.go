@@ -251,7 +251,8 @@ var vaultBuildSem = make(chan struct{}, 2)
 
 // vaultFor returns the user's vault, rebuilding it when their data changed.
 // It only ever builds from the signed-in user's own scope.
-func (s *server) vaultFor(ctx context.Context, userID string) (*vaultSet, error) {
+func (s *server) vaultFor(ctx context.Context, u SessionUser) (*vaultSet, error) {
+	userID := u.UserID
 	ver, err := s.vaultVersion(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -268,7 +269,9 @@ func (s *server) vaultFor(ctx context.Context, userID string) (*vaultSet, error)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	set, err := vault.Build(ctx, s.root.ForUser(userID), now.UTC())
+	cx, release := cxFor(ctx, s.root, s.st, u)
+	set, err := vault.Build(ctx, cx, now.UTC())
+	release()
 	<-vaultBuildSem
 	if err != nil {
 		return nil, err
@@ -316,7 +319,7 @@ type vaultListView struct {
 }
 
 func (s *server) vaultList(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	vs, err := s.vaultFor(r.Context(), u.UserID)
+	vs, err := s.vaultFor(r.Context(), u)
 	if err != nil {
 		s.cfg.Logger.Error("vault", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -426,7 +429,7 @@ func (s *server) vaultPage(w http.ResponseWriter, r *http.Request, u SessionUser
 		s.vaultMissing(w, r)
 		return
 	}
-	vs, err := s.vaultFor(r.Context(), u.UserID)
+	vs, err := s.vaultFor(r.Context(), u)
 	if err != nil {
 		s.cfg.Logger.Error("vault", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -492,7 +495,7 @@ func (s *server) vaultDownload(w http.ResponseWriter, r *http.Request, u Session
 		http.Error(w, "Too many downloads. Try again in a minute.", http.StatusTooManyRequests)
 		return
 	}
-	vs, err := s.vaultFor(r.Context(), u.UserID)
+	vs, err := s.vaultFor(r.Context(), u)
 	if err != nil {
 		s.cfg.Logger.Error("vault", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

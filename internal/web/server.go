@@ -321,3 +321,20 @@ func (s *server) pgIndexExists(ctx context.Context, dims int) (bool, error) {
 		 AND indexname = 'emb_hnsw_memory_' || $1)`, strconv.Itoa(dims)).Scan(&ok)
 	return ok, err
 }
+
+// cxFor returns a handle for u's own data. For an unlocked session of an
+// encrypted account it holds a clone of the session key; release zeroes that
+// clone and must be called when the handler is done with the handle (the
+// session's own key is zeroed separately when the request ends). A locked or
+// legacy session gets a plain handle: encrypted reads then fail with
+// ErrLocked instead of returning empty results.
+func cxFor(ctx context.Context, root *cortex.Cortex, st *accounts.Store, u SessionUser) (*cortex.Cortex, func()) {
+	cx := root.ForUser(u.UserID)
+	if u.Key != nil {
+		if state, err := st.EncState(ctx, u.UserID); err == nil && state != "none" {
+			keyed := cx.WithKey(u.Key, state)
+			return keyed, keyed.Release
+		}
+	}
+	return cx, func() {}
+}

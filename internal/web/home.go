@@ -150,7 +150,8 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	now := s.now()
 	prev := s.homeVisitStamp(w, r, u.UserID, now, r.Method == http.MethodGet)
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	conns, connErr := s.st.ListConnections(ctx, u.UserID)
 
 	v := homeView{}

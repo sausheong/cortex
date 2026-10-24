@@ -57,6 +57,14 @@ func encryptedSession(t *testing.T) (e *env, sid, secret string, uk *keys.UK) {
 	if _, err := e.st.DB.Exec(`UPDATE users SET encryption_state = 'encrypted' WHERE id = $1`, uid); err != nil {
 		t.Fatal(err)
 	}
+	// Enrollment (Task 16) encrypts the plaintext owner entity CreateUser
+	// writes; this fixture skips enrollment, so drop it: the row-form guard
+	// rejects it when a keyed page loads the working set.
+	for _, q := range []string{`UPDATE users SET owner_entity_id = NULL WHERE id = $1`, `DELETE FROM entities WHERE user_id = $1 AND enc IS NOT TRUE`} {
+		if _, err := e.st.DB.Exec(q, uid); err != nil {
+			t.Fatal(err)
+		}
+	}
 	var err error
 	if uk, err = keys.NewUK(); err != nil {
 		t.Fatal(err)

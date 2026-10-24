@@ -137,6 +137,17 @@ Passkey enrollment is on by default (`CORTEX_ENCRYPTION_ENROLL=0` turns it off).
 
 Encrypting the live database does not reach copies made earlier. Backups, `pg_dump` files, replicas and WAL archives taken before the migration still contain that user's plaintext. After the post-check passes, the operator must purge or age out those copies (see Backups below); until then the user is only as private as the oldest backup.
 
+#### Encryption closeout checklist
+
+Run this once the owner's post-check reports nothing left in plaintext and before the gated cleanup migration 012 ships.
+
+1. Confirm `users.encryption_state = 'encrypted'` for the owner and the `enc_migration_done:<user id>` marker in `cortex_meta`.
+2. Purge the pre-migration backups: every nightly `pg_dump` file in the Spaces bucket taken before the migration, local dump copies, and any droplet backup or snapshot from before it. Keep none "just in case".
+3. Purge WAL: delete archived WAL and base backups from before the migration, and drop any replica or restored copy of the old database.
+4. Take one fresh dump after the migration and grep it for a few distinctive words from your own memories. Expect no hits.
+5. Confirm `CORTEX_ENCRYPTION_ENROLL` is not set to `0` in `/etc/cortex/cortex.env`, and that the static owner token is gone from the environment.
+6. Only then ship 012, which drops the legacy plaintext columns and indexes.
+
 #### Backing up `CORTEX_SECRET_KEY`
 
 `CORTEX_SECRET_KEY` encrypts every user's provider key. Without it the stored keys cannot be read and users must re-enter them. Copy it off the box (a password manager is fine) when it is first generated. Database backups do not contain it.

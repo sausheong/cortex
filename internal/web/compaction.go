@@ -265,7 +265,9 @@ func (h *compactionHandlers) undo(w http.ResponseWriter, r *http.Request, u Sess
 		http.Error(w, "this compaction cannot be undone", http.StatusConflict)
 		return
 	}
-	if err := h.d.Root.ForUser(u.UserID).UndoCompaction(ctx, row.batchID); err != nil {
+	cx, release := cxFor(ctx, h.d.Root, h.d.Accounts, u)
+	defer release()
+	if err := cx.UndoCompaction(ctx, row.batchID); err != nil {
 		h.fail(w, r, err)
 		return
 	}

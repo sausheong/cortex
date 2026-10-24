@@ -110,7 +110,8 @@ func (h *connHandler) view(r *http.Request, u SessionUser) (connectionsView, err
 	if err != nil {
 		return v, err
 	}
-	cx := h.d.Root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), h.d.Root, h.d.Accounts, u)
+	defer release()
 	q := r.URL.Query()
 	if _, err := strconv.Atoi(q.Get("restored")); err == nil {
 		v.WasRestored = true
@@ -241,7 +242,8 @@ func (h *connHandler) renew(w http.ResponseWriter, r *http.Request, u SessionUse
 func (h *connHandler) revoke(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	cx := h.d.Root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), h.d.Root, h.d.Accounts, u)
+	defer release()
 	conns, err := h.d.Accounts.ListConnections(ctx, u.UserID)
 	if err != nil {
 		h.d.Cfg.Logger.Error("revoke", "err", err)

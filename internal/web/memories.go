@@ -278,7 +278,9 @@ func (s *server) clampedView(r *http.Request, u SessionUser) url.Values {
 		f.Since = &t
 	}
 	size := parseSize(q.Get("size"))
-	_, total, err := s.root.ForUser(u.UserID).ListMemories(r.Context(), f, 1, 0)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
+	_, total, err := cx.ListMemories(r.Context(), f, 1, 0)
 	if err != nil {
 		return q
 	}
@@ -381,7 +383,8 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	if f.From != nil && f.To != nil && !f.From.Before(*f.To) {
 		v.RangeErr = "From is after To, so no memories can match. Change one of the dates."
 	}
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	ms, total, err := cx.ListMemories(ctx, f, v.Size, (v.Page-1)*v.Size)
 	if err == nil && total > 0 && (v.Page-1)*v.Size >= total {
 		// Never show a page beyond the last.
@@ -618,7 +621,8 @@ func (s *server) memoriesDelete(w http.ResponseWriter, r *http.Request, u Sessio
 		}
 		return
 	}
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	n, err := cx.CountMemories(r.Context(), f)
 	if err != nil {
 		s.cfg.Logger.Error("memories count", "err", err)
@@ -747,7 +751,9 @@ type deletedView struct {
 }
 
 func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	bs, err := s.root.ForUser(u.UserID).ListDeleteBatches(r.Context())
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
+	bs, err := cx.ListDeleteBatches(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -762,7 +768,8 @@ func (s *server) memoriesDeleted(w http.ResponseWriter, r *http.Request, u Sessi
 }
 
 func (s *server) memoriesRestore(w http.ResponseWriter, r *http.Request, u SessionUser) {
-	cx := s.root.ForUser(u.UserID)
+	cx, release := cxFor(r.Context(), s.root, s.st, u)
+	defer release()
 	id := r.PathValue("batch")
 	n := 0
 	if bs, err := cx.ListDeleteBatches(r.Context()); err == nil {
@@ -791,7 +798,9 @@ func (s *server) memoriesRestore(w http.ResponseWriter, r *http.Request, u Sessi
 
 func (s *server) accountDelete(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	ctx := r.Context()
-	n, err := s.root.ForUser(u.UserID).CountMemories(ctx, cortex.DeleteFilter{All: true})
+	cx, release := cxFor(ctx, s.root, s.st, u)
+	defer release()
+	n, err := cx.CountMemories(ctx, cortex.DeleteFilter{All: true})
 	if err != nil {
 		s.cfg.Logger.Error("account count", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

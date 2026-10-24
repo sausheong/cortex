@@ -59,7 +59,9 @@ func (s *server) accountGet(w http.ResponseWriter, r *http.Request, u SessionUse
 
 func (s *server) accountPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, mod func(*keysView)) {
 	ctx := r.Context()
-	us, err := s.root.ForUser(u.UserID).Usage(ctx)
+	cx, release := cxFor(ctx, s.root, s.st, u)
+	defer release()
+	us, err := cx.Usage(ctx)
 	if err != nil {
 		s.cfg.Logger.Error("usage", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
