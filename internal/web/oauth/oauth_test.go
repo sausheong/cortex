@@ -34,7 +34,7 @@ func (stubIdP) Exchange(ctx context.Context, code, nonce string) (web.Identity, 
 	return web.Identity{}, fmt.Errorf("unused")
 }
 
-type sess struct{ id, csrf, userID string }
+type sess struct{ id, csrf, userID, unlock string }
 
 type env struct {
 	t    *testing.T
@@ -96,7 +96,7 @@ func (e *env) user(sub string) sess {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return sess{sid, csrf, u.ID}
+	return sess{id: sid, csrf: csrf, userID: u.ID}
 }
 
 func (e *env) do(method, path string, s *sess, body io.Reader, ctype string) (*http.Response, string) {
@@ -107,6 +107,9 @@ func (e *env) do(method, path string, s *sess, body io.Reader, ctype string) (*h
 	}
 	if s != nil {
 		req.AddCookie(&http.Cookie{Name: "cortex_session", Value: s.id})
+		if s.unlock != "" {
+			req.AddCookie(&http.Cookie{Name: "cortex_unlock", Value: s.unlock})
+		}
 	}
 	resp, err := e.hc.Do(req)
 	if err != nil {
@@ -407,7 +410,7 @@ func (e *env) refreshSession(s sess) sess {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return sess{sid, csrf, s.userID}
+	return sess{id: sid, csrf: csrf, userID: s.userID}
 }
 
 func TestCodeExchangeAndMCPCall(t *testing.T) {

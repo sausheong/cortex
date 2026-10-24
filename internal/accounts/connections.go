@@ -125,6 +125,9 @@ func (st *Store) RevokeConnection(ctx context.Context, userID, connID string) er
 	if err := deleteAgentWraps(ctx, tx, userID, connID); err != nil {
 		return err
 	}
+	if err := deleteOAuthWraps(ctx, tx, userID, connID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -305,6 +308,27 @@ func deleteAgentWraps(ctx context.Context, x execer, userID, connID string) erro
 	return err
 }
 
+// OAuth wrap kinds (ref_id is the SHA-256 of the code or token).
+const (
+	WrapKindOAuthCode    = "oauth_code"
+	WrapKindOAuthAccess  = "oauth_access"
+	WrapKindOAuthRefresh = "oauth_refresh"
+)
+
+// deleteOAuthWraps deletes every code, access and refresh wrap of a
+// connection's grants.
+func deleteOAuthWraps(ctx context.Context, x execer, userID, connID string) error {
+	_, err := x.ExecContext(ctx, `DELETE FROM user_key_wraps WHERE user_id = $1 AND (
+		(kind IN ('oauth_access','oauth_refresh') AND ref_id IN (SELECT token_hash FROM oauth_tokens WHERE connection_id = $2))
+		OR (kind = 'oauth_code' AND ref_id IN (SELECT code_hash FROM oauth_codes WHERE connection_id = $2)))`, userID, connID)
+	return err
+}
+
+// EncState reports users.encryption_state ("none" for an unknown user).
+func (st *Store) EncState(ctx context.Context, userID string) (string, error) {
+	return st.encState(ctx, userID)
+}
+
 // ResolveBearer maps an agent token or OAuth access token to (user,
 // connection, key). Revoked connections, deleted users and unknown tokens
 // fail with ErrInvalidToken; an expired agent token with model.ErrTokenExpired;
@@ -353,24 +377,28 @@ func (st *Store) ResolveBearer(ctx context.Context, token string) (userID, connI
 		return "", "", nil, model.ErrNeedsReconnect
 	}
 	if state != "none" {
+		kind, ref := wrapKindAgent, tokenID
 		if !agent {
-			// OAuth wraps arrive with Task 7.
-			return "", "", nil, model.ErrNeedsReconnect
+			kind, ref = WrapKindOAuthAccess, h
 		}
-		w, werr := st.GetWrap(ctx, userID, wrapKindAgent, tokenID)
+		w, werr := st.GetWrap(ctx, userID, kind, ref)
 		if werr != nil {
 			if errors.Is(werr, ErrNoWrap) {
 				return "", "", nil, model.ErrNeedsReconnect
 			}
 			return "", "", nil, werr
 		}
-		if uk, err = keys.Unwrap(keys.WrapKeySecret(wrapKindAgent, token), userID, wrapKindAgent, tokenID, w.Wrapped); err != nil {
+		if uk, err = keys.Unwrap(keys.WrapKeySecret(kind, token), userID, kind, ref, w.Wrapped); err != nil {
 			return "", "", nil, model.ErrNeedsReconnect
 		}
 	}
 	_, _ = st.DB.ExecContext(ctx, `UPDATE connections SET last_used = $2 WHERE id = $1`, connID, now)
 	if uk != nil {
-		_, _ = st.DB.ExecContext(ctx, `UPDATE user_key_wraps SET last_used_at = $3 WHERE user_id = $1 AND kind = 'agent' AND ref_id = $2`, userID, tokenID, now)
+		kind, ref := wrapKindAgent, tokenID
+		if !agent {
+			kind, ref = WrapKindOAuthAccess, h
+		}
+		_, _ = st.DB.ExecContext(ctx, `UPDATE user_key_wraps SET last_used_at = $4 WHERE user_id = $1 AND kind = $2 AND ref_id = $3`, userID, kind, ref, now)
 	}
 	return userID, connID, uk, nil
 }
@@ -392,6 +420,7 @@ func (st *Store) DeleteAccount(ctx context.Context, userID string) error {
 		return ErrNotFound
 	}
 	for _, q := range []string{
+		`DELETE FROM user_key_wraps WHERE user_id = $1 AND kind IN ('oauth_code','oauth_access','oauth_refresh') AND $2::timestamptz IS NOT NULL`,
 		`UPDATE connections SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`,
 		`DELETE FROM oauth_tokens WHERE user_id = $1 AND $2::timestamptz IS NOT NULL`,
 		`DELETE FROM oauth_codes WHERE user_id = $1 AND $2::timestamptz IS NOT NULL`,

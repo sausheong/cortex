@@ -32,6 +32,9 @@ type Options struct {
 	CIMDClient *http.Client
 	// CIMDTimeout overrides the 5 s fetch timeout (tests only).
 	CIMDTimeout time.Duration
+	// FailAfterRewrap, when set, runs after a refresh rewrap and before the
+	// commit; a non-nil error aborts the rotation (tests only).
+	FailAfterRewrap func() error
 }
 
 type handler struct {
@@ -62,9 +65,31 @@ func Mount(o Options) func(mux *http.ServeMux, d web.Deps) {
 		mux.HandleFunc("OPTIONS /oauth/register", cors)
 		mux.HandleFunc("OPTIONS /oauth/token", cors)
 		mux.HandleFunc("POST /oauth/register", h.limited(h.regLimit, h.register))
-		mux.HandleFunc("GET /oauth/authorize", h.limited(h.authLimit, h.d.Auth(h.authorizeGet)))
-		mux.HandleFunc("POST /oauth/authorize", h.limited(h.authLimit, h.d.Auth(h.authorizePost)))
+		mux.HandleFunc("GET /oauth/authorize", h.limited(h.authLimit, h.d.Auth(h.gate(h.authorizeGet))))
+		mux.HandleFunc("POST /oauth/authorize", h.limited(h.authLimit, h.d.Auth(h.gate(h.authorizePost))))
 		mux.HandleFunc("POST /oauth/token", h.limited(h.tokLimit, h.token))
+	}
+}
+
+// gate requires an unlocked session for an encrypted account: the consent
+// grant must carry the user's key into the code wrap. GETs go to /unlock and
+// back; POSTs answer 423 before the authorize request is consumed.
+func (h *handler) gate(next func(http.ResponseWriter, *http.Request, web.SessionUser)) func(http.ResponseWriter, *http.Request, web.SessionUser) {
+	return func(w http.ResponseWriter, r *http.Request, u web.SessionUser) {
+		st, err := h.st.EncState(r.Context(), u.UserID)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if st != "none" && (!u.Unlocked || u.Key == nil) {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead {
+				http.Redirect(w, r, "/unlock?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
+				return
+			}
+			http.Error(w, "locked: unlock with your passkey", http.StatusLocked)
+			return
+		}
+		next(w, r, u)
 	}
 }
 

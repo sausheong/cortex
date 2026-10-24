@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/web"
 )
 
@@ -148,9 +149,31 @@ func (h *handler) authorizePost(w http.ResponseWriter, r *http.Request, u web.Se
 	code := randToken("oc_")
 	fields, _ := json.Marshal(map[string]string{
 		"client_id": cl.ID, "redirect_uri": ar.redirectURI, "code_challenge": ar.challenge, "scope": ar.scope})
-	if _, err := h.st.DB.ExecContext(ctx,
+	codeHash := accounts.HashToken(code)
+	tx, err := h.st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO oauth_codes (code_hash, request_fields, user_id, connection_id, expires_at) VALUES ($1,$2,$3,$4,$5)`,
-		accounts.HashToken(code), fields, u.UserID, connID, now.Add(codeTTL)); err != nil {
+		codeHash, fields, u.UserID, connID, now.Add(codeTTL)); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if u.Key != nil {
+		exp := now.Add(codeTTL)
+		wrapped, err := keys.Wrap(keys.WrapKeySecret(accounts.WrapKindOAuthCode, code), u.UserID, accounts.WrapKindOAuthCode, codeHash, u.Key)
+		if err == nil {
+			err = h.st.PutWrapTx(ctx, tx, accounts.Wrap{UserID: u.UserID, Kind: accounts.WrapKindOAuthCode, RefID: codeHash, Wrapped: wrapped, ExpiresAt: &exp})
+		}
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
