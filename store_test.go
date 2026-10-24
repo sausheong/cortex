@@ -24,8 +24,8 @@ func TestOpenAppliesMigrations(t *testing.T) {
 		t.Fatalf("Open() error: %v", err)
 	}
 	defer c.Close()
-	if v := schemaVersion(t, c); v != 4 {
-		t.Errorf("version = %d, want 4", v)
+	if v := schemaVersion(t, c); v != 5 {
+		t.Errorf("version = %d, want 5", v)
 	}
 	var n int
 	err = c.db.QueryRowContext(context.Background(),
@@ -48,8 +48,8 @@ func TestOpenIdempotent(t *testing.T) {
 		t.Fatalf("second Open: %v", err)
 	}
 	defer c2.Close()
-	if v := schemaVersion(t, c2); v != 4 {
-		t.Errorf("version = %d, want 4", v)
+	if v := schemaVersion(t, c2); v != 5 {
+		t.Errorf("version = %d, want 5", v)
 	}
 }
 
