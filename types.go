@@ -27,6 +27,10 @@ type Relationship struct {
 	Source     string         `json:"source,omitempty"`
 	Confidence float64        `json:"confidence"`
 	CreatedAt  time.Time      `json:"created_at"`
+	// EvidenceCount is how many times this edge has been asserted; each
+	// repeat sighting increments it instead of inserting a duplicate row.
+	EvidenceCount int       `json:"evidence_count"`
+	LastSeenAt    time.Time `json:"last_seen_at"`
 }
 
 type Chunk struct {
@@ -42,6 +46,10 @@ type Memory struct {
 	ID         string    `json:"id"`
 	Content    string    `json:"content"`
 	EntityIDs  []string  `json:"entity_ids,omitempty"`
+	// About names the extracted entities this memory is about. It is set by
+	// extractors and used only during Remember to link the memory to those
+	// entities; it is not stored.
+	About      []string  `json:"about,omitempty"`
 	Source     string    `json:"source,omitempty"`
 	Speaker    string    `json:"speaker,omitempty"`
 	WrittenBy  string    `json:"written_by,omitempty"`

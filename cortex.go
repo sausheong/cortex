@@ -31,24 +31,32 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		extractPartial = err
 	}
 
-	// 2. Store entities and build name→ID map for relationship resolution.
+	// 2. Store entities, reusing stored ones that are the same thing, and
+	// build a name→ID map (keyed by the extracted name, case-insensitively)
+	// for resolving relationships and memory links.
 	nameToID := make(map[string]string)
+	var entityIDs []string // distinct, in extraction order
 	for i := range extraction.Entities {
 		e := &extraction.Entities[i]
 		if cfg.source != "" && e.Source == "" {
 			e.Source = cfg.source
 		}
-		if err := c.PutEntity(ctx, e); err != nil {
-			return fmt.Errorf("cortex: store entity %q: %w", e.Name, err)
+		extracted := e.Name
+		if err := c.ingestEntity(ctx, e); err != nil {
+			return fmt.Errorf("cortex: store entity %q: %w", extracted, err)
 		}
-		nameToID[e.Name] = e.ID
+		if !contains(entityIDs, e.ID) {
+			entityIDs = append(entityIDs, e.ID)
+		}
+		nameToID[nameKey(extracted)] = e.ID
+		nameToID[nameKey(e.Name)] = e.ID
 	}
 
 	// 3. Store relationships, resolving name-based IDs to real entity IDs.
 	for i := range extraction.Relationships {
 		r := &extraction.Relationships[i]
-		sourceID, srcOK := nameToID[r.SourceID]
-		targetID, tgtOK := nameToID[r.TargetID]
+		sourceID, srcOK := nameToID[nameKey(r.SourceID)]
+		targetID, tgtOK := nameToID[nameKey(r.TargetID)]
 		if !srcOK || !tgtOK {
 			continue // skip if either end doesn't resolve
 		}
@@ -94,22 +102,21 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 		unembedded.merge(c.embedAndStoreBatch(ctx, chunkTargets))
 	}
 
-	// 5. Store memories, linking each to all extracted entities.
-	allEntityIDs := make([]string, 0, len(nameToID))
-	for _, id := range nameToID {
-		allEntityIDs = append(allEntityIDs, id)
-	}
-
-	// Entity-context names for fact-augmented memory embeddings (3.1).
-	entityNames := make([]string, 0, len(nameToID))
-	for name := range nameToID {
-		entityNames = append(entityNames, name)
+	// 5. Store memories, linking each to the entities it is about.
+	idToName := make(map[string]string, len(extraction.Entities))
+	for _, e := range extraction.Entities {
+		idToName[e.ID] = e.Name
 	}
 
 	var memTargets []embedTarget
 	for i := range extraction.Memories {
 		m := &extraction.Memories[i]
-		m.EntityIDs = allEntityIDs
+		m.EntityIDs = memoryEntityIDs(m.About, nameToID, entityIDs)
+		// Entity-context names for fact-augmented memory embeddings (3.1).
+		entityNames := make([]string, 0, len(m.EntityIDs))
+		for _, id := range m.EntityIDs {
+			entityNames = append(entityNames, idToName[id])
+		}
 		if cfg.source != "" && m.Source == "" {
 			m.Source = cfg.source
 		}
@@ -129,6 +136,28 @@ func (c *Cortex) Remember(ctx context.Context, content string, opts ...RememberO
 	}
 
 	return errors.Join(extractPartial, unembedded.err())
+}
+
+// nameKey is the key an extracted entity name is looked up by: lower-cased
+// with whitespace collapsed, matching how mergeExtractions dedupes names.
+func nameKey(name string) string { return normKey(name) }
+
+// memoryEntityIDs resolves a memory's "about" names to entity IDs. Names that
+// match no extracted entity are ignored. A memory with no usable "about" —
+// from an extractor that does not set it, or whose names all fail to resolve —
+// falls back to every entity from the same extraction, which was the linking
+// rule before per-memory links existed.
+func memoryEntityIDs(about []string, nameToID map[string]string, all []string) []string {
+	var ids []string
+	for _, name := range about {
+		if id, ok := nameToID[nameKey(name)]; ok && !contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return all
+	}
+	return ids
 }
 
 // Forget removes knowledge from the graph based on the provided filter

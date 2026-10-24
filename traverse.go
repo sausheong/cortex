@@ -24,6 +24,10 @@ func (c *Cortex) Traverse(ctx context.Context, startID string, opts ...TraverseO
 	for _, o := range opts {
 		o(cfg)
 	}
+	edgeTypes := make([]string, len(cfg.edgeTypes))
+	for i, t := range cfg.edgeTypes {
+		edgeTypes[i] = NormalizeType(t)
+	}
 
 	// Get the start entity.
 	start, err := c.GetEntity(ctx, startID)
@@ -52,7 +56,7 @@ func (c *Cortex) Traverse(ctx context.Context, startID string, opts ...TraverseO
 
 			for _, rel := range rels {
 				// If edge type filter is set, skip non-matching edges.
-				if len(cfg.edgeTypes) > 0 && !contains(cfg.edgeTypes, rel.Type) {
+				if len(edgeTypes) > 0 && !contains(edgeTypes, rel.Type) {
 					continue
 				}
 

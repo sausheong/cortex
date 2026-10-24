@@ -17,6 +17,7 @@ import (
 // entity is inserted with a generated ULID.
 func (c *Cortex) PutEntity(ctx context.Context, e *Entity) error {
 	e.Confidence = coerceConfidence(e.Confidence)
+	e.Type = NormalizeType(e.Type)
 
 	attrsJSON, err := json.Marshal(e.Attributes)
 	if err != nil {
@@ -78,8 +79,8 @@ func (c *Cortex) FindEntities(ctx context.Context, f EntityFilter) ([]Entity, er
 	args := []any{c.userID}
 
 	if f.Type != "" {
-		conditions = append(conditions, "type = ?")
-		args = append(args, f.Type)
+		conditions = append(conditions, normTypeSQL("type")+" = ?")
+		args = append(args, NormalizeType(f.Type))
 	}
 	if f.NameLike != "" {
 		conditions = append(conditions, "name ILIKE ?")

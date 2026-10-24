@@ -334,7 +334,25 @@ func (c *Cortex) RestoreBatch(ctx context.Context, batchID string) error {
 		}
 	}
 
-	// 2. Un-delete the batch's non-entity rows.
+	// 2. Un-delete the batch's non-entity rows. A batch edge whose twin was
+	// re-asserted while it was deleted folds its evidence into the live row
+	// and is dropped, since live edges are unique per (source, target, type).
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE relationships l SET evidence_count = l.evidence_count + d.evidence_count
+		 FROM relationships d
+		 WHERE d.user_id = ? AND d.delete_batch_id = ? AND l.user_id = d.user_id AND l.deleted_at IS NULL
+		   AND l.source_id = d.source_id AND l.target_id = d.target_id AND l.type = d.type`,
+		c.userID, batchID); err != nil {
+		return fmt.Errorf("cortex: fold restored relationships: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM relationships d
+		 WHERE d.user_id = ? AND d.delete_batch_id = ?
+		   AND EXISTS (SELECT 1 FROM relationships l WHERE l.user_id = d.user_id AND l.deleted_at IS NULL
+		               AND l.source_id = d.source_id AND l.target_id = d.target_id AND l.type = d.type)`,
+		c.userID, batchID); err != nil {
+		return fmt.Errorf("cortex: drop folded relationships: %w", err)
+	}
 	for _, table := range []string{"relationships", "chunks", "memories"} {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE `+table+` SET deleted_at = NULL, deleted_by = NULL, delete_batch_id = NULL

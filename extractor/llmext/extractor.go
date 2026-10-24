@@ -11,7 +11,7 @@ const extractionPrompt = `Analyze the following text and extract structured know
 Return a JSON object with the following fields:
 - "entities": array of objects with "name", "type", optional "attributes", and "confidence"
 - "relationships": array of objects with "source" (entity name), "target" (entity name), "type", optional "attributes", and "confidence"
-- "memories": array of objects with "content" (a concise factual statement), optional "entity_ids", optional "static" (boolean), and "confidence"
+- "memories": array of objects with "content" (a concise factual statement), "about" (array of entity names from "entities" that this memory is about — only those it actually concerns, not every entity in the text), optional "static" (boolean), and "confidence"
 
 For each item, "confidence" is a float between 0.0 and 1.0 expressing how
 certain you are about that specific extracted claim:

@@ -18,7 +18,7 @@ const defaultExtractionPrompt = `Analyze the following text and extract structur
 Return a JSON object with the following fields:
 - "entities": array of objects with "name" (string) and "type" (string)
 - "relationships": array of objects with "source" (string, entity name), "target" (string, entity name), and "type" (string)
-- "memories": array of objects with "content" (string, a concise factual statement) and optional "valid_at" (string: when the fact became true in the world, e.g. "2026-03", "March 2026", "2026-03-15"; omit if the text gives no time)
+- "memories": array of objects with "content" (string, a concise factual statement), "about" (array of the entity names, from "entities", that the memory is about) and optional "valid_at" (string: when the fact became true in the world, e.g. "2026-03", "March 2026", "2026-03-15"; omit if the text gives no time)
 
 Extract all people, organizations, places, concepts, and other notable entities.
 Identify relationships between entities (e.g., works_at, knows, located_in).
@@ -310,86 +310,8 @@ func parseRelationsJSON(raw string) ([]cortex.MemoryRelation, error) {
 
 var _ cortex.RelationDetector = (*LLM)(nil)
 
-// extractionJSON is the intermediate JSON structure returned by the LLM.
-type extractionJSON struct {
-	Entities []struct {
-		Type       string  `json:"type"`
-		Name       string  `json:"name"`
-		Confidence float64 `json:"confidence"`
-	} `json:"entities"`
-	Relationships []struct {
-		Source     string  `json:"source"`
-		Target     string  `json:"target"`
-		Type       string  `json:"type"`
-		Confidence float64 `json:"confidence"`
-	} `json:"relationships"`
-	Memories []json.RawMessage `json:"memories"`
-}
-
-// parseExtractionJSON parses the JSON output from the LLM extraction into
-// a cortex.Extraction struct. Strips markdown code fences first because
-// some OpenAI-compatible upstreams (e.g. Anthropic-via-LiteLLM) wrap their
-// JSON response in ```json ... ``` despite a JSON-only system prompt.
+// parseExtractionJSON parses the model's extraction output; see
+// cortex.ParseExtractionJSON.
 func parseExtractionJSON(raw string) (*cortex.Extraction, error) {
-	raw = strings.TrimSpace(raw)
-	if strings.HasPrefix(raw, "```") {
-		lines := strings.Split(raw, "\n")
-		if len(lines) > 2 {
-			lines = lines[1 : len(lines)-1]
-			raw = strings.Join(lines, "\n")
-		}
-	}
-
-	var ej extractionJSON
-	if err := json.Unmarshal([]byte(raw), &ej); err != nil {
-		return nil, err
-	}
-
-	extraction := &cortex.Extraction{}
-
-	for _, e := range ej.Entities {
-		extraction.Entities = append(extraction.Entities, cortex.Entity{
-			Type:       e.Type,
-			Name:       e.Name,
-			Confidence: e.Confidence,
-		})
-	}
-
-	for _, r := range ej.Relationships {
-		extraction.Relationships = append(extraction.Relationships, cortex.Relationship{
-			SourceID:   r.Source,
-			TargetID:   r.Target,
-			Type:       r.Type,
-			Confidence: r.Confidence,
-		})
-	}
-
-	for _, m := range ej.Memories {
-		var memObj struct {
-			Content     string  `json:"content"`
-			Confidence  float64 `json:"confidence"`
-			ValidAt     string  `json:"valid_at"`
-			Static      bool    `json:"static"`
-			ForgetAfter string  `json:"forget_after"`
-		}
-		if err := json.Unmarshal(m, &memObj); err == nil && memObj.Content != "" {
-			extraction.Memories = append(extraction.Memories, cortex.Memory{
-				Content:     memObj.Content,
-				Confidence:  memObj.Confidence,
-				ValidAt:     cortex.ParseEventTime(memObj.ValidAt),
-				Static:      memObj.Static,
-				ForgetAfter: cortex.ParseEventTime(memObj.ForgetAfter),
-			})
-			continue
-		}
-		// Handle case where memory is just a string.
-		var memStr string
-		if err := json.Unmarshal(m, &memStr); err == nil && memStr != "" {
-			extraction.Memories = append(extraction.Memories, cortex.Memory{
-				Content: memStr,
-			})
-		}
-	}
-
-	return extraction, nil
+	return cortex.ParseExtractionJSON(raw)
 }
