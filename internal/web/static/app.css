@@ -164,6 +164,7 @@ h2.day{margin:0 0 var(--s2);font-size:var(--text-base);font-weight:var(--w-stron
 .seltoolbar{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);padding:var(--s2) 0;margin-top:var(--s3);background:var(--bg);border-bottom:1px solid var(--line)}
 .js .seltoolbar:not(.has-sel) .selon,.js .seltoolbar:not(.has-sel) .selcount{display:none}
 .selmore{margin-left:auto}
+.js .seltoolbar.has-sel .selmore{display:none}
 .js .js-hide{display:none}
 .selcount{font-weight:var(--w-strong)}
 .pager{margin:var(--s4) 0 0}
