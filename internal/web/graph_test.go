@@ -263,11 +263,6 @@ func TestGraphPageRendersListWithoutScript(t *testing.T) {
 	if !strings.Contains(body, `data-src="/graph/data?center=`+owner) || !strings.Contains(body, "This is you") {
 		t.Errorf("default centre is not the owner")
 	}
-	// Nav order: Memories, Graph, Connections.
-	i, j, k := strings.Index(body, ">Memories</a>"), strings.Index(body, ">Graph</a>"), strings.Index(body, ">Connections</a>")
-	if !(i < j && j < k) {
-		t.Errorf("nav order %d %d %d", i, j, k)
-	}
 }
 
 func TestGraphSearchIsScopedAndLiteral(t *testing.T) {

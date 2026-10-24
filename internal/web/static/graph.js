@@ -79,15 +79,16 @@
         if (!moved) break;
       }
     })();
-    // Labels are chosen greedily, centre first and then the best-connected
-    // neighbours, and kept only when they overlap no other label or shape.
+    // Every node gets a label. They are placed greedily, centre first and then
+    // the best-connected neighbours. A label that collides is nudged to another
+    // side or farther out, then shortened (the full name shows on hover and focus and stays
+    // in the title), and as a last resort may touch a shape but not a label.
     // Sizes are in viewBox units, so they depend on the final scale k
     // (rendered pixels per unit); font and shapes are compensated by 1/k so
     // text stays about 14px and shapes and tap targets stay usable.
-    var LABEL_MAX = 10;
     var order = nodes.filter(function (n) { return n.center; }).concat(
       nodes.filter(function (n) { return !n.center; }).sort(function (a, b) { return (b.rels || 0) - (a.rels || 0); }));
-    function labelOf(n) { return short(n.name, n.center ? (bw < 520 ? 20 : 28) : (bw < 520 ? 14 : 20)); }
+    function labelOf(n, max) { return short(n.name, max || (n.center ? (bw < 520 ? 20 : 28) : (bw < 520 ? 14 : 20))); }
     function plan(k) {
       var u = 1 / Math.min(1, k), ss = Math.min(1.6, u), fs = 14 * (1 / k);
       var info = {}, rects = [], x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -96,32 +97,48 @@
         info[n.id] = { r: r, hit: hit, sc: (n.center ? 1.6 : 1) * ss, label: null };
         x0 = Math.min(x0, n.x - hit); x1 = Math.max(x1, n.x + hit); y0 = Math.min(y0, n.y - hit); y1 = Math.max(y1, n.y + hit);
       });
-      function hits(rc, self) {
+      function hits(rc, self, lax) {
         var i;
         for (i = 0; i < rects.length; i++) if (rc.l < rects[i].r && rc.r > rects[i].l && rc.t < rects[i].b && rc.b > rects[i].t) return true;
+        if (lax) return false;
         for (i = 0; i < nodes.length; i++) {
           var o = nodes[i], q = info[o.id].r + 3;
           if (o !== self && rc.l < o.x + q && rc.r > o.x - q && rc.t < o.y + q && rc.b > o.y - q) return true;
         }
         return false;
       }
-      var placed = 0;
+      // Eight spots around the shape, then the same eight pushed out by a
+      // shape radius, so a crowded neighbourhood still finds room.
+      function spots(n, w, h, r, gap) {
+        var out = [], rings = [0, r * 0.9], ri;
+        for (ri = 0; ri < rings.length; ri++) {
+          var g = gap + rings[ri];
+          out.push(
+            { a: "middle", x: 0, y: r + g + fs * 0.9, l: n.x - w / 2, t: n.y + r + g },
+            { a: "middle", x: 0, y: -(r + g + fs * 0.25), l: n.x - w / 2, t: n.y - r - g - h },
+            { a: "start", x: r + g, y: fs * 0.35, l: n.x + r + g, t: n.y - h / 2 },
+            { a: "end", x: -(r + g), y: fs * 0.35, l: n.x - r - g - w, t: n.y - h / 2 },
+            { a: "start", x: r + g, y: r + g + fs * 0.9, l: n.x + r * 0.7 + g, t: n.y + r * 0.7 + g },
+            { a: "end", x: -(r + g), y: r + g + fs * 0.9, l: n.x - r * 0.7 - g - w, t: n.y + r * 0.7 + g },
+            { a: "start", x: r + g, y: -(r + g), l: n.x + r * 0.7 + g, t: n.y - r * 0.7 - g - h },
+            { a: "end", x: -(r + g), y: -(r + g), l: n.x - r * 0.7 - g - w, t: n.y - r * 0.7 - g - h });
+        }
+        return out;
+      }
       order.forEach(function (n) {
-        if (!n.center && placed >= LABEL_MAX) return;
-        var text = labelOf(n), w = text.length * 0.56 * fs + 6, h = fs * 1.3, r = info[n.id].r, gap = 4;
-        var cands = [
-          { a: "middle", x: 0, y: r + gap + fs * 0.9, l: n.x - w / 2, t: n.y + r + gap },
-          { a: "middle", x: 0, y: -(r + gap + fs * 0.25), l: n.x - w / 2, t: n.y - r - gap - h },
-          { a: "start", x: r + gap, y: fs * 0.35, l: n.x + r + gap, t: n.y - h / 2 },
-          { a: "end", x: -(r + gap), y: fs * 0.35, l: n.x - r - gap - w, t: n.y - h / 2 }
-        ];
-        for (var i = 0; i < cands.length; i++) {
-          var c = cands[i], rc = { l: c.l, t: c.t, r: c.l + w, b: c.t + h };
-          if (rc.l < 4 || rc.r > W - 4 || rc.t < 4 || rc.b > H - 4 || hits(rc, n)) continue;
-          rects.push(rc); placed++;
-          info[n.id].label = { text: text, a: c.a, x: c.x, y: c.y, fs: fs };
-          x0 = Math.min(x0, rc.l); x1 = Math.max(x1, rc.r); y0 = Math.min(y0, rc.t); y1 = Math.max(y1, rc.b);
-          break;
+        var r = info[n.id].r, full = n.center ? (bw < 520 ? 20 : 28) : (bw < 520 ? 14 : 20), h = fs * 1.3;
+        var lens = n.center ? [full] : [full, 12, 8, 5];
+        for (var li = 0; li < lens.length && !info[n.id].label; li++) {
+          var text = labelOf(n, lens[li]), w = text.length * 0.56 * fs + 6;
+          var cands = spots(n, w, h, r, 4);
+          for (var i = 0; i < cands.length; i++) {
+            var c = cands[i], rc = { l: c.l, t: c.t, r: c.l + w, b: c.t + h };
+            if (rc.l < 4 || rc.r > W - 4 || rc.t < 4 || rc.b > H - 4 || hits(rc, n, li === lens.length - 1 && lens.length > 1)) continue;
+            rects.push(rc);
+            info[n.id].label = { text: text, a: c.a, x: c.x, y: c.y, fs: fs };
+            x0 = Math.min(x0, rc.l); x1 = Math.max(x1, rc.r); y0 = Math.min(y0, rc.t); y1 = Math.max(y1, rc.b);
+            break;
+          }
         }
       });
       return { info: info, x0: x0, y0: y0, x1: x1, y1: y1, fs: fs };
@@ -163,22 +180,27 @@
       lb = lb || { text: labelOf(n), a: "middle", x: 0, y: inf.r + 4 + fs0 * 0.9, fs: fs0 };
       var t = el("text", { x: lb.x, y: lb.y, "font-size": lb.fs, "text-anchor": lb.a, class: "g-label" + (shown ? "" : " g-label-more") }, g);
       t.textContent = lb.text;
+      n.show = function (on) { t.textContent = on ? n.name : lb.text; };
+      g.addEventListener("mouseenter", function () { n.show(true); });
+      g.addEventListener("mouseleave", function () { n.show(false); });
       if (!n.center) g.addEventListener("click", function (ev) {
         // On touch, a first tap on an unlabelled shape names it; a second opens it.
         if (isCoarse() && !shown && open !== g) {
           if (open) open.classList.remove("is-open");
-          open = g; g.classList.add("is-open");
+          open = g; g.classList.add("is-open"); n.show(true);
           ev.stopPropagation();
           return;
         }
         go(n.id);
       });
     });
+    var nodeById = byId;
     // Moving through the list highlights the same shape on the map.
     document.querySelectorAll("#node-list a[data-node]").forEach(function (a) {
       function set(on) {
         var g = svg.querySelector('[data-node="' + a.getAttribute("data-node") + '"]');
         if (g) g.classList.toggle("is-hot", on);
+        if (nodeById[a.getAttribute("data-node")]) nodeById[a.getAttribute("data-node")].show(on);
       }
       a.onmouseenter = a.onfocus = function () { set(true); };
       a.onmouseleave = a.onblur = function () { set(false); };

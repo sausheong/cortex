@@ -74,9 +74,48 @@ func TestHomeSignedInRendersHomeWithNav(t *testing.T) {
 	if strings.Contains(body, `href="/memories" aria-current`) {
 		t.Error("memories marked current on home")
 	}
-	// Home is first in the nav.
-	if strings.Index(body, ">Home<") > strings.Index(body, ">Memories<") {
-		t.Error("Home must come before Memories")
+}
+
+func TestFirstRunNavShrinksAndChecklistLinks(t *testing.T) {
+	e := newEnv(t)
+	e.signIn(alice(), "")
+	_, body := e.get("/")
+	nav := body[strings.Index(body, `<nav aria-label="Main">`):strings.Index(body, "</nav>")]
+	for _, want := range []string{`href="/"`, `href="/settings"`, "Sign out"} {
+		if !strings.Contains(nav, want) {
+			t.Errorf("first-run nav missing %q", want)
+		}
+	}
+	for _, hidden := range []string{`href="/memories"`, `href="/graph"`, `href="/vault"`, `href="/connections"`, `href="/account"`} {
+		if strings.Contains(nav, hidden) {
+			t.Errorf("first-run nav should hide %q", hidden)
+		}
+	}
+	// Every step links somewhere.
+	for _, want := range []string{`href="/settings">Open settings`, `href="/connections">Connect one`, `href="/memories">See Memories`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("checklist missing link %q", want)
+		}
+	}
+	// The page you are on keeps its nav item, on any signed-in page.
+	_, body = e.get("/connections")
+	if !strings.Contains(body, `href="/connections" aria-current="page"`) {
+		t.Error("current page must stay in the shrunken nav")
+	}
+	_, body = e.get("/graph")
+	if strings.Contains(body[strings.Index(body, `<nav aria-label="Main">`):strings.Index(body, "</nav>")], `href="/memories"`) {
+		t.Error("nav should be shrunk on pages without the checklist too")
+	}
+	// Once set up the full nav returns.
+	ua := e.userBySub("g-alice")
+	e.setProvider(ua.ID)
+	_, conn, _ := e.st.CreateAgentToken(t.Context(), ua.ID, "agent")
+	e.write(ua.ID, conn.ID, "likes tea")
+	e.st.DB.ExecContext(t.Context(), `UPDATE connections SET last_used = $2 WHERE id = $1`, conn.ID, time.Now())
+	_, body = e.get("/")
+	nav = body[strings.Index(body, `<nav aria-label="Main">`):strings.Index(body, "</nav>")]
+	if strings.Index(nav, ">Home<") > strings.Index(nav, ">Memories<") || !strings.Contains(nav, `href="/account"`) {
+		t.Error("full nav (Home first) should return after setup")
 	}
 }
 

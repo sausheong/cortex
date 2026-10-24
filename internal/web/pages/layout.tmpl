@@ -14,12 +14,13 @@
   <a class="brand" href="/">cortex</a>
   {{if .SignedIn}}<nav aria-label="Main">
     <a href="/" {{.Current "/"}}>Home</a>
-    <a href="/memories" {{.Current "/memories"}}>Memories</a>
-    <a href="/graph" {{.Current "/graph"}}>Graph</a>
-    <a href="/vault" {{.Current "/vault"}}>Vault</a>
-    <a href="/connections" {{.Current "/connections"}}>Connections</a>
+    {{/* While the first-run checklist is open the nav shrinks to the way out of it; the page you are on stays. */}}
+    {{if or (not .Setup) (.Current "/memories")}}<a href="/memories" {{.Current "/memories"}}>Memories</a>{{end}}
+    {{if or (not .Setup) (.Current "/graph")}}<a href="/graph" {{.Current "/graph"}}>Graph</a>{{end}}
+    {{if or (not .Setup) (.Current "/vault")}}<a href="/vault" {{.Current "/vault"}}>Vault</a>{{end}}
+    {{if or (not .Setup) (.Current "/connections")}}<a href="/connections" {{.Current "/connections"}}>Connections</a>{{end}}
     <a href="/settings" {{.Current "/settings"}}>Settings</a>
-    <a href="/account" {{.Current "/account"}}>Account</a>
+    {{if or (not .Setup) (.Current "/account")}}<a href="/account" {{.Current "/account"}}>Account</a>{{end}}
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
   </nav>{{end}}
 </header>
@@ -62,12 +63,12 @@ addEventListener("pageshow",function(e){if(!e.persisted)return;
     <li class="{{if .Connect}}is-done{{end}}">
       <span class="step-mark">{{if .Connect}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>2{{end}}</span>
       <div><strong>Connect an assistant</strong>
-      <p class="note">Add cortex to ChatGPT, Claude or your own agent.{{if and .Provider (not .Connect)}} <a href="/connections">Connect one</a>{{end}}</p></div>
+      <p class="note">Add cortex to ChatGPT, Claude or your own agent.{{if and (not .Connect) (ne $.Path "/connections")}} <a href="/connections">Connect one</a>{{end}}</p></div>
     </li>
     <li class="{{if .Memory}}is-done{{end}}">
       <span class="step-mark">{{if .Memory}}{{template "check"}}<span class="sr-only">Done: </span>{{else}}<span class="sr-only">To do: </span>3{{end}}</span>
       <div><strong>Save your first memory</strong>
-      <p class="note">Tell your assistant something to remember. It appears on the Memories page.</p></div>
+      <p class="note">Tell your assistant something to remember. It appears on the Memories page.{{if and (not .Memory) (ne $.Path "/memories")}} <a href="/memories">See Memories</a>{{end}}</p></div>
     </li>
   </ol>
 </section>{{end}}{{end}}
