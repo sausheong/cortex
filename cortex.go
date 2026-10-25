@@ -118,3 +118,11 @@ func (c *Cortex) Embedder() Embedder { return c.h.Cfg.Embedder }
 func AugmentForEmbedding(content string, entityNames []string) string {
 	return memory.AugmentForEmbedding(content, entityNames)
 }
+
+// StoreHandle returns the underlying store handle. It is for in-module
+// internal packages that build on the store; it is not a stable public API.
+func (c *Cortex) StoreHandle() *store.Handle { return c.h }
+
+// LLM returns the configured LLM, or nil when none is set. Callers
+// type-assert it for optional capabilities such as ArticleWriter.
+func (c *Cortex) LLM() LLM { return c.h.Cfg.LLM }

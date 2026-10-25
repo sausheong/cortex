@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -341,3 +342,85 @@ func (l *LLM) DisambiguateEntity(ctx context.Context, m cortex.EntityMention, ca
 }
 
 var _ cortex.EntityDisambiguator = (*LLM)(nil)
+
+// schemaJSON adapts a pre-marshalled JSON Schema to json.Marshaler.
+type schemaJSON []byte
+
+func (s schemaJSON) MarshalJSON() ([]byte, error) { return s, nil }
+
+// isResponseFormatRejection reports whether err is a 400 from a server that
+// does not support strict json_schema response formats.
+func isResponseFormatRejection(err error) bool {
+	var status int
+	var text string
+	var apiErr *oai.APIError
+	var reqErr *oai.RequestError
+	switch {
+	case errors.As(err, &apiErr):
+		status, text = apiErr.HTTPStatusCode, apiErr.Message
+	case errors.As(err, &reqErr):
+		status, text = reqErr.HTTPStatusCode, string(reqErr.Body)+" "+reqErr.Error()
+	default:
+		return false
+	}
+	if status != http.StatusBadRequest {
+		return false
+	}
+	text = strings.ToLower(text)
+	return strings.Contains(text, "response_format") || strings.Contains(text, "json_schema")
+}
+
+// WriteArticle implements cortex.ArticleWriter. The system message carries
+// only the caller's fixed instructions; all subject data is one JSON document
+// in the user message. It asks for a strict json_schema response and, if the
+// server rejects that with a 400, retries once in json_object mode with the
+// schema stated in the system text. Cortex validates the result either way.
+func (l *LLM) WriteArticle(ctx context.Context, system string, in cortex.ArticleInput, length string) (cortex.Article, cortex.ArticleUsage, error) {
+	user, err := cortex.ArticleRequestJSON(in, length)
+	if err != nil {
+		return cortex.Article{}, cortex.ArticleUsage{}, fmt.Errorf("openai: encode article input: %w", err)
+	}
+	schema, err := json.Marshal(cortex.ArticleJSONSchema())
+	if err != nil {
+		return cortex.Article{}, cortex.ArticleUsage{}, fmt.Errorf("openai: encode article schema: %w", err)
+	}
+	req := oai.ChatCompletionRequest{
+		Model: l.model,
+		Messages: []oai.ChatCompletionMessage{
+			{Role: oai.ChatMessageRoleSystem, Content: system},
+			{Role: oai.ChatMessageRoleUser, Content: user},
+		},
+		ResponseFormat: &oai.ChatCompletionResponseFormat{
+			Type: oai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &oai.ChatCompletionResponseFormatJSONSchema{
+				Name:   "article",
+				Schema: schemaJSON(schema),
+				Strict: true,
+			},
+		},
+	}
+	resp, err := l.client.CreateChatCompletion(ctx, req)
+	if err != nil && isResponseFormatRejection(err) {
+		req.Messages[0].Content = system + "\n\nReturn ONLY one JSON object that conforms to this JSON Schema, with no other text:\n" + string(schema)
+		req.ResponseFormat = &oai.ChatCompletionResponseFormat{Type: oai.ChatCompletionResponseFormatTypeJSONObject}
+		resp, err = l.client.CreateChatCompletion(ctx, req)
+	}
+	if err != nil {
+		return cortex.Article{}, cortex.ArticleUsage{}, fmt.Errorf("openai: write article: %w", err)
+	}
+	usage := cortex.ArticleUsage{InputTokens: resp.Usage.PromptTokens, OutputTokens: resp.Usage.CompletionTokens}
+	if len(resp.Choices) == 0 {
+		return cortex.Article{}, usage, fmt.Errorf("openai: no choices in article response: %w", cortex.ErrArticleBadOutput)
+	}
+	ch := resp.Choices[0]
+	if ch.FinishReason == oai.FinishReasonLength {
+		return cortex.Article{}, usage, cortex.ErrArticleTruncated
+	}
+	art, err := cortex.ParseArticle(ch.Message.Content)
+	if err != nil {
+		return cortex.Article{}, usage, fmt.Errorf("openai: %w", err)
+	}
+	return art, usage, nil
+}
+
+var _ cortex.ArticleWriter = (*LLM)(nil)

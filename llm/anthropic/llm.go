@@ -322,3 +322,66 @@ func (l *LLM) DisambiguateEntity(ctx context.Context, m cortex.EntityMention, ca
 }
 
 var _ cortex.EntityDisambiguator = (*LLM)(nil)
+
+const articleToolName = "write_article"
+
+// articleMaxTokens maps the length word to an output budget.
+func articleMaxTokens(length string) int64 {
+	switch length {
+	case "short":
+		return 2000
+	case "long":
+		return 8000
+	default:
+		return 4000
+	}
+}
+
+// WriteArticle implements cortex.ArticleWriter. The system prompt carries only
+// the caller's fixed instructions; all subject data is one JSON document in
+// the user message. The model is forced to make a single tool call whose
+// input schema is the article schema.
+func (l *LLM) WriteArticle(ctx context.Context, system string, in cortex.ArticleInput, length string) (cortex.Article, cortex.ArticleUsage, error) {
+	user, err := cortex.ArticleRequestJSON(in, length)
+	if err != nil {
+		return cortex.Article{}, cortex.ArticleUsage{}, fmt.Errorf("anthropic: encode article input: %w", err)
+	}
+	schema := cortex.ArticleJSONSchema()
+	required, _ := schema["required"].([]string)
+	tool := anthropic.ToolParam{
+		Name:        articleToolName,
+		Description: anthropic.String("Return the finished article."),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties:  schema["properties"],
+			Required:    required,
+			ExtraFields: map[string]any{"additionalProperties": false},
+		},
+	}
+	msg, err := l.client.Messages.New(ctx, anthropic.MessageNewParams{
+		Model:      l.model,
+		MaxTokens:  articleMaxTokens(length),
+		System:     []anthropic.TextBlockParam{{Text: system}},
+		Messages:   []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(user))},
+		Tools:      []anthropic.ToolUnionParam{{OfTool: &tool}},
+		ToolChoice: anthropic.ToolChoiceParamOfTool(articleToolName),
+	})
+	if err != nil {
+		return cortex.Article{}, cortex.ArticleUsage{}, fmt.Errorf("anthropic: write article: %w", err)
+	}
+	usage := cortex.ArticleUsage{InputTokens: int(msg.Usage.InputTokens), OutputTokens: int(msg.Usage.OutputTokens)}
+	if msg.StopReason == anthropic.StopReasonMaxTokens {
+		return cortex.Article{}, usage, cortex.ErrArticleTruncated
+	}
+	for _, block := range msg.Content {
+		if block.Type == "tool_use" && block.Name == articleToolName {
+			art, err := cortex.ParseArticle(string(block.Input))
+			if err != nil {
+				return cortex.Article{}, usage, fmt.Errorf("anthropic: %w", err)
+			}
+			return art, usage, nil
+		}
+	}
+	return cortex.Article{}, usage, fmt.Errorf("anthropic: no %s tool call in response: %w", articleToolName, cortex.ErrArticleBadOutput)
+}
+
+var _ cortex.ArticleWriter = (*LLM)(nil)

@@ -2,7 +2,9 @@ package testutil
 
 import (
 	"context"
+	"errors"
 	"math"
+	"sync"
 	"testing"
 
 	"github.com/sausheong/cortex"
@@ -15,7 +17,32 @@ type MockLLM struct {
 	ExtractFn   func(ctx context.Context, text, prompt string) (cortex.ExtractionResult, error)
 	DecomposeFn func(ctx context.Context, query string) ([]cortex.StructuredQuery, error)
 	SummarizeFn func(ctx context.Context, texts []string) (string, error)
+
+	// WriteArticleFn backs WriteArticle; nil makes WriteArticle fail with
+	// "no article writer".
+	WriteArticleFn func(ctx context.Context, system string, in cortex.ArticleInput, length string) (cortex.Article, cortex.ArticleUsage, error)
+
+	mu         sync.Mutex
+	Calls      int // number of WriteArticle calls
+	LastInput  cortex.ArticleInput
+	LastSystem string
 }
+
+// WriteArticle implements cortex.ArticleWriter and records the call.
+func (m *MockLLM) WriteArticle(ctx context.Context, system string, in cortex.ArticleInput, length string) (cortex.Article, cortex.ArticleUsage, error) {
+	m.mu.Lock()
+	m.Calls++
+	m.LastInput = in
+	m.LastSystem = system
+	fn := m.WriteArticleFn
+	m.mu.Unlock()
+	if fn == nil {
+		return cortex.Article{}, cortex.ArticleUsage{}, errors.New("no article writer")
+	}
+	return fn(ctx, system, in, length)
+}
+
+var _ cortex.ArticleWriter = (*MockLLM)(nil)
 
 func (m *MockLLM) Extract(ctx context.Context, text, prompt string) (cortex.ExtractionResult, error) {
 	if m.ExtractFn != nil {

@@ -10,6 +10,15 @@ import (
 
 type (
 	Alias               = model.Alias
+	Article             = model.Article
+	ArticleInput        = model.ArticleInput
+	ArticleItem         = model.ArticleItem
+	ArticleMemory       = model.ArticleMemory
+	ArticleRelation     = model.ArticleRelation
+	ArticleSection      = model.ArticleSection
+	ArticleSubject      = model.ArticleSubject
+	ArticleUsage        = model.ArticleUsage
+	ArticleWriter       = model.ArticleWriter
 	Change              = model.Change
 	Changes             = model.Changes
 	Chunk               = model.Chunk
@@ -125,7 +134,17 @@ const (
 )
 
 var (
-	ErrAliasTaken      = model.ErrAliasTaken
-	ErrNotFound        = model.ErrNotFound
-	ErrStaleGeneration = model.ErrStaleGeneration
+	ErrAliasTaken       = model.ErrAliasTaken
+	ErrArticleBadOutput = model.ErrArticleBadOutput
+	ErrArticleTruncated = model.ErrArticleTruncated
+	ErrNotFound         = model.ErrNotFound
+	ErrStaleGeneration  = model.ErrStaleGeneration
+)
+
+// ArticleJSONSchema, ParseArticle and ArticleRequestJSON forward the article
+// helpers that provider packages share.
+var (
+	ArticleJSONSchema  = model.ArticleJSONSchema
+	ParseArticle       = model.ParseArticle
+	ArticleRequestJSON = model.ArticleRequestJSON
 )
