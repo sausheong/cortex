@@ -159,6 +159,9 @@ h2.day{margin:0 0 var(--s2);font-size:var(--text-base);font-weight:var(--w-stron
 .mem-text{display:block}
 .mem-meta{display:block;margin-top:2px;font-size:var(--text-sm);color:var(--muted)}
 .mem-meta .new{color:var(--accent)}
+.mem-chips{display:flex;flex-wrap:wrap;gap:var(--s2);margin-top:var(--s2)}
+.mem-chips .chip{padding:2px var(--s3);border:1px solid var(--line);border-radius:999px;font-size:var(--text-sm);color:var(--fg);text-decoration:none}
+.mem-chips .chip:hover{background:var(--accent-soft)}
 .memlist .empty{padding:var(--s5) 0}
 .memlist.batches li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s2) var(--s4);padding:var(--s3) 0}
 .seltoolbar{position:sticky;top:0;z-index:1;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);padding:var(--s2) 0;margin-top:var(--s3);background:var(--bg);border-bottom:1px solid var(--line)}

@@ -58,6 +58,9 @@ func (c Ops) listMemoriesEnc(ctx context.Context, f model.MemoryListFilter, limi
 	lq := strings.ToLower(f.Query)
 	var matched []model.Memory
 	for _, m := range ws.Memories() {
+		if f.ID != "" && m.ID != f.ID {
+			continue
+		}
 		if f.Query != "" && !strings.Contains(strings.ToLower(m.Content), lq) {
 			continue
 		}
@@ -113,7 +116,7 @@ func (c Ops) listMemoriesEnc(ctx context.Context, f model.MemoryListFilter, limi
 	}
 	out := make([]model.Memory, len(matched))
 	for i, m := range matched {
-		out[i] = model.Memory{ID: m.ID, Content: m.Content, Source: m.Source, Speaker: m.Speaker, WrittenBy: m.WrittenBy,
+		out[i] = model.Memory{ID: m.ID, Content: m.Content, EntityIDs: m.EntityIDs, ExpiredAt: m.ExpiredAt, InvalidAt: m.InvalidAt, Source: m.Source, Speaker: m.Speaker, WrittenBy: m.WrittenBy,
 			Confidence: m.Confidence, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 	}
 	return out, total, nil

@@ -233,6 +233,9 @@ type ConnectionNew struct {
 // MemoryListFilter narrows ListMemories. Zero fields are ignored.
 type MemoryListFilter struct {
 	Query string
+	// ID keeps only the memory with this id, live or retired (a foreign or
+	// unknown id matches none).
+	ID string
 	// WrittenBy keeps memories written by this connection ID; NoConnection
 	// keeps those no connection wrote (added directly).
 	WrittenBy string

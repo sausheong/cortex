@@ -12,6 +12,7 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/web/pages"
 )
 
@@ -44,8 +45,10 @@ type memoryRow struct {
 	ID, Content string
 	Ago, Abs    string
 	ISO         string
-	Who         string // connection name, or "" when written by hand
-	New         bool   // written since the viewer's previous visit
+	Who         string // connection name, "you, in Vault" for a correction, or "" when written by hand
+	Retired     bool   // no longer current (single-memory view only)
+	Chips       []entityChip
+	New         bool // written since the viewer's previous visit
 }
 
 // memDay is the rows written on one local day, under one heading.
@@ -54,6 +57,9 @@ type memDay struct {
 	ISO   string // yyyy-mm-dd, for the machine-readable heading
 	Rows  []memoryRow
 }
+
+// entityChip is one entity a memory mentions, linking to that entity's memories.
+type entityChip struct{ Name, Href string }
 
 type connOpt struct{ ID, Label string }
 
@@ -71,29 +77,31 @@ type memoriesView struct {
 	// Entity limits the list to memories that mention one entity; EntityName
 	// is its name, empty when it is not the viewer's.
 	Entity, EntityName string
-	From, To           string
-	Since              string // RFC3339 instant; "" when not filtering by it
-	SinceAgo           string
-	Total              int
-	Page               int
-	PrevPage           int
-	NextPage           int
-	Query              string // url-encoded filters for paging links
-	ViewQuery          string // filters plus page, carried through delete forms
-	Size               int
-	Sizes              []int
-	Sort               string // "newest" or "oldest"
-	Range              string // preset key, or ""
-	Presets            []preset
-	TZHint             string
-	RangeErr           string
-	Pages              []pageLink
-	PrevHref           string
-	NextHref           string
-	ShowFrom           int // 1-based index of the first row shown
-	ShowTo             int
-	TotalFmt           string
-	ShowFmt            string
+	// ID limits the list to one memory (a deep link from a Vault article).
+	ID        string
+	From, To  string
+	Since     string // RFC3339 instant; "" when not filtering by it
+	SinceAgo  string
+	Total     int
+	Page      int
+	PrevPage  int
+	NextPage  int
+	Query     string // url-encoded filters for paging links
+	ViewQuery string // filters plus page, carried through delete forms
+	Size      int
+	Sizes     []int
+	Sort      string // "newest" or "oldest"
+	Range     string // preset key, or ""
+	Presets   []preset
+	TZHint    string
+	RangeErr  string
+	Pages     []pageLink
+	PrevHref  string
+	NextHref  string
+	ShowFrom  int // 1-based index of the first row shown
+	ShowTo    int
+	TotalFmt  string
+	ShowFmt   string
 	// Error is shown next to the control named by ErrField
 	// ("ids", "older_than", "match", "").
 	Error, ErrField string
@@ -126,6 +134,10 @@ type pageLink struct {
 	Current bool
 	Gap     bool
 }
+
+// vaultCorrectionLabel is shown in the Who slot of a memory the user wrote as a
+// correction in the Vault.
+const vaultCorrectionLabel = "you, in Vault"
 
 var pageSizes = []int{25, 50, 100, 200}
 
@@ -204,7 +216,7 @@ func (s *server) memoriesGet(w http.ResponseWriter, r *http.Request, u SessionUs
 }
 
 // viewKeys are the only parameters a carried view may hold.
-var viewKeys = []string{"q", "by", "from", "to", "range", "size", "sort", "page", "entity", "since"}
+var viewKeys = []string{"q", "by", "from", "to", "range", "size", "sort", "page", "entity", "since", "id"}
 
 // cleanView parses a carried view string keeping only known keys, so the
 // value can never redirect elsewhere or inject other parameters.
@@ -357,13 +369,14 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.Range, v.From, v.To = rng, from, to
 	}
 	v.Entity = strings.TrimSpace(q.Get("entity"))
+	v.ID = strings.TrimSpace(q.Get("id"))
 	var since *time.Time
 	if t, err := time.Parse(time.RFC3339, q.Get("since")); err == nil {
 		t = t.UTC()
 		since, v.Since = &t, t.Format(time.RFC3339)
 		v.SinceAgo = relTime(s.now(), t)
 	}
-	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, EntityID: v.Entity, Since: since, Oldest: v.Sort == "oldest"}
+	f := cortex.MemoryListFilter{Query: v.Q, WrittenBy: v.By, ID: v.ID, EntityID: v.Entity, Since: since, Oldest: v.Sort == "oldest"}
 	badDate := false
 	if t := parseDay(v.From); t != nil {
 		start := t.Add(shift)
@@ -437,9 +450,23 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	now := s.now()
 	seen := s.lastVisit(w, r, now, v.Page == 1 && r.Method == http.MethodGet)
 	for _, m := range ms {
-		v.Memories = append(v.Memories, memoryRow{ID: m.ID, Content: m.Content,
+		row := memoryRow{ID: m.ID, Content: m.Content,
 			Ago: relTime(now, m.CreatedAt), Abs: absTime(m.CreatedAt), ISO: m.CreatedAt.UTC().Format(time.RFC3339),
-			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)})
+			Who: v.ConnNames[m.WrittenBy], New: !seen.IsZero() && m.CreatedAt.After(seen)}
+		// Only the Source drives the label: WrittenBy is a connection id and
+		// stays empty for a correction.
+		if m.Source == model.SourceVaultCorrection {
+			row.Who = vaultCorrectionLabel
+		}
+		if v.ID != "" {
+			row.Retired = m.ExpiredAt != nil || m.InvalidAt != nil
+			for _, eid := range m.EntityIDs {
+				if e, err := cx.GetEntity(ctx, eid); err == nil && e != nil {
+					row.Chips = append(row.Chips, entityChip{Name: e.Name, Href: "/memories?entity=" + url.QueryEscape(eid)})
+				}
+			}
+		}
+		v.Memories = append(v.Memories, row)
 	}
 	// Day headings use the viewer's local days, same offset as the date filters.
 	todayLocal := s.now().UTC().Add(-shift)
@@ -463,7 +490,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		v.Days[len(v.Days)-1].Rows = append(v.Days[len(v.Days)-1].Rows, v.Memories[i])
 	}
 	v.MoreOpen = v.From != "" || v.To != "" || v.Range != "" || v.Sort == "oldest" || v.Size != defaultPageSize || v.RangeErr != ""
-	v.HasMore = v.Entity != "" || v.Since != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
+	v.HasMore = v.ID != "" || v.Entity != "" || v.Since != "" || v.Q != "" || v.By != "" || v.From != "" || v.To != ""
 	last := (total + v.Size - 1) / v.Size
 	if v.Page > 1 {
 		v.PrevPage = v.Page - 1
@@ -479,6 +506,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 		}
 	}
 	add("q", v.Q)
+	add("id", v.ID)
 	add("entity", v.Entity)
 	add("by", v.By)
 	add("since", v.Since)

@@ -22,8 +22,9 @@
 {{if .WasRestored}}<p class="notice" role="status">{{if .Restored}}Restored {{.Restored}} {{if eq .Restored 1}}memory{{else}}memories{{end}}.{{else}}Restored.{{end}}</p>{{end}}
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 {{if .Since}}<p class="notice" role="status">Showing only memories added since <time datetime="{{.Since}}">{{.SinceAgo}}</time>. <a href="/memories">Show all memories</a></p>{{end}}
+{{if .ID}}<p class="notice" role="status">Showing one memory. <a href="/memories">Show all memories</a></p>{{end}}
 {{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}something that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}</p>{{end}}
-{{if or .Memories .HasMore .Q .By .From .To .Since .Entity}}<form method="get" action="/memories" class="search" aria-label="Find memories">
+{{if and (not .ID) (or .Memories .HasMore .Q .By .From .To .Since .Entity)}}<form method="get" action="/memories" class="search" aria-label="Find memories">
   {{if .Entity}}<input type="hidden" name="entity" value="{{.Entity}}">{{end}}
   {{if .Since}}<input type="hidden" name="since" value="{{.Since}}">{{end}}
   <div class="search-row">
@@ -75,7 +76,7 @@
     {{range .Rows}}
       <li><label class="mem"><input type="checkbox" name="ids" value="{{.ID}}"{{if $.Data.SelectPage}} checked{{end}}>
         <span class="mem-body"><span class="mem-text">{{.Content}}</span>
-        <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Who}} &middot; {{.Who}}{{end}}</span></span>
+        <span class="mem-meta">{{if .New}}<strong class="new">New</strong> &middot; {{end}}<time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{if .Retired}} &middot; Retired{{end}}{{if .Who}} &middot; {{.Who}}{{end}}</span>{{if .Chips}}<span class="mem-chips">{{range .Chips}}<a class="chip" href="{{.Href}}">{{.Name}}</a>{{end}}</span>{{end}}</span>
       </label></li>
     {{end}}
     </ul>
