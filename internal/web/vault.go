@@ -34,7 +34,7 @@ type vaultReq struct {
 // itself (unlock redirect or an error) and reports false when it cannot.
 func (s *server) vaultLoad(w http.ResponseWriter, r *http.Request, u SessionUser) (*vaultReq, bool) {
 	ctx := r.Context()
-	cx, release := cxFor(ctx, s.root, s.st, u)
+	cx, release := providerCxFor(ctx, s.root, s.st, u)
 	fail := func(err error) (*vaultReq, bool) {
 		release()
 		if errors.Is(err, model.ErrLocked) || errors.Is(err, model.ErrEnrollRequired) {

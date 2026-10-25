@@ -316,6 +316,18 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, u SessionUser) {
 // session's own key is zeroed separately when the request ends). A locked or
 // legacy session gets a plain handle: encrypted reads then fail with
 // ErrLocked instead of returning empty results.
+// providerCxFor is cxFor with the user's own chat model, embedder and
+// extractor attached, for pages that call the LLM (Vault articles). Without
+// usable provider settings it falls back to cxFor, so the page still reads.
+func providerCxFor(ctx context.Context, root *cortex.Cortex, st *accounts.Store, u SessionUser) (*cortex.Cortex, func()) {
+	if u.Key != nil {
+		if cx, err := st.ResolveUser(ctx, root, u.UserID, "", u.Key); err == nil {
+			return cx, cx.Release
+		}
+	}
+	return cxFor(ctx, root, st, u)
+}
+
 func cxFor(ctx context.Context, root *cortex.Cortex, st *accounts.Store, u SessionUser) (*cortex.Cortex, func()) {
 	cx := root.ForUser(u.UserID)
 	if u.Key != nil {

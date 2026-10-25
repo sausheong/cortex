@@ -53,7 +53,7 @@ func vaultUsage(articles int, u vaultart.Usage) string {
 // loadVaultView builds the section. A nil result hides it (no key to open the
 // settings with).
 func (s *server) loadVaultView(ctx context.Context, u SessionUser, form *vaultView) (*vaultView, error) {
-	cx, release := cxFor(ctx, s.root, s.st, u)
+	cx, release := providerCxFor(ctx, s.root, s.st, u)
 	defer release()
 	h := cx.StoreHandle()
 	cur, err := vaultart.LoadSettings(ctx, h)
