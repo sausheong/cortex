@@ -66,7 +66,7 @@ Maintain (while you use it)
 - **Self-maintaining.** It reconciles contradictions, relates memories, decays what nobody uses, expires time-bound facts and refreshes profiles.
 - **Large documents.** A save of any size is chunked, extracted in parallel and processed in the background.
 - **Undoable.** Forgets, merges and compactions are recorded as batches you can restore for 30 days.
-- **A calm web app.** It has Home, Memories, Graph, Vault (an Obsidian-style view and download), Connections, Settings and Account.
+- **A calm web app.** It has Home, Memories, Graph, Vault (written articles about the people, places and things you mention, with an Obsidian download), Connections, Settings and Account.
 
 ---
 
@@ -82,7 +82,7 @@ The web app's pages:
 - **Home:** what is connected, what is new, and anything that needs your attention.
 - **Memories:** search, filter by date or assistant, and bulk delete. Compaction merges near-duplicate memories (previewed and undoable). **Deleted** restores any batch for 30 days.
 - **Graph:** an interactive map of your entities. Rename, merge and delete from it.
-- **Vault:** your graph as browsable pages, downloadable as an Obsidian vault.
+- **Vault:** short articles written from your memories about each subject that has enough of them. The threshold, article length and whether connected subjects count are set in Settings. Download the vault as an Obsidian zip from the Vault page.
 - **Connections:** your MCP address, connected assistants and tokens. Rename, renew and revoke them here.
 - **Settings and Account:** provider and models, re-embedding, storage, passkeys, recovery key, and account deletion.
 

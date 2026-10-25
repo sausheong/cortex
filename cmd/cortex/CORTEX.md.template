@@ -116,11 +116,13 @@ Cortex can also detect when a newer memory supersedes an older, contradicting on
 
 ## The vault
 
-If `cortex export --vault ./vault` has been run for this project, a browsable markdown projection of the graph lives at `./vault/`. It's Obsidian-compatible: each entity is its own page with frontmatter, wikilinks to related entities, backlinks, and source attribution.
+The cortex web app has a Vault: short articles written from the user's memories about each subject (a person, place or thing) that has enough memories to clear the threshold set in Settings. Articles are written on first open, cached, and rewritten when their memories change. The Vault page offers an Obsidian-compatible zip download.
 
-Read the vault when you want broad context on an entity — it's easier to skim than running multiple `recall` calls. Use `recall` when you need ranked search results or you don't know the entity's name.
+Separately, if `cortex export --vault ./vault` has been run for this project, a browsable markdown projection of the graph lives at `./vault/`: each entity is its own page with frontmatter, wikilinks to related entities, backlinks, and source attribution.
 
-The vault is generated; don't edit it by hand. Changes to the graph are made via `remember` / `forget`.
+Read that folder when you want broad context on an entity, since it is easier to skim than running multiple `recall` calls. Use `recall` when you need ranked search results or you don't know the entity's name.
+
+The exported folder is generated; don't edit it by hand. Changes to the graph are made via `remember` / `forget`.
 
 ## Workflow loop
 

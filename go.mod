@@ -10,7 +10,6 @@ require (
 	github.com/mark3labs/mcp-go v0.47.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/sashabaranov/go-openai v1.41.2
-	github.com/yuin/goldmark v1.7.8
 	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.36.0
 )

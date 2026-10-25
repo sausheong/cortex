@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/sausheong/cortex"
@@ -43,17 +42,6 @@ func TestVaultRequiresSignIn(t *testing.T) {
 	}
 }
 
-func TestRenderMarkdownSafe(t *testing.T) {
-	none := func(string) (string, bool) { return "", false }
-	out := string(renderMarkdown("<script>x</script>\n\n[a](javascript:alert(1)) [b](https://ok.test) ![i](data:text/html,x)\n\n<https://auto.test>", none))
-	if strings.Contains(out, "<script") || strings.Contains(out, "javascript:") || strings.Contains(out, "data:text") {
-		t.Fatalf("unsafe output: %s", out)
-	}
-	if !strings.Contains(out, `rel="noopener noreferrer nofollow" href="https://ok.test"`) {
-		t.Fatalf("external link lost: %s", out)
-	}
-}
-
 func readZip(t *testing.T, b []byte) map[string]string {
 	t.Helper()
 	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
@@ -68,42 +56,6 @@ func readZip(t *testing.T, b []byte) map[string]string {
 		out[f.Name] = string(d)
 	}
 	return out
-}
-
-func TestRenderMarkdownEncodedSchemesAndImages(t *testing.T) {
-	none := func(string) (string, bool) { return "", false }
-	for _, src := range []string{
-		"[y](&#106;avascript:1)", "[y](&#x6A;avascript:1)", "[y](jav&#x09;ascript:1)",
-		"[y](JaVaScRiPt:1)", "[y](&#x64;ata:text/html,x)", "[y](vbscript:1)", "![y](&#106;avascript:1)",
-	} {
-		out := strings.ToLower(string(renderMarkdown(src, none)))
-		for _, bad := range []string{"javascript", "jav&", "data:", "vbscript", "<img"} {
-			if strings.Contains(out, bad) {
-				t.Errorf("%q rendered %q (contains %q)", src, out, bad)
-			}
-		}
-	}
-	out := string(renderMarkdown("![x](https://evil.test/a.png?q=1)", none))
-	if strings.Contains(out, "<img") || !strings.Contains(out, `href="https://evil.test/a.png?q=1"`) {
-		t.Fatalf("image not turned into a link: %s", out)
-	}
-	if out := string(renderMarkdown("[a](/vault/x.md) [m](mailto:a@b.test)", none)); !strings.Contains(out, `href="/vault/x.md"`) || !strings.Contains(out, "mailto:") {
-		t.Fatalf("safe links lost: %s", out)
-	}
-}
-
-func TestRenderMarkdownAutolinks(t *testing.T) {
-	none := func(string) (string, bool) { return "", false }
-	for _, src := range []string{"<javascript:alert(1)>", "<JaVaScRiPt:alert(1)>", "<data:text/html;base64,AAA>", "<vbscript:x>"} {
-		out := strings.ToLower(string(renderMarkdown(src, none)))
-		if strings.Contains(out, "href") || strings.Contains(out, "<a") {
-			t.Errorf("%q rendered live link: %s", src, out)
-		}
-	}
-	out := string(renderMarkdown("<https://ok.test/x> <me@ok.test>", none))
-	if !strings.Contains(out, `rel="noopener noreferrer nofollow" href="https://ok.test/x"`) || !strings.Contains(out, "mailto:me@ok.test") {
-		t.Fatalf("safe autolinks lost: %s", out)
-	}
 }
 
 func TestSafeZipName(t *testing.T) {
