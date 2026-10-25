@@ -171,7 +171,15 @@ func (s *server) vaultHome(w http.ResponseWriter, r *http.Request, u SessionUser
 		v.Searching = true
 		g = ix.Search(v.Q)
 	} else {
-		v.Recent = s.vaultRows(ix.Recent, true)
+		// Only articles that are genuinely out of date: before anything is
+		// written every entity is "new" and the list would just repeat the index.
+		var changed []vaultart.IndexEntry
+		for _, e := range ix.Recent {
+			if e.Changed {
+				changed = append(changed, e)
+			}
+		}
+		v.Recent = s.vaultRows(changed, true)
 	}
 	add := func(heading string, in []vaultart.IndexEntry) {
 		if len(in) > 0 {

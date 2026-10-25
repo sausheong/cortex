@@ -1,6 +1,6 @@
 {{template "layout" .}}
 {{define "title"}}{{.Data.Title}}{{end}}
-{{define "artitem"}}{{range .Segs}}{{if .Href}}<a class="wikilink" href="{{vpath .Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{end}}{{range .Marks}}<sup class="src"><a href="{{.Href}}" aria-label="Source {{.N}}">[{{.N}}]</a></sup>{{end}}{{end}}
+{{define "artitem"}}{{range .Segs}}{{if .Href}}<a class="wikilink" href="{{vpath .Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{end}}{{range .Marks}}<sup class="src"><a href="{{.Href}}" aria-label="Source {{.N}}">{{.N}}</a></sup>{{end}}{{end}}
 {{define "content"}}
 {{with .Data}}
 <article class="vault-art">

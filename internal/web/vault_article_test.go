@@ -359,9 +359,9 @@ func TestArticleFootnoteNumbersConsistent(t *testing.T) {
 	// Footnote order: m2=1 (lead), m3=2, m1=3.
 	want := map[string]string{m2: "1", m3: "2", m1: "3"}
 	for id, n := range want {
-		re := regexp.MustCompile(`aria-label="Source (\d+)">\[\d+\]</a>`)
+		re := regexp.MustCompile(`aria-label="Source (\d+)">\d+</a>`)
 		_ = re
-		marker := `href="/memories?id=` + id + `" aria-label="Source ` + n + `">[` + n + `]`
+		marker := `href="/memories?id=` + id + `" aria-label="Source ` + n + `">` + n
 		if !strings.Contains(body, marker) {
 			t.Errorf("memory %s should be marker %s: %s", id, n, body)
 		}

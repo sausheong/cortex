@@ -400,8 +400,8 @@ details.more .home-bullets{margin-top:var(--s1)}
 .art-fixes p{margin:0 0 var(--s1);overflow-wrap:anywhere;white-space:pre-wrap}
 .art-fixes form{margin:0}
 .vault-art a.wikilink{text-decoration-thickness:1px;text-underline-offset:3px}
-sup.src{font-size:var(--text-sm);line-height:0;margin-left:2px;white-space:nowrap}
-sup.src a{display:inline-block;min-width:24px;min-height:24px;line-height:24px;text-align:center;box-sizing:border-box;color:var(--muted);text-decoration:none;vertical-align:baseline;position:relative;top:-.35em}
+sup.src{font-size:var(--text-sm);line-height:0;margin-left:1px;white-space:nowrap}
+sup.src a{padding:.2em .25em;color:var(--muted);text-decoration:none;vertical-align:baseline}
 sup.src a:hover{color:var(--accent);text-decoration:underline}
 .conn-actions form:has(>[aria-describedby]){display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s3)}
 .conn-actions form:not(.revoke-panel):not(.rename-panel)>.note{margin:0;min-width:0;overflow-wrap:anywhere}

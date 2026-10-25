@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -327,7 +328,7 @@ type RememberConfig struct {
 }
 
 func WithSource(source string) RememberOption {
-	return func(c *RememberConfig) { c.Source = source }
+	return func(c *RememberConfig) { c.Source = SafeSource(source) }
 }
 
 // WithSpeaker stamps a speaker/provenance label (e.g. "user", "assistant",
@@ -843,3 +844,12 @@ type ExpireConfig struct {
 
 // WithExpireDryRun computes the expire report without writing anything.
 func WithExpireDryRun() ExpireOption { return func(c *ExpireConfig) { c.DryRun = true } }
+
+// SafeSource renames a client-supplied source that equals the reserved
+// SourceVaultCorrection, so no external caller can pass as the owner's voice.
+func SafeSource(source string) string {
+	if strings.EqualFold(strings.TrimSpace(source), SourceVaultCorrection) {
+		return source + " (external)"
+	}
+	return source
+}

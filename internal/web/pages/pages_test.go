@@ -111,7 +111,7 @@ func TestVaultHrefsEscapePath(t *testing.T) {
 	if !strings.Contains(art, `action="`+want+`/rewrite"`) {
 		t.Errorf("rewrite action not escaped: %s", art)
 	}
-	if !strings.Contains(art, `<sup class="src"><a href="/memories?id=m1" aria-label="Source 1">[1]</a></sup>`) {
+	if !strings.Contains(art, `<sup class="src"><a href="/memories?id=m1" aria-label="Source 1">1</a></sup>`) {
 		t.Errorf("source marker wrong: %s", art)
 	}
 	errPage := run("vault_error", map[string]any{"Message": "m", "Action": "retry", "Path": path})
