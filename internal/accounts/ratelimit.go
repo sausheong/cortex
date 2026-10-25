@@ -30,6 +30,17 @@ func NewLimiter(perMin, burst int, now func() time.Time) *Limiter {
 	return &Limiter{perMin: float64(perMin), burst: float64(burst), now: now, buckets: map[string]*bucket{}}
 }
 
+// NewHourlyLimiter allows perHour requests per hour per key with the given
+// burst. NewLimiter takes whole requests per minute and cannot express a rate
+// below one a minute, so the hourly rate is kept as a fractional per-minute
+// refill.
+func NewHourlyLimiter(perHour, burst int, now func() time.Time) *Limiter {
+	if now == nil {
+		now = time.Now
+	}
+	return &Limiter{perMin: float64(perHour) / 60, burst: float64(burst), now: now, buckets: map[string]*bucket{}}
+}
+
 // Allow consumes one token for key and reports whether it was available.
 func (l *Limiter) Allow(key string) bool {
 	l.mu.Lock()
