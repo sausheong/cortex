@@ -142,7 +142,7 @@ func TestMigrateCommandReportsVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "[1 2 3 4 5 6 7 8 9 10 11 12]") || !strings.Contains(out, "elapsed:") {
+	if !strings.Contains(out, "[1 2 3 4 5 6 7 8 9 10 11 12 13]") || !strings.Contains(out, "elapsed:") {
 		t.Fatalf("output: %q", out)
 	}
 }

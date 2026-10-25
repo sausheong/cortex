@@ -317,6 +317,10 @@ func TestUserDeleteCascadesAllTables(t *testing.T) {
 	exec(`INSERT INTO entities (id, user_id, name_ct, type_ct, name_blind, type_blind) VALUES ('e1',$1,'\x01','\x01','\x01','\x02')`, u)
 	exec(`INSERT INTO delete_batches (id, user_id, kind) VALUES ('b1',$1,'delete')`, u)
 	exec(`INSERT INTO delete_batch_changes (batch_id, user_id, table_name, op, row_ct) VALUES ('b1',$1,'memories','delete','\x01')`, u)
+	exec(`INSERT INTO vault_articles (user_id, subject_id, kind, short_id, fingerprint) VALUES ($1,'e1','entity','s1','\x01')`, u)
+	exec(`INSERT INTO vault_topics (user_id, topic_id, short_id) VALUES ($1,'t1','s1')`, u)
+	exec(`INSERT INTO vault_settings (user_id, settings_ct) VALUES ($1,'\x01')`, u)
+	exec(`INSERT INTO vault_writes (user_id) VALUES ($1)`, u)
 
 	// every table with a user_id column has a cascading FK to users
 	rows, err := e.st.DB.Query(`SELECT c.table_name FROM information_schema.columns c
