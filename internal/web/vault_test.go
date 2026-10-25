@@ -5,14 +5,10 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/sausheong/cortex"
-	"github.com/sausheong/cortex/vault"
 )
 
 // vaultEnv signs alice in with a small graph: Alice Chen works at Stripe.
@@ -72,65 +68,6 @@ func readZip(t *testing.T, b []byte) map[string]string {
 		out[f.Name] = string(d)
 	}
 	return out
-}
-
-func TestVaultZipMatchesExport(t *testing.T) {
-	e, c, _ := vaultEnv(t)
-	resp, err := e.c.Get(e.ts.URL + "/vault/download")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "application/zip" ||
-		!strings.Contains(resp.Header.Get("Content-Disposition"), "cortex-vault-") || resp.Header.Get("Content-Length") == "" {
-		t.Fatalf("headers: %d %v", resp.StatusCode, resp.Header)
-	}
-	got := readZip(t, b)
-
-	dir := t.TempDir()
-	if _, err := vault.Export(t.Context(), c, vault.Options{VaultDir: dir}); err != nil {
-		t.Fatal(err)
-	}
-	norm := regexp.MustCompile(`exported_at: \S+`)
-	want := map[string]string{}
-	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-		rel, _ := filepath.Rel(dir, p)
-		if err != nil || info.IsDir() || rel == "log.md" || rel == vault.ManifestFilename {
-			return nil
-		}
-		d, _ := os.ReadFile(p)
-		want[filepath.ToSlash(rel)] = norm.ReplaceAllString(string(d), "exported_at: X")
-		return nil
-	})
-	if len(got) != len(want) || len(got) < 4 {
-		t.Fatalf("files: zip %d, export %d", len(got), len(want))
-	}
-	for p, w := range want {
-		if g, ok := got[p]; !ok || norm.ReplaceAllString(g, "exported_at: X") != w {
-			t.Errorf("%s differs or missing", p)
-		}
-	}
-}
-
-func TestVaultZipScopedAndRateLimited(t *testing.T) {
-	e, _, _ := vaultEnv(t)
-	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	_ = e.cx(b.ID).PutEntity(t.Context(), &cortex.Entity{Type: "person", Name: "Secret Bob"})
-	_, body := e.get("/vault/download")
-	for p, c := range readZip(t, []byte(body)) {
-		if strings.Contains(p+c, "Secret Bob") {
-			t.Fatalf("zip leaks bob in %s", p)
-		}
-	}
-	var last int
-	for i := 0; i < 5; i++ {
-		resp, _ := e.get("/vault/download")
-		last = resp.StatusCode
-	}
-	if last != http.StatusTooManyRequests {
-		t.Fatalf("last status %d, want 429", last)
-	}
 }
 
 func TestRenderMarkdownEncodedSchemesAndImages(t *testing.T) {

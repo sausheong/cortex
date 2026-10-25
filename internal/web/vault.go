@@ -14,7 +14,6 @@ import (
 	"github.com/sausheong/cortex/internal/model"
 	"github.com/sausheong/cortex/internal/vaultart"
 	"github.com/sausheong/cortex/internal/workset"
-	"github.com/sausheong/cortex/vault"
 )
 
 const vaultZipPerMin = 6
@@ -218,35 +217,39 @@ func (s *server) legacy(w http.ResponseWriter, r *http.Request, u SessionUser, p
 	s.vaultMissing(w, r)
 }
 
-// vaultDownload still serves the per-entity projection until the article
-// export replaces it.
+// vaultDownload serves the Obsidian export built from the articles. It never
+// calls the article writer: a subject without an article becomes a stub.
 func (s *server) vaultDownload(w http.ResponseWriter, r *http.Request, u SessionUser) {
 	if !s.zipLimit.Allow(u.UserID) {
 		w.Header().Set("Retry-After", "30")
 		http.Error(w, "Too many downloads. Try again in a minute.", http.StatusTooManyRequests)
 		return
 	}
-	cx, release := cxFor(r.Context(), s.root, s.st, u)
-	set, err := vault.Build(r.Context(), cx, s.now().UTC())
-	release()
-	if err != nil {
-		s.cfg.Logger.Error("vault", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	vr, ok := s.vaultLoad(w, r, u)
+	if !ok {
 		return
 	}
-	for _, werr := range set.Errors {
-		s.cfg.Logger.Warn("vault build", "err", werr)
+	files, err := vaultart.BuildExport(r.Context(), vr.cx.StoreHandle(), vr.set, vr.ownerID, vr.settings, s.now())
+	vr.release()
+	if err != nil {
+		if errors.Is(err, model.ErrLocked) || errors.Is(err, model.ErrEnrollRequired) {
+			s.vaultRedirect(w, r, "/unlock?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
+			return
+		}
+		s.cfg.Logger.Error("vault export", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 	h := w.Header()
 	h.Set("Content-Type", "application/zip")
 	h.Set("Content-Disposition", `attachment; filename="cortex-vault-`+s.now().UTC().Format("2006-01-02")+`.zip"`)
 	h.Set("Cache-Control", "private, no-store")
 	zw := zip.NewWriter(w)
-	for _, f := range set.Files {
+	for _, f := range files {
 		if !safeZipName(f.Path) {
 			continue
 		}
-		fw, err := zw.CreateHeader(&zip.FileHeader{Name: f.Path, Method: zip.Deflate, Modified: f.Updated})
+		fw, err := zw.CreateHeader(&zip.FileHeader{Name: f.Path, Method: zip.Deflate, Modified: f.Modified})
 		if err == nil {
 			_, err = fw.Write([]byte(f.Content))
 		}
