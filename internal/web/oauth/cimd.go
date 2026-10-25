@@ -24,11 +24,30 @@ type client struct {
 
 func (c *client) hasRedirect(u string) bool {
 	for _, x := range c.RedirectURIs {
-		if x == u {
+		if x == u || loopbackMatch(x, u) {
 			return true
 		}
 	}
 	return false
+}
+
+// loopbackMatch reports whether u is the registered http loopback redirect
+// reg on any port (RFC 8252 section 7.3): native clients such as Claude Code
+// register "http://localhost/callback" and listen on an ephemeral port.
+// Scheme, host, path and query must still match exactly.
+func loopbackMatch(reg, u string) bool {
+	a, err1 := url.Parse(reg)
+	b, err2 := url.Parse(u)
+	if err1 != nil || err2 != nil || a.Scheme != "http" || b.Scheme != "http" {
+		return false
+	}
+	switch a.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+	default:
+		return false
+	}
+	return a.Hostname() == b.Hostname() && a.Path == b.Path && a.RawQuery == b.RawQuery &&
+		a.User == nil && b.User == nil && a.Fragment == "" && b.Fragment == ""
 }
 
 // loadClient resolves a client_id (DCR row or CIMD URL) to a usable client.
