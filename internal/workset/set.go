@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"sort"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -107,6 +108,22 @@ func For(ctx context.Context, h *store.Handle) (*Set, error) {
 	s := u.snapshot(h)
 	enforceCap(u)
 	return s, nil
+}
+
+// Version identifies this snapshot's content: it combines the per-kind
+// version counters, so it is stable across reads of an unchanged set and
+// changes as soon as any kind (entities, memories, chunks, relationships,
+// vectors) has been invalidated and reloaded. It is an in-process change
+// detector, not a content hash, and is meaningless across restarts.
+func (s *Set) Version() string {
+	b := make([]byte, 0, int(numKinds)*4)
+	for i, v := range s.ver {
+		if i > 0 {
+			b = append(b, '.')
+		}
+		b = strconv.AppendUint(b, v, 10)
+	}
+	return string(b)
 }
 
 func probeEqual(a, b []byte) bool { return subtle.ConstantTimeCompare(a, b) == 1 }
