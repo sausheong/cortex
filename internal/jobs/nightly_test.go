@@ -12,6 +12,8 @@ import (
 
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
+	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/store"
 )
 
 func (e *env) backdate(t *testing.T, uid string, days int) {
@@ -337,5 +339,65 @@ func TestNightlyDoesNotDecryptAndStillPurges(t *testing.T) {
 	}
 	if e.count(t, `SELECT count(*) FROM users WHERE id=$1 AND last_maintenance_error IS NOT NULL`, uid) != 0 {
 		t.Fatal("encrypted user recorded a nightly failure")
+	}
+}
+
+// The key-free purge phase removes article rows whose subject is gone, and
+// only those: an existing entity, a soft-deleted (restorable) entity and a
+// persisted topic keep theirs.
+func TestNightlyPurgesOrphanArticlesWithoutKey(t *testing.T) {
+	e := newEnv(t)
+	uid, _ := e.encUser(t, "orph")
+	cx := e.handle(uid, nil, 0)
+	h := cx.StoreHandle()
+	live := &cortex.Entity{Type: "person", Name: "Live Person"}
+	soft := &cortex.Entity{Type: "person", Name: "Soft Person"}
+	for _, en := range []*cortex.Entity{live, soft} {
+		if err := cx.PutEntity(t.Context(), en); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.mustExec(t, `UPDATE entities SET deleted_at = now() WHERE id = $1`, soft.ID)
+	if err := h.PutTopics(t.Context(), []store.TopicRow{{TopicID: "topic-live", ShortID: "tlive001", Slug: "t", Title: "T", Members: []string{live.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(subject, kind string) {
+		t.Helper()
+		err := h.PutArticle(t.Context(), store.ArticleRow{SubjectID: subject, Kind: kind, ShortID: "s" + subject,
+			Slug: "x", Fingerprint: []byte{1}, Article: model.Article{Lead: "x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(live.ID, "entity")
+	put(soft.ID, "entity")
+	put("gone-entity", "entity")
+	put("topic-live", "topic")
+	put("topic-gone", "topic")
+
+	var calls sync.Map
+	rep, err := Nightly(t.Context(), e.root, e.st, NightlyOptions{Resolve: e.resolver(&calls, nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callsOf(&calls, uid) != 0 {
+		t.Fatal("nightly resolved the encrypted user")
+	}
+	if rep.ArticlesPurged != 2 {
+		t.Fatalf("purged %d, want 2", rep.ArticlesPurged)
+	}
+	left := map[string]bool{}
+	rows, err := e.db.QueryContext(t.Context(), `SELECT subject_id FROM vault_articles WHERE user_id = $1`, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		_ = rows.Scan(&id)
+		left[id] = true
+	}
+	if len(left) != 3 || !left[live.ID] || !left[soft.ID] || !left["topic-live"] {
+		t.Fatalf("remaining %v", left)
 	}
 }

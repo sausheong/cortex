@@ -268,6 +268,7 @@ type panelView struct {
 	Relations                 []relRow
 	RelTotal                  int
 	IsOwner                   bool
+	ArticleHref               string // "See article" link, empty when no article applies
 }
 
 type nodeRow struct {
@@ -434,6 +435,7 @@ func (s *server) graphPage(w http.ResponseWriter, r *http.Request, u SessionUser
 			fail(err)
 			return
 		}
+		panel.ArticleHref = s.articlePath(ctx, cx, panel.ID)
 		v.Panel = panel
 		if q.Get("mergeq") != "" {
 			v.MergeQ = strings.TrimSpace(q.Get("mergeq"))

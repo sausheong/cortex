@@ -23,7 +23,7 @@
 {{if and .Error (eq .ErrField "")}}<p class="error" role="alert"><strong>{{.Error}}</strong></p>{{end}}
 {{if .Since}}<p class="notice" role="status">Showing only memories added since <time datetime="{{.Since}}">{{.SinceAgo}}</time>. <a href="/memories">Show all memories</a></p>{{end}}
 {{if .ID}}<p class="notice" role="status">Showing one memory. <a href="/memories">Show all memories</a></p>{{end}}
-{{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}something that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}</p>{{end}}
+{{if .Entity}}<p class="notice" role="status">Showing only memories that mention <strong>{{if .EntityName}}{{.EntityName}}{{else}}something that is no longer in your graph{{end}}</strong>. <a href="/memories">Show all memories</a>{{if .EntityName}} &middot; <a href="/graph?center={{.Entity}}">Open in Graph</a>{{end}}{{if .ArticleHref}} &middot; <a href="{{.ArticleHref}}">See article</a>{{end}}</p>{{end}}
 {{if and (not .ID) (or .Memories .HasMore .Q .By .From .To .Since .Entity)}}<form method="get" action="/memories" class="search" aria-label="Find memories">
   {{if .Entity}}<input type="hidden" name="entity" value="{{.Entity}}">{{end}}
   {{if .Since}}<input type="hidden" name="since" value="{{.Since}}">{{end}}

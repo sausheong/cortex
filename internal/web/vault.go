@@ -2,6 +2,7 @@ package web
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -35,7 +36,6 @@ type vaultReq struct {
 func (s *server) vaultLoad(w http.ResponseWriter, r *http.Request, u SessionUser) (*vaultReq, bool) {
 	ctx := r.Context()
 	cx, release := cxFor(ctx, s.root, s.st, u)
-	h := cx.StoreHandle()
 	fail := func(err error) (*vaultReq, bool) {
 		release()
 		if errors.Is(err, model.ErrLocked) || errors.Is(err, model.ErrEnrollRequired) {
@@ -46,13 +46,25 @@ func (s *server) vaultLoad(w http.ResponseWriter, r *http.Request, u SessionUser
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return nil, false
 	}
-	set, err := workset.For(ctx, h)
+	set, settings, ownerID, ix, err := s.articleIndex(ctx, cx)
 	if err != nil {
 		return fail(err)
 	}
+	return &vaultReq{cx: cx, release: release, set: set, settings: settings, ownerID: ownerID,
+		ix: ix.WithCanWrite(vaultart.CanWrite(cx))}, true
+}
+
+// articleIndex loads what the article index is built from and returns the
+// index. It needs the unlocked handle; a locked one returns model.ErrLocked.
+func (s *server) articleIndex(ctx context.Context, cx *cortex.Cortex) (*workset.Set, vaultart.Settings, string, *vaultart.Index, error) {
+	h := cx.StoreHandle()
+	set, err := workset.For(ctx, h)
+	if err != nil {
+		return nil, vaultart.Settings{}, "", nil, err
+	}
 	settings, err := vaultart.LoadSettings(ctx, h)
 	if err != nil {
-		return fail(err)
+		return nil, vaultart.Settings{}, "", nil, err
 	}
 	ownerID, err := cx.OwnerEntityID(ctx)
 	if err != nil {
@@ -60,10 +72,25 @@ func (s *server) vaultLoad(w http.ResponseWriter, r *http.Request, u SessionUser
 	}
 	ix, err := vaultart.BuildIndex(ctx, h, set, ownerID, settings, s.now())
 	if err != nil {
-		return fail(err)
+		return nil, vaultart.Settings{}, "", nil, err
 	}
-	return &vaultReq{cx: cx, release: release, set: set, settings: settings, ownerID: ownerID,
-		ix: ix.WithCanWrite(vaultart.CanWrite(cx))}, true
+	return set, settings, ownerID, ix, nil
+}
+
+// articlePath returns the Vault path of the article for an entity (its own,
+// or its topic's), or "" when there is none or the index cannot be built. It
+// is how the Graph and Memories pages offer "See article"; a failure only
+// means no link.
+func (s *server) articlePath(ctx context.Context, cx *cortex.Cortex, entityID string) string {
+	if entityID == "" {
+		return ""
+	}
+	_, _, _, ix, err := s.articleIndex(ctx, cx)
+	if err != nil {
+		return ""
+	}
+	p, _ := ix.PathFor(entityID)
+	return p
 }
 
 // vaultRedirect redirects with the same no-store policy as the pages.

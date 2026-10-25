@@ -173,6 +173,33 @@ func (h *Handle) DeleteArticles(ctx context.Context, ids ...string) error {
 	return nil
 }
 
+// PurgeOrphanArticles deletes the user's article rows whose subject is gone.
+// It needs no key: it compares plaintext ids only.
+//
+// An entity article is orphaned when no entities row has its subject id. A
+// soft-deleted entity still has its row (it can be restored for 30 days), so
+// its article is kept until the entity itself is hard-purged. A topic article
+// is orphaned when its subject id is not a persisted topic. Topic membership
+// is sealed, so this method never judges a topic by its members: topic rows
+// leave vault_topics only when a keyed page load re-clusters (PutTopics
+// applies the diff), and the article of a vanished topic is purged afterwards.
+// The limit this implies: a topic that is dropped, for example because a
+// higher threshold stopped it qualifying, loses its cached article at the next
+// purge, while an entity article that merely stops qualifying is kept. It
+// returns the number of rows removed.
+func (h *Handle) PurgeOrphanArticles(ctx context.Context, userID string) (int, error) {
+	res, err := h.DB.ExecContext(ctx,
+		`DELETE FROM vault_articles a WHERE a.user_id = ? AND (
+		   (a.kind = 'entity' AND NOT EXISTS (SELECT 1 FROM entities e WHERE e.user_id = a.user_id AND e.id = a.subject_id))
+		OR (a.kind = 'topic' AND NOT EXISTS (SELECT 1 FROM vault_topics t WHERE t.user_id = a.user_id AND t.topic_id = a.subject_id)))`,
+		userID)
+	if err != nil {
+		return 0, fmt.Errorf("cortex: purge orphan articles: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // TopicRow is one persisted topic cluster.
 type TopicRow struct {
 	TopicID, ShortID, Slug, Title, WrittenTitle string

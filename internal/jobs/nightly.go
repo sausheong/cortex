@@ -36,6 +36,7 @@ type NightlyOptions struct {
 type NightlyReport struct {
 	Maintained, Skipped, Failed int
 	UsersPurged                 int
+	ArticlesPurged              int
 	Errors                      map[string]string // userID -> recorded error
 }
 
@@ -249,6 +250,11 @@ func purgeAll(ctx context.Context, root *cortex.Cortex, st *accounts.Store, o *N
 		}
 		_, err := root.ForUser(u.ID).PurgeDeleted(ctx, window)
 		keep(err)
+		// Key-free: ids only. Runs after PurgeDeleted so articles of entities
+		// hard-purged tonight go the same night.
+		n, err := root.ForUser(u.ID).StoreHandle().PurgeOrphanArticles(ctx, u.ID)
+		keep(err)
+		rep.ArticlesPurged += n
 	}
 	keep(st.PurgeEnrollments(ctx, now))
 	for _, q := range []string{

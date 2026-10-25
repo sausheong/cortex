@@ -81,6 +81,7 @@
   <aside class="graph-panel" aria-labelledby="panel-h">
     <h2 id="panel-h">{{.Name}}</h2>
     <p class="panel-type">{{.Shape}}<span>{{.TypeLabel}}</span>{{if .IsOwner}} <span class="note">&middot; This is you</span>{{end}}</p>
+    {{if .ArticleHref}}<p class="panel-article"><a href="{{.ArticleHref}}">See article</a></p>{{end}}
     <dl class="facts">
       <div><dt>{{if .IsOwner}}Saved about you{{else}}Mentioned in{{end}}</dt><dd>{{n .Mentions}} {{if eq .Mentions 1}}memory{{else}}memories{{end}}</dd></div>
       <div><dt>Relationships</dt><dd>{{n .RelTotal}}</dd></div>

@@ -77,6 +77,8 @@ type memoriesView struct {
 	// Entity limits the list to memories that mention one entity; EntityName
 	// is its name, empty when it is not the viewer's.
 	Entity, EntityName string
+	// ArticleHref links the filtered entity's Vault article when one applies.
+	ArticleHref string
 	// ID limits the list to one memory (a deep link from a Vault article).
 	ID        string
 	From, To  string
@@ -435,6 +437,7 @@ func (s *server) memoriesPage(w http.ResponseWriter, r *http.Request, u SessionU
 	if v.Entity != "" {
 		if e, err := cx.GetEntity(ctx, v.Entity); err == nil {
 			v.EntityName = e.Name
+			v.ArticleHref = s.articlePath(ctx, cx, e.ID)
 		}
 	}
 	v.ConnNames = map[string]string{}
