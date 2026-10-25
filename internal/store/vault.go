@@ -119,6 +119,33 @@ func (h *Handle) ListArticleMeta(ctx context.Context) ([]ArticleRow, error) {
 	return out, rows.Err()
 }
 
+// ListArticleSlugs opens only the sealed slug of every article, keyed by
+// subject id. It never touches the article body. A slug that cannot be opened
+// is left out so callers fall back to a derived one.
+func (h *Handle) ListArticleSlugs(ctx context.Context) (map[string]string, error) {
+	if err := h.RequireKey(); err != nil {
+		return nil, err
+	}
+	rows, err := h.DB.QueryContext(ctx,
+		`SELECT subject_id, slug_ct FROM vault_articles WHERE user_id = ?`, h.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("cortex: list article slugs: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id string
+		var ct []byte
+		if err := rows.Scan(&id, &ct); err != nil {
+			return nil, err
+		}
+		if s, err := h.OpenOptStr(tblVaultArticles, id, "slug", ct); err == nil && s != "" {
+			out[id] = s
+		}
+	}
+	return out, rows.Err()
+}
+
 // MarkArticleStale flags an article as needing a rewrite.
 func (h *Handle) MarkArticleStale(ctx context.Context, subjectID string) error {
 	if err := h.RequireKey(); err != nil {
