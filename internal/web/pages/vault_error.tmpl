@@ -1,0 +1,14 @@
+{{template "layout" .}}
+{{define "title"}}Article{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>This article is not ready</h1>
+<p class="lede" role="alert">{{.Message}}</p>
+{{if .Action}}<form method="post" action="{{vpath .Path}}/{{.Action}}">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <button class="btn" data-pending="Retrying&hellip;">{{if eq .Action "rewrite"}}Rewrite{{else}}Retry{{end}}</button>
+</form>{{end}}
+{{if .Settings}}<p><a class="btn" href="/settings">Open settings</a></p>{{end}}
+<p class="act">{{if .BackToPage}}<a href="{{vpath .Path}}">Back to the article</a> &middot; {{end}}<a href="/vault">Back to the vault</a></p>
+{{end}}
+{{end}}

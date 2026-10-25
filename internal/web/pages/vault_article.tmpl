@@ -1,0 +1,35 @@
+{{template "layout" .}}
+{{define "title"}}{{.Data.Title}}{{end}}
+{{define "artitem"}}{{range .Segs}}{{if .Href}}<a class="wikilink" href="{{vpath .Href}}">{{.Text}}</a>{{else}}{{.Text}}{{end}}{{end}}{{range .Marks}}<sup class="src"><a href="{{.Href}}" aria-label="Source {{.N}}">[{{.N}}]</a></sup>{{end}}{{end}}
+{{define "content"}}
+{{with .Data}}
+<article class="vault-art">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/vault">Vault</a></nav>
+<h1>{{.Title}}</h1>
+{{if .Descriptor}}<p class="note art-desc">{{.Descriptor}}</p>{{end}}
+{{if .Note}}<p class="notice" role="status">{{.Note}}</p>{{end}}
+{{if .HasLead}}<p class="art-lead">{{template "artitem" .Lead}}</p>{{end}}
+{{range .Sections}}<section class="art-sec">
+<h2>{{.Heading}}</h2>
+{{range .Blocks}}{{if .Bullets}}<ul>{{range .Items}}<li>{{template "artitem" .}}</li>{{end}}</ul>{{else}}{{range .Items}}<p>{{template "artitem" .}}</p>{{end}}{{end}}{{end}}
+</section>
+{{end}}
+{{if .Related}}<section class="art-sec" aria-labelledby="rel-h">
+<h2 id="rel-h">Related</h2>
+<ul class="art-rel">{{range .Related}}<li><a href="{{vpath .Path}}">{{.Name}}</a>{{if .Descriptor}} <span class="note">{{.Descriptor}}</span>{{end}}</li>{{end}}</ul>
+</section>{{end}}
+{{if .Also}}<p class="note art-also">Also mentioned: {{range $i, $n := .Also}}{{if $i}}, {{end}}{{$n}}{{end}}</p>{{end}}
+{{if .Sources}}<section class="art-sec" aria-labelledby="src-h">
+<h2 id="src-h">Sources</h2>
+<ol class="art-src">{{range .Sources}}<li value="{{.N}}"><a href="{{.Href}}">{{if .Text}}{{.Text}}{{else}}Memory{{end}}</a>{{if .Ago}} <span class="note"><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></span>{{end}}</li>{{end}}</ol>
+</section>{{end}}
+<footer class="art-foot">
+<p class="note">Written <time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time> from {{if eq .Memories 1}}1 memory{{else}}{{n .Memories}} memories{{end}}.{{if .MemoriesHref}} <a href="{{.MemoriesHref}}">See memories</a> &middot; <a href="{{.GraphHref}}">See in graph</a>{{end}}</p>
+<form method="post" action="{{vpath .Path}}/rewrite">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <button class="btn-secondary" data-pending="Rewriting&hellip;">Rewrite</button>
+</form>
+</footer>
+</article>
+{{end}}
+{{end}}

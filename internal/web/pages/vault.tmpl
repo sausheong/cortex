@@ -1,47 +1,27 @@
 {{template "layout" .}}
 {{define "title"}}Vault{{end}}
-{{define "vaultrows"}}{{with .Data}}
-<nav class="subnav vault-tabs" aria-label="Page type">{{range .Tabs}}<a href="{{.Href}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
-<p class="note vault-count" role="status" id="vault-count">{{if .Filtered}}{{n .Total}} of {{n .All}} pages{{else}}{{n .All}} pages{{end}}</p>
-{{if .Rows}}<ul class="vault-files">
-{{range .Rows}}<li><a class="vf" href="/vault/{{vpath .Path}}" title="{{.Path}}">{{.Name}}</a><span class="vf-meta">{{.Type}}{{if .Ago}} &middot; <time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{end}}</span></li>
-{{end}}</ul>{{else}}
-<div class="empty-state">{{if .Filtered}}<strong>No pages match.</strong> <span class="note">Try a shorter name, or <a href="/vault">show every page</a>.</span>{{else}}<strong>The vault is empty.</strong> <span class="note">Pages appear here once an assistant has saved memories about people, organisations or topics.</span>{{end}}</div>{{end}}
-{{if or .Prev .Next}}<p class="pager" aria-label="Pages">{{if .Prev}}<a href="/vault?{{if .Query}}{{.Query}}&amp;{{end}}page={{.Prev}}">Previous</a>{{end}}
-{{if .Next}}<a href="/vault?{{if .Query}}{{.Query}}&amp;{{end}}page={{.Next}}">Next</a>{{end}}</p>{{end}}
-{{end}}{{end}}
+{{define "vaultrows"}}<ul class="vault-files">
+{{range .}}<li><a class="vf" href="{{vpath .Path}}">{{.Name}}</a><span class="vf-meta">{{if .Descriptor}}{{.Descriptor}} &middot; {{end}}{{if .Note}}{{.Note}} &middot; {{end}}{{if .Written}}written <time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time>{{else}}not written yet{{end}}</span></li>
+{{end}}</ul>{{end}}
 {{define "content"}}
 {{with .Data}}
 <h1>Vault</h1>
-<p class="lede">A read-only copy of what cortex knows, as linked notes you can open in Obsidian.</p>
-<p class="act"><a href="/vault/download">Download them as a .zip</a></p>
-<div class="breakout">
-  <form method="get" action="/vault" class="vault-filter" role="search">
-    <label>Find a page <input id="vault-q" name="q" type="search" value="{{.Q}}" autocomplete="off" placeholder="Name"></label>
-    {{if .Folder}}<input type="hidden" name="folder" value="{{.Folder}}">{{end}}{{if ne .Sort "name"}}<input type="hidden" name="sort" value="{{.Sort}}">{{end}}
-    <button class="btn-secondary">Search</button>
-  </form>
-  <section class="vault-main" id="vault-results" aria-label="Pages">
-    {{template "vaultrows" $}}
-  </section>
-</div>
-<script nonce="{{$.Nonce}}">
-(function(){
-var q=document.getElementById("vault-q"),res=document.getElementById("vault-results");
-if(!q||!res||!window.fetch)return;
-var t,n=0,form=q.form;
-function run(){
-  var p=new URLSearchParams(new FormData(form));p.delete("page");
-  var u="/vault?"+p.toString(),id=++n;
-  fetch(u,{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(h){
-    if(id!==n)return;
-    var d=new DOMParser().parseFromString(h,"text/html"),r=d.getElementById("vault-results");
-    if(r){res.innerHTML=r.innerHTML;history.replaceState(null,"",u)}
-  }).catch(function(){});
-}
-q.addEventListener("input",function(){clearTimeout(t);t=setTimeout(run,200)});
-form.addEventListener("submit",function(e){e.preventDefault();run()});
-})();
-</script>
+<p class="lede">One article for each person, project and topic cortex knows well, written from your memories the first time you open it.</p>
+{{if not .CanWrite}}<p class="note">Your chat model cannot write articles. Choose another in <a href="/settings">Settings</a>.</p>{{end}}
+<p class="act"><a href="/vault/download">Download as a .zip</a></p>
+<form method="get" action="/vault" class="vault-filter" role="search">
+  <label>Find an article <input id="vault-q" name="q" type="search" value="{{.Q}}" autocomplete="off" placeholder="Name"></label>
+  <button class="btn-secondary">Search</button>
+</form>
+{{if .Recent}}<section class="vault-sec" aria-labelledby="recent-h">
+<h2 id="recent-h">Recently changed</h2>
+{{template "vaultrows" .Recent}}
+</section>{{end}}
+{{range $i, $sec := .Sections}}<section class="vault-sec" aria-labelledby="sec-{{$i}}">
+<h2 id="sec-{{$i}}">{{$sec.Heading}}</h2>
+{{template "vaultrows" $sec.Rows}}
+</section>
+{{end}}
+{{if not .Sections}}<div class="empty-state">{{if .Searching}}<strong>No articles match.</strong> <span class="note">Only people, projects and topics that have an article are searched. <a href="/vault">Show every article</a>.</span>{{else}}<strong>No articles yet.</strong> <span class="note">A person, project or topic gets one once it has {{n .Threshold}} or more memories, or is directly connected to you.</span>{{end}}</div>{{end}}
 {{end}}
 {{end}}

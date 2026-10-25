@@ -105,7 +105,7 @@ var funcs = template.FuncMap{"vpath": EscapePath, "n": fmtAny}
 // name ("signin", "home", "settings", "notice").
 func Load() map[string]*Template {
 	out := map[string]*Template{}
-	for _, n := range []string{"signin", "enroll", "unlock", "home", "settings", "notice", "consent", "connections", "memories", "graph", "deleted", "account", "compaction", "compaction_start", "confirm", "vault", "vault_page", "vault_missing"} {
+	for _, n := range []string{"signin", "enroll", "unlock", "home", "settings", "notice", "consent", "connections", "memories", "graph", "deleted", "account", "compaction", "compaction_start", "confirm", "vault", "vault_article", "vault_writing", "vault_error", "vault_missing"} {
 		out[n] = template.Must(template.New("layout.tmpl").Funcs(funcs).ParseFS(files, "layout.tmpl", n+".tmpl"))
 	}
 	return out

@@ -3,8 +3,6 @@ package web
 import (
 	"archive/zip"
 	"bytes"
-	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"os"
@@ -49,139 +47,6 @@ func TestVaultRequiresSignIn(t *testing.T) {
 	}
 }
 
-func TestVaultListScopedAndFiltered(t *testing.T) {
-	e, _, _ := vaultEnv(t)
-	b, _ := e.root.CreateUser(t.Context(), "g-bob", "bob@x.test", "Bob", true)
-	if err := e.cx(b.ID).PutEntity(t.Context(), &cortex.Entity{Type: "person", Name: "Secret Bob"}); err != nil {
-		t.Fatal(err)
-	}
-	resp, body := e.get("/vault")
-	if resp.StatusCode != 200 {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
-	for _, want := range []string{"people/alice-chen.md", "organizations/stripe.md", "index.md", "sources/notes-intro-md.md", "People", "Organisations"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("list missing %q", want)
-		}
-	}
-	if strings.Contains(body, "Secret Bob") || strings.Contains(body, "secret-bob") {
-		t.Fatal("list shows another user's file")
-	}
-	// Index is first.
-	if strings.Index(body, `href="/vault/index.md"`) > strings.Index(body, `href="/vault/organizations/stripe.md"`) {
-		t.Error("index.md should come first")
-	}
-	_, body = e.get("/vault?q=stri")
-	if !strings.Contains(body, "organizations/stripe.md") || strings.Contains(body, "people/alice-chen.md") {
-		t.Errorf("filter wrong: %s", body)
-	}
-	_, body = e.get("/vault?folder=people")
-	if !strings.Contains(body, "people/alice-chen.md") || strings.Contains(body, "organizations/stripe.md") {
-		t.Errorf("folder wrong")
-	}
-	// Alice cannot open Bob's page even with the exact path.
-	if resp, _ := e.get("/vault/people/secret-bob.md"); resp.StatusCode != 404 {
-		t.Fatalf("foreign page: status %d, want 404", resp.StatusCode)
-	}
-}
-
-func TestVaultSortAndPaging(t *testing.T) {
-	e, c, _ := vaultEnv(t)
-	for i := 0; i < 130; i++ {
-		if err := c.PutEntity(t.Context(), &cortex.Entity{Type: "concept", Name: fmt.Sprintf("Topic %03d", i)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	_, body := e.get("/vault?folder=concepts")
-	if !strings.Contains(body, "concepts/topic-000.md") || strings.Contains(body, "concepts/topic-129.md") || !strings.Contains(body, "page=2") {
-		t.Fatalf("page 1 wrong")
-	}
-	_, body = e.get("/vault?folder=concepts&page=2")
-	if !strings.Contains(body, "concepts/topic-129.md") || strings.Contains(body, "concepts/topic-000.md") {
-		t.Fatalf("page 2 wrong")
-	}
-	if _, body = e.get("/vault"); strings.Contains(body, "Sort by") {
-		t.Fatal("vault should not offer a sort control")
-	}
-}
-
-func TestVaultPageRendersLinksAndBacklinks(t *testing.T) {
-	e, c, _ := vaultEnv(t)
-	al, _ := c.FindEntities(t.Context(), cortex.EntityFilter{NameLike: "Alice Chen"})
-	m := &cortex.Memory{Content: "Works with [[people/ghost|Ghost Person]] and see [[organizations/stripe|Stripe]]", EntityIDs: []string{al[0].ID}, Confidence: 1}
-	if err := c.PutMemory(t.Context(), m); err != nil {
-		t.Fatal(err)
-	}
-	resp, body := e.get("/vault/people/alice-chen.md")
-	if resp.StatusCode != 200 {
-		t.Fatalf("status %d", resp.StatusCode)
-	}
-	if !strings.Contains(body, `<a class="wikilink" href="/vault/organizations/stripe.md">Stripe</a>`) {
-		t.Errorf("resolved wikilink missing: %s", body)
-	}
-	if !strings.Contains(body, `<span class="unresolved" title="No page with this name">Ghost Person</span>`) || strings.Contains(body, `href="/vault/people/ghost`) {
-		t.Errorf("unresolved link wrong")
-	}
-	if !strings.Contains(body, "Engineer") || !strings.Contains(body, "Details") || !strings.Contains(body, `class="props"`) {
-		t.Errorf("properties block missing")
-	}
-	if !strings.Contains(body, "/graph?center="+al[0].ID) || !strings.Contains(body, "/memories?entity="+al[0].ID) {
-		t.Errorf("graph/memories links missing")
-	}
-	_, body = e.get("/vault/organizations/stripe.md")
-	if !strings.Contains(body, `id="bl-h">Backlinks`) || !strings.Contains(body, `href="/vault/people/alice-chen.md"`) || !strings.Contains(body, "works at") || strings.Contains(body, "works_at") {
-		t.Errorf("backlinks missing: %s", body)
-	}
-	if strings.Count(body, "Backlinks") != 1 {
-		t.Errorf("backlinks section duplicated")
-	}
-}
-
-func TestVaultViewSourceIsExporterOutput(t *testing.T) {
-	e, c, _ := vaultEnv(t)
-	set, err := vault.Build(t.Context(), c, e.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want string
-	for _, f := range set.Files {
-		if f.Path == "people/alice-chen.md" {
-			want = f.Content
-		}
-	}
-	_, body := e.get("/vault/people/alice-chen.md?view=source")
-	m := regexp.MustCompile(`(?s)<pre class="vault-source"[^>]*><code>(.*?)</code></pre>`).FindStringSubmatch(body)
-	if m == nil {
-		t.Fatal("no source block")
-	}
-	got := html.UnescapeString(m[1])
-	norm := regexp.MustCompile(`exported_at: \S+`)
-	if norm.ReplaceAllString(got, "x") != norm.ReplaceAllString(want, "x") {
-		t.Fatalf("source differs:\n%s\n---\n%s", got, want)
-	}
-}
-
-func TestVaultXSSInert(t *testing.T) {
-	e, c, _ := vaultEnv(t)
-	al, _ := c.FindEntities(t.Context(), cortex.EntityFilter{NameLike: "Alice Chen"})
-	evil := "<script>alert(1)</script> <img src=x onerror=alert(2)> [click](javascript:alert(3)) [[<b>x</b>|<script>alert(4)</script>]] <a href=\"javascript:alert(5)\">z</a>"
-	if err := c.PutMemory(t.Context(), &cortex.Memory{Content: evil, EntityIDs: []string{al[0].ID}, Confidence: 1}); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []string{"/vault/people/alice-chen.md", "/vault/people/alice-chen.md?view=source", "/vault/index.md", "/vault"} {
-		_, body := e.get(p)
-		low := strings.ToLower(body)
-		if regexp.MustCompile(`<[^>]+\sonerror=`).MatchString(low) {
-			t.Errorf("%s: live onerror attribute", p)
-		}
-		for _, bad := range []string{"<script>alert", "<img src=x", "href=\"javascript", "<b>x</b>"} {
-			if strings.Contains(low, bad) {
-				t.Errorf("%s: contains %q", p, bad)
-			}
-		}
-	}
-}
-
 func TestRenderMarkdownSafe(t *testing.T) {
 	none := func(string) (string, bool) { return "", false }
 	out := string(renderMarkdown("<script>x</script>\n\n[a](javascript:alert(1)) [b](https://ok.test) ![i](data:text/html,x)\n\n<https://auto.test>", none))
@@ -190,24 +55,6 @@ func TestRenderMarkdownSafe(t *testing.T) {
 	}
 	if !strings.Contains(out, `rel="noopener noreferrer nofollow" href="https://ok.test"`) {
 		t.Fatalf("external link lost: %s", out)
-	}
-}
-
-func TestVaultTraversalIs404(t *testing.T) {
-	e, _, _ := vaultEnv(t)
-	for _, p := range []string{
-		"/vault/..%2f..%2fetc%2fpasswd.md", "/vault/%2e%2e/%2e%2e/etc/passwd", "/vault/people/..%2f..%2findex.md.bak",
-		"/vault/people/alice-chen", "/vault/people/alice-chen.md/", "/vault/PEOPLE/alice-chen.md", "/vault//people/alice-chen.md",
-		"/vault/people%2f..%2fpeople%2falice-chen.md%00", "/vault/.cortex-export.json", "/vault/log.md", "/vault/_archive/x.md",
-		"/vault/people/", "/vault/nonexistent.md",
-	} {
-		resp, body := e.get(p)
-		if resp.StatusCode == 200 || strings.Contains(body, "root:") {
-			t.Errorf("%s: status %d", p, resp.StatusCode)
-		}
-	}
-	if resp, _ := e.get("/vault/people/alice-chen.md"); resp.StatusCode != 200 {
-		t.Fatalf("control: %d", resp.StatusCode)
 	}
 }
 
@@ -283,28 +130,6 @@ func TestVaultZipScopedAndRateLimited(t *testing.T) {
 	}
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("last status %d, want 429", last)
-	}
-}
-
-func TestVaultCacheInvalidatesOnNewMemory(t *testing.T) {
-	e, c, _ := vaultEnv(t)
-	_, body := e.get("/vault/people/alice-chen.md")
-	if strings.Contains(body, "loves climbing") {
-		t.Fatal("precondition")
-	}
-	_, body = e.get("/vault/people/alice-chen.md") // served from cache
-	al, _ := c.FindEntities(t.Context(), cortex.EntityFilter{NameLike: "Alice Chen"})
-	if err := c.PutMemory(t.Context(), &cortex.Memory{Content: "loves climbing", EntityIDs: []string{al[0].ID}, Confidence: 1}); err != nil {
-		t.Fatal(err)
-	}
-	_, body = e.get("/vault/people/alice-chen.md")
-	if !strings.Contains(body, "loves climbing") {
-		t.Fatalf("stale page after new memory")
-	}
-	// A brand-new entity shows up in the list too.
-	_ = c.PutEntity(t.Context(), &cortex.Entity{Type: "event", Name: "Launch Day"})
-	if _, body = e.get("/vault"); !strings.Contains(body, "events/launch-day.md") {
-		t.Fatal("new entity missing from list")
 	}
 }
 

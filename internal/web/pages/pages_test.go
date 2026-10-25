@@ -84,11 +84,11 @@ func TestTemplatesInlineScriptsCarryNonce(t *testing.T) {
 	}
 }
 
-// Vault hrefs percent-encode each path segment, so a name with ?, # or %
-// still opens the right page.
+// Vault hrefs are built with one helper that percent-encodes each path
+// segment, so a slug with ?, # or % still opens the right page.
 func TestVaultHrefsEscapePath(t *testing.T) {
-	const path = "people/a b?c#d%e.md"
-	const want = `/vault/people/a%20b%3Fc%23d%25e.md`
+	const path = "/vault/people/a b?c#d%e"
+	const want = `/vault/people/a%20b%3Fc%23d%25e`
 	run := func(name string, data any) string {
 		var b strings.Builder
 		if err := Load()[name].Execute(&b, Page{Data: data, SignedIn: true}); err != nil {
@@ -96,17 +96,49 @@ func TestVaultHrefsEscapePath(t *testing.T) {
 		}
 		return b.String()
 	}
-	list := run("vault", map[string]any{"Rows": []map[string]any{{"Path": path, "Name": "x"}}})
-	if !strings.Contains(list, `href="`+want+`"`) {
-		t.Errorf("list href not escaped: %s", list)
+	row := map[string]any{"Path": path, "Name": "x"}
+	home := run("vault", map[string]any{"CanWrite": true, "Sections": []map[string]any{{"Heading": "People", "Rows": []map[string]any{row}}},
+		"Recent": []map[string]any{row}})
+	if got := strings.Count(home, `href="`+want+`"`); got != 2 {
+		t.Errorf("home: %d escaped hrefs, want 2 (recent, section): %s", got, home)
 	}
-	page := run("vault_page", map[string]any{"Path": path, "Title": "t",
-		"Backlinks": []map[string]any{{"Path": path, "Name": "n"}}})
-	if got := strings.Count(page, `href="`+want+`"`); got != 2 {
-		t.Errorf("page: %d escaped hrefs, want 2 (preview, backlink): %s", got, page)
+	rel := map[string]any{"Path": path, "Name": "n"}
+	art := run("vault_article", map[string]any{"Title": "t", "Path": path, "Memories": 3, "Related": []map[string]any{rel},
+		"HasLead": true, "Lead": map[string]any{"Segs": []map[string]any{{"Text": "See ", "Href": ""}, {"Text": "n", "Href": path}}, "Marks": []map[string]any{{"N": 1, "Href": "/memories?id=m1"}}}})
+	if got := strings.Count(art, `href="`+want+`"`); got != 2 {
+		t.Errorf("article: %d escaped hrefs, want 2 (inline link, related): %s", got, art)
 	}
-	if !strings.Contains(page, `href="`+want+`?view=source"`) {
-		t.Errorf("source href not escaped")
+	if !strings.Contains(art, `action="`+want+`/rewrite"`) {
+		t.Errorf("rewrite action not escaped: %s", art)
+	}
+	if !strings.Contains(art, `<sup class="src"><a href="/memories?id=m1" aria-label="Source 1">[1]</a></sup>`) {
+		t.Errorf("source marker wrong: %s", art)
+	}
+	errPage := run("vault_error", map[string]any{"Message": "m", "Action": "retry", "Path": path})
+	if !strings.Contains(errPage, `action="`+want+`/retry"`) {
+		t.Errorf("retry action not escaped: %s", errPage)
+	}
+}
+
+// The writing page refreshes by itself with a static meta tag, announces
+// itself as a status and says nothing about the subject.
+func TestVaultWritingTemplate(t *testing.T) {
+	for _, busy := range []bool{false, true} {
+		var b strings.Builder
+		if err := Load()["vault_writing"].Execute(&b, Page{Data: map[string]any{"Busy": busy}, SignedIn: true, Nonce: "n"}); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		if !strings.Contains(out, `<meta http-equiv="refresh" content="3">`) || !strings.Contains(out, `role="status"`) {
+			t.Errorf("busy=%v: %s", busy, out)
+		}
+		want := "Writing this article. It will appear here in a moment."
+		if busy {
+			want = "Other articles are being written first. This one will start shortly."
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("busy=%v: copy missing", busy)
+		}
 	}
 }
 

@@ -18,8 +18,8 @@ import (
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/vaultart"
 	"github.com/sausheong/cortex/internal/web/pages"
-	"github.com/sausheong/cortex/internal/workset"
 )
 
 //go:embed static
@@ -89,7 +89,8 @@ type server struct {
 	unlockUser   *accounts.Limiter
 	unlockIP     *accounts.Limiter
 	recoveryUser *accounts.Limiter
-	vcache       vaultCache
+	// art writes and caches Vault articles (in-process, bounded).
+	art *vaultart.Writer
 
 	// Seams for tests.
 	testProvider func(ctx context.Context, s accounts.Settings) error
@@ -121,10 +122,7 @@ func newServer(cfg Config, root *cortex.Cortex, st *accounts.Store, opts Options
 	s.testProvider = func(ctx context.Context, set accounts.Settings) error {
 		return accounts.TestProvider(ctx, set, accounts.SafeClient(st.AllowPrivate, accounts.ChatBodyCap))
 	}
-	workset.OnEvict(func(userID string) {
-		s.vcache.drop(userID)
-		s.vcache.sweep(s.now())
-	})
+	s.art = vaultart.NewWriter(vaultart.Deps{Root: root, Now: now, Logger: cfg.Logger})
 	return s
 }
 

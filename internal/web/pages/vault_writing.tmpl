@@ -1,0 +1,11 @@
+{{template "layout" .}}
+{{define "title"}}Writing an article{{end}}
+{{define "head"}}<meta http-equiv="refresh" content="3">{{end}}
+{{define "content"}}
+{{with .Data}}
+<h1>Writing this article</h1>
+<p class="lede" role="status">{{if .Busy}}Other articles are being written first. This one will start shortly.{{else}}Writing this article. It will appear here in a moment.{{end}}</p>
+<p class="note">This page refreshes by itself. You can leave it and come back.</p>
+<p class="act"><a href="/vault">Back to the vault</a></p>
+{{end}}
+{{end}}

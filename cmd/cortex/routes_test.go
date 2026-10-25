@@ -190,12 +190,17 @@ func TestServeRouteInventory(t *testing.T) {
 		if rec = do("GET", "/graph/data", "", false, nil); rec.Code != 401 {
 			t.Errorf("/graph/data signed out: %d, want 401", rec.Code)
 		}
-		for _, p := range []string{"/graph", "/vault", "/vault/index.md"} {
+		for _, p := range []string{"/graph", "/vault"} {
 			rec = do("GET", p, "", true, nil)
 			if rec.Code != 200 {
 				t.Errorf("%s signed in: %d %.120s", p, rec.Code, rec.Body)
 			}
 			secHeaders(t, p, rec)
+		}
+		// The old markdown index now lives at Vault home.
+		rec = do("GET", "/vault/index.md", "", true, nil)
+		if rec.Code != 302 || rec.Header().Get("Location") != "/vault" {
+			t.Errorf("/vault/index.md signed in: %d %q, want 302 to /vault", rec.Code, rec.Header().Get("Location"))
 		}
 		rec = do("GET", "/graph/data", "", true, nil)
 		var gd map[string]any

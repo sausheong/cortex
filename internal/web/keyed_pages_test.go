@@ -25,6 +25,11 @@ func TestContentPagesReadEncryptedDataWithSessionKey(t *testing.T) {
 	if err := cx.PutMemory(t.Context(), &cortex.Memory{Content: "Zxqmemorytext is remembered", EntityIDs: []string{ent.ID}}); err != nil {
 		t.Fatal(err)
 	}
+	for i := 0; i < 2; i++ { // enough memories to earn an article
+		if err := cx.PutMemory(t.Context(), &cortex.Memory{Content: "more about the person", EntityIDs: []string{ent.ID}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, c := range []struct{ path, want string }{
 		{"/memories", "Zxqmemorytext"},
 		{"/vault", "Zxqgraphperson"},
