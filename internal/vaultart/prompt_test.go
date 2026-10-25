@@ -12,7 +12,7 @@ func TestSystemPromptHasNoMemoryContent(t *testing.T) {
 			if a != b {
 				t.Fatal("prompt must be deterministic")
 			}
-			if strings.ContainsAny(a, "—–") {
+			if strings.ContainsAny(a, "\u2014\u2013") {
 				t.Fatalf("%s/%s has a dash", kind, l)
 			}
 			for _, want := range []string{"British English", "you met Kabir", "possibly", "Linkable", "never"} {

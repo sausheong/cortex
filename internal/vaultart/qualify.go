@@ -94,7 +94,7 @@ func typeLabel(kind string) string {
 	return "Topic"
 }
 
-var dashes = strings.NewReplacer("—", "-", "–", "-")
+var dashes = strings.NewReplacer("\u2014", "-", "\u2013", "-")
 
 // descriptor is the entity's own role, description or title when it has one,
 // else the type label. It is never model-written, so it carries no claim the

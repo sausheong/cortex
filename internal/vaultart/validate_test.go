@@ -48,11 +48,11 @@ func TestValidateLeadNeedsSource(t *testing.T) {
 }
 
 func TestValidateStripsEmAndEnDashes(t *testing.T) {
-	raw := model.Article{Title: "A — B", Lead: "He — she met 2015–2017 and then–later.", LeadSources: []string{"m1"},
-		Sections: []model.ArticleSection{{Heading: "H—x", Items: []model.ArticleItem{item("a—b", "m1")}}}}
+	raw := model.Article{Title: "A \u2014 B", Lead: "He \u2014 she met 2015\u20132017 and then\u2013later.", LeadSources: []string{"m1"},
+		Sections: []model.ArticleSection{{Heading: "H\u2014x", Items: []model.ArticleItem{item("a\u2014b", "m1")}}}}
 	r, _ := Validate(raw, ids, nil, ForTopic())
 	all := r.Title + r.Lead + r.Sections[0].Heading + r.Sections[0].Items[0].Text
-	if strings.ContainsAny(all, "—–") {
+	if strings.ContainsAny(all, "\u2014\u2013") {
 		t.Fatal(all)
 	}
 	if !strings.Contains(r.Lead, "2015-2017") {

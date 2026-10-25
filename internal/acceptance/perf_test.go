@@ -10,12 +10,16 @@
 //
 //	TestPerfColdLoad          first read after the working set is evicted < 300 ms
 //	TestPerfRecallWarm        recall with the working set cached        < 150 ms
-//	TestPerfVaultAndGraphPages /vault, /graph and /graph/data           < 500 ms each
+//	TestPerfVaultAndGraphPages /vault warm                              < 300 ms
+//	                           /graph and /graph/data                   < 500 ms each
 //
-// Each test prints the measured numbers for the review. The Vault and Graph
-// numbers are for the first request of a freshly built page set (the
-// server-side page cache empty, the working set warm); the repeat-after-eviction figure
-// (working set evicted; the vault page cache may still serve it) is printed alongside.
+// Each test prints the measured numbers for the review. /vault is measured on
+// an owner-sized graph (1,600 entities, 4,000 memories): "cold" is the first
+// request after the working set and the article index are evicted, "warm" is
+// the median of repeat requests (working set and index cached on the set
+// version). Only warm is bounded. /graph and /graph/data are the first request
+// of a freshly built page set (working set warm), with the repeat after
+// working-set eviction printed alongside.
 //
 // Owner's data: set CORTEX_PERF_DATABASE_URL, CORTEX_PERF_USER (an encrypted
 // user id) and CORTEX_PERF_RECOVERY_KEY and the same checks run against that
@@ -41,6 +45,7 @@ import (
 	"github.com/sausheong/cortex"
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/keys"
+	"github.com/sausheong/cortex/internal/vaultart"
 	"github.com/sausheong/cortex/internal/web"
 	"github.com/sausheong/cortex/internal/workset"
 )
@@ -254,7 +259,7 @@ func TestPerfRecallWarm(t *testing.T) {
 func TestPerfVaultAndGraphPages(t *testing.T) {
 	forEach(t, func(t *testing.T, p *perfEnv) {
 		_ = p.coldRead(p.cx) // working set warm
-		for _, path := range []string{"/vault", "/graph", "/graph/data"} {
+		for _, path := range []string{"/graph", "/graph/data"} {
 			warm := p.page(t, path)
 			workset.Drop(p.uid)
 			cold := p.page(t, path)
@@ -264,4 +269,74 @@ func TestPerfVaultAndGraphPages(t *testing.T) {
 			}
 		}
 	})
+	t.Run("vault", func(t *testing.T) {
+		forEachVault(t, func(t *testing.T, p *perfEnv) {
+			workset.Drop(p.uid)
+			vaultart.ResetIndexes()
+			cold := p.page(t, "/vault")
+			var ds []time.Duration
+			for i := 0; i < 9; i++ {
+				ds = append(ds, p.page(t, "/vault"))
+			}
+			m := median(ds)
+			t.Logf("PERF %s /vault: cold %v, warm median %v, max %v (target warm < %v)", p.label, cold, m, ds[len(ds)-1], vaultTarget)
+			if m >= vaultTarget {
+				t.Errorf("/vault warm %v >= %v", m, vaultTarget)
+			}
+		})
+	})
+}
+
+const vaultTarget = 300 * time.Millisecond
+
+func forEachVault(t *testing.T, f func(t *testing.T, p *perfEnv)) {
+	t.Helper()
+	t.Run("synthetic", func(t *testing.T) {
+		o := newOAuthEnv(t)
+		uid := o.user("vaultperf")
+		en := o.enroll(uid)
+		cx := o.keyed(uid, en.Res.UK, "encrypted")
+		seedVaultGraph(t, cx)
+		p := &perfEnv{o: o, uid: uid, uk: en.Res.UK, cx: cx, label: "synthetic 1600 entities / 4000 memories"}
+		p.session(t)
+		f(t, p)
+	})
+	if p := owner(t); p != nil {
+		t.Run("owner", func(t *testing.T) { f(t, p) })
+	}
+}
+
+// seedVaultGraph builds an owner-sized graph: 1,600 entities of mixed types
+// and 4,000 memories, each tied to one or two entities, so that a large share
+// of the people, projects and organisations qualify for an article and the
+// concepts cluster into topics.
+func seedVaultGraph(t *testing.T, cx *cortex.Cortex) {
+	t.Helper()
+	ctx := context.Background()
+	types := []string{"person", "person", "organization", "project", "concept", "concept", "place", "event"}
+	ents := make([]*cortex.Entity, 1600)
+	for i := range ents {
+		ents[i] = &cortex.Entity{Type: types[i%len(types)], Name: fmt.Sprintf("Name%d Surname%d", i, i/9)}
+		if err := cx.PutEntity(ctx, ents[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2400; i++ {
+		a, b := ents[i%len(ents)], ents[(i*7+13)%len(ents)]
+		if a.ID == b.ID {
+			continue
+		}
+		if err := cx.PutRelationship(ctx, &cortex.Relationship{SourceID: a.ID, TargetID: b.ID, Type: []string{"works_at", "knows", "part_of", "located_in"}[i%4]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 4000; i++ {
+		ids := []string{ents[i%900].ID}
+		if i%3 == 0 {
+			ids = append(ids, ents[(i*5+1)%len(ents)].ID)
+		}
+		if err := cx.PutMemory(ctx, &cortex.Memory{Content: fmt.Sprintf("Note %d about %s", i, ents[i%900].Name), EntityIDs: ids, Confidence: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

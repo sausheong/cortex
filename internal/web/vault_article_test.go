@@ -443,27 +443,27 @@ func TestArticleForOwnerIsSecondPerson(t *testing.T) {
 
 func TestArticleProseNoEmDashesButUserDataVerbatim(t *testing.T) {
 	a := newAEnv(t)
-	s := a.seed("person", "Zxqdash — Person", 0)
+	s := a.seed("person", "Zxqdash \u2014 Person", 0)
 	for i := 0; i < 3; i++ {
-		s.Mems = append(s.Mems, a.mem(fmt.Sprintf("Fact %d with a — dash and – another", i), s.ID))
+		s.Mems = append(s.Mems, a.mem(fmt.Sprintf("Fact %d with a \u2014 dash and \u2013 another", i), s.ID))
 	}
 	a.mock.WriteArticleFn = func(ctx context.Context, system string, in cortex.ArticleInput, length string) (cortex.Article, cortex.ArticleUsage, error) {
 		src := []string{in.Memories[0].ID}
-		return cortex.Article{Lead: "He met them — twice – in 2019–2020.", LeadSources: src,
-			Sections: []cortex.ArticleSection{{Heading: "Notes — all", Items: []cortex.ArticleItem{{Text: "Fine — really.", Sources: src}}}}}, cortex.ArticleUsage{}, nil
+		return cortex.Article{Lead: "He met them \u2014 twice \u2013 in 2019\u20132020.", LeadSources: src,
+			Sections: []cortex.ArticleSection{{Heading: "Notes \u2014 all", Items: []cortex.ArticleItem{{Text: "Fine \u2014 really.", Sources: src}}}}}, cortex.ArticleUsage{}, nil
 	}
 	_, body := a.open(s.Path())
 	art := articleBody(body)
 	// Prose is above the Sources list; user data (title, source previews) is verbatim.
 	prose := art[:strings.Index(art, `<section class="art-sec" aria-labelledby="src-h">`)]
-	prose = strings.Replace(prose, "<h1>Zxqdash — Person</h1>", "", 1)
-	if strings.ContainsAny(prose, "—–") {
+	prose = strings.Replace(prose, "<h1>Zxqdash \u2014 Person</h1>", "", 1)
+	if strings.ContainsAny(prose, "\u2014\u2013") {
 		t.Errorf("em or en dash in prose: %s", prose)
 	}
-	if !strings.Contains(body, "<h1>Zxqdash — Person</h1>") {
+	if !strings.Contains(body, "<h1>Zxqdash \u2014 Person</h1>") {
 		t.Error("entity name should be verbatim")
 	}
-	if !strings.Contains(body, "with a — dash and – another") {
+	if !strings.Contains(body, "with a \u2014 dash and \u2013 another") {
 		t.Error("memory text should be verbatim in Sources")
 	}
 }

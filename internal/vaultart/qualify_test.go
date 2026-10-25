@@ -148,7 +148,7 @@ func TestQualifyExcludesAccountLikeAndConcepts(t *testing.T) {
 
 func TestQualifyGroupsOrgsAndEventsWithProjects(t *testing.T) {
 	env := open(t)
-	org := ent(t, env.H, "organization", "Acme", map[string]any{"description": "Maker — of anvils"})
+	org := ent(t, env.H, "organization", "Acme", map[string]any{"description": "Maker \u2014 of anvils"})
 	merchant := ent(t, env.H, "merchant", "Corner Shop", nil)
 	proj := ent(t, env.H, "project", "Apollo", nil)
 	evt := ent(t, env.H, "event", "Launch", map[string]any{"role": "  "})
