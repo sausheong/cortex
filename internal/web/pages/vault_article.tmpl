@@ -7,7 +7,9 @@
 <nav class="crumbs" aria-label="Breadcrumb"><a href="/vault">Vault</a></nav>
 <h1>{{.Title}}</h1>
 {{if .Descriptor}}<p class="note art-desc">{{.Descriptor}}</p>{{end}}
+{{if .Flash}}<p class="notice" role="status">{{.Flash}}</p>{{end}}
 {{if .Note}}<p class="notice" role="status">{{.Note}}</p>{{end}}
+{{if .Waiting}}<p class="note" role="status">A correction is waiting to be included.</p>{{end}}
 {{if .HasLead}}<p class="art-lead">{{template "artitem" .Lead}}</p>{{end}}
 {{range .Sections}}<section class="art-sec">
 <h2>{{.Heading}}</h2>
@@ -23,6 +25,29 @@
 <h2 id="src-h">Sources</h2>
 <ol class="art-src">{{range .Sources}}<li value="{{.N}}"><a href="{{.Href}}">{{if .Text}}{{.Text}}{{else}}Memory{{end}}</a>{{if .Ago}} <span class="note"><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></span>{{end}}</li>{{end}}</ol>
 </section>{{end}}
+<section class="art-fix" aria-labelledby="fix-h">
+<h2 id="fix-h" class="sr-only">Corrections</h2>
+<details class="fold">
+  <summary>Correct this</summary>
+  <form method="post" action="{{vpath .Path}}/correct">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label for="fix-text">What should this article say differently?</label>
+    <textarea id="fix-text" name="text" rows="4" maxlength="2000" required></textarea>
+    <p class="note">Saved as a memory in your voice. The article is rewritten the next time you open it.</p>
+    <div class="actions"><button class="btn-secondary" data-pending="Saving&hellip;">Save correction</button></div>
+  </form>
+</details>
+{{if .Corrections}}<h3 class="art-fix-h">Your corrections ({{n (len .Corrections)}})</h3>
+<ul class="art-fixes">{{range .Corrections}}<li>
+  <p>{{.Text}}</p>
+  <p class="note"><time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time></p>
+  <form method="post" action="{{vpath $.Data.Path}}/undo">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="memory" value="{{.ID}}">
+    <button class="btn-secondary" data-pending="Removing&hellip;" aria-label="Undo the correction from {{.Abs}}">Undo</button>
+  </form>
+</li>{{end}}</ul>{{end}}
+</section>
 <footer class="art-foot">
 <p class="note">Written <time datetime="{{.ISO}}" title="{{.Abs}}">{{.Ago}}</time> from {{if eq .Memories 1}}1 memory{{else}}{{n .Memories}} memories{{end}}.{{if .MemoriesHref}} <a href="{{.MemoriesHref}}">See memories</a> &middot; <a href="{{.GraphHref}}">See in graph</a>{{end}}</p>
 <form method="post" action="{{vpath .Path}}/rewrite">

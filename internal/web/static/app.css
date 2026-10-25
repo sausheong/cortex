@@ -389,6 +389,15 @@ details.more .home-bullets{margin-top:var(--s1)}
 .art-foot{margin:var(--s5) 0 0;padding-top:var(--s3);border-top:1px solid var(--line)}
 .art-foot p{margin:0 0 var(--s3)}
 .art-foot form{margin:0}
+.art-fix{margin:var(--s5) 0 0}
+.art-fix details.fold{margin-top:0}
+.art-fix textarea{margin:var(--s1) 0 var(--s2);line-height:1.5;resize:vertical}
+.art-fix form .actions{margin-top:var(--s2)}
+.art-fix-h{margin:var(--s5) 0 var(--s2);font-size:var(--text-base)}
+.art-fixes{list-style:none;margin:0;padding:0}
+.art-fixes li{padding:var(--s2) 0;border-top:1px solid var(--line)}
+.art-fixes p{margin:0 0 var(--s1);overflow-wrap:anywhere;white-space:pre-wrap}
+.art-fixes form{margin:0}
 .vault-art a.wikilink{text-decoration-thickness:1px;text-underline-offset:3px}
 sup.src{font-size:var(--text-sm);line-height:0;margin-left:2px;white-space:nowrap}
 sup.src a{display:inline-block;min-width:24px;min-height:24px;line-height:24px;text-align:center;box-sizing:border-box;color:var(--muted);text-decoration:none;vertical-align:baseline;position:relative;top:-.35em}

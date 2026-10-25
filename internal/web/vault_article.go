@@ -20,7 +20,28 @@ const (
 	msgBadArticle   = "This article could not be shown. Rewrite it to try again."
 	msgCouldntPre   = "We couldn't update this article just now, so this is the previous version. "
 	sourcePreview   = 140
+
+	msgCorrectLimit = "You have saved many corrections this hour. Try again in a little while."
+	msgBadCorrect   = "Write a correction of up to 2,000 characters, then save it."
+	msgNoCorrection = "That correction could not be found on this article."
+	flashSaved      = "Saved. This article will be rewritten the next time you open it."
+	flashUndone     = "Correction removed. This article will be rewritten the next time you open it."
+	noteWaiting     = "A correction is waiting to be included."
 )
+
+// flashFor maps the note query value to its fixed sentence. Nothing from the
+// request is ever echoed.
+func flashFor(v string) string {
+	switch v {
+	case "saved":
+		return flashSaved
+	case "undone":
+		return flashUndone
+	}
+	return ""
+}
+
+type artCorrection struct{ ID, Text, Ago, Abs, ISO string }
 
 func groupOf(v string) (vaultart.Group, bool) {
 	switch g := vaultart.Group(v); g {
@@ -93,9 +114,15 @@ type articleView struct {
 	Note              string
 	GraphHref         string
 	MemoriesHref      string
+	Flash             string
+	Waiting           bool
+	Corrections       []artCorrection
 }
 
-type vaultWritingView struct{ Busy bool }
+type vaultWritingView struct {
+	Busy  bool
+	Flash string
+}
 
 type vaultErrorView struct {
 	Message string
@@ -251,6 +278,11 @@ func (s *server) buildArticle(vr *vaultReq, sub vaultart.Subject, row *store.Art
 	}
 	v.Also = vr.ix.AlsoMentioned(sub)
 	v.Ago, v.Abs, v.ISO = relTime(now, row.WrittenAt), absTime(row.WrittenAt), row.WrittenAt.UTC().Format(time.RFC3339)
+	for _, c := range vaultart.ListCorrections(vr.set, sub) {
+		v.Corrections = append(v.Corrections, artCorrection{ID: c.ID, Text: c.Text,
+			Ago: relTime(now, c.At), Abs: absTime(c.At), ISO: c.At.UTC().Format(time.RFC3339)})
+	}
+	v.Waiting = row.Stale && len(v.Corrections) > 0
 	if sub.Kind == "entity" {
 		v.GraphHref = "/graph?center=" + url.QueryEscape(sub.ID)
 		v.MemoriesHref = "/memories?entity=" + url.QueryEscape(sub.ID)
@@ -300,7 +332,7 @@ func (s *server) vaultArticle(w http.ResponseWriter, r *http.Request, u SessionU
 	case vaultart.Locked:
 		s.vaultRedirect(w, r, "/unlock?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
 	case vaultart.Writing, vaultart.Busy:
-		s.render(w, r, http.StatusOK, "vault_writing", vaultWritingView{Busy: res.State == vaultart.Busy})
+		s.render(w, r, http.StatusOK, "vault_writing", vaultWritingView{Busy: res.State == vaultart.Busy, Flash: flashFor(r.URL.Query().Get("note"))})
 	case vaultart.RateLimited:
 		s.render(w, r, http.StatusTooManyRequests, "vault_error", vaultErrorView{Message: msg, Path: canon, BackToPage: false})
 	case vaultart.Failed:
@@ -325,6 +357,7 @@ func (s *server) vaultArticle(w http.ResponseWriter, r *http.Request, u SessionU
 		if res.CouldntUpdate {
 			v.Note = msgCouldntPre + msg
 		}
+		v.Flash = flashFor(r.URL.Query().Get("note"))
 		s.render(w, r, http.StatusOK, "vault_article", v)
 	}
 }
@@ -363,4 +396,57 @@ func (s *server) vaultRetry(w http.ResponseWriter, r *http.Request, u SessionUse
 	}
 	s.art.ClearFailure(u.UserID, sub.ID)
 	s.vaultRedirect(w, r, canon, http.StatusSeeOther)
+}
+
+// vaultCorrect saves a correction as a memory about the subject, within the
+// per-user hourly limit, and sends the reader back to the article.
+func (s *server) vaultCorrect(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	vr, ok := s.vaultLoad(w, r, u)
+	if !ok {
+		return
+	}
+	defer vr.release()
+	sub, canon, ok := vaultSubject(vr, r)
+	if !ok {
+		s.vaultMissing(w, r)
+		return
+	}
+	if !s.art.AllowCorrect(u.UserID) {
+		s.render(w, r, http.StatusTooManyRequests, "vault_error", vaultErrorView{Message: msgCorrectLimit, Path: canon, BackToPage: true})
+		return
+	}
+	_, err := vaultart.AddCorrection(r.Context(), vr.cx, sub, r.PostFormValue("text"))
+	switch {
+	case errors.Is(err, vaultart.ErrBadCorrection):
+		s.render(w, r, http.StatusBadRequest, "vault_error", vaultErrorView{Message: msgBadCorrect, Path: canon, BackToPage: true})
+	case err != nil:
+		s.cfg.Logger.Error("vault correct")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		s.vaultRedirect(w, r, canon+"?note=saved", http.StatusSeeOther)
+	}
+}
+
+// vaultUndo removes one of the reader's own corrections of the subject.
+func (s *server) vaultUndo(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	vr, ok := s.vaultLoad(w, r, u)
+	if !ok {
+		return
+	}
+	defer vr.release()
+	sub, canon, ok := vaultSubject(vr, r)
+	if !ok {
+		s.vaultMissing(w, r)
+		return
+	}
+	err := vaultart.UndoCorrection(r.Context(), vr.cx, sub, r.PostFormValue("memory"))
+	switch {
+	case errors.Is(err, vaultart.ErrNotCorrection):
+		s.render(w, r, http.StatusNotFound, "vault_error", vaultErrorView{Message: msgNoCorrection, Path: canon, BackToPage: true})
+	case err != nil:
+		s.cfg.Logger.Error("vault undo")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	default:
+		s.vaultRedirect(w, r, canon+"?note=undone", http.StatusSeeOther)
+	}
 }

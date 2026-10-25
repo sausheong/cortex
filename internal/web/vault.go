@@ -79,6 +79,8 @@ func (s *server) mountVault(mux *http.ServeMux) {
 	mux.HandleFunc("GET /vault/{group}/{slug}", s.authUnlocked(s.vaultArticle))
 	mux.HandleFunc("POST /vault/{group}/{slug}/rewrite", s.authUnlocked(s.vaultRewrite))
 	mux.HandleFunc("POST /vault/{group}/{slug}/retry", s.authUnlocked(s.vaultRetry))
+	mux.HandleFunc("POST /vault/{group}/{slug}/correct", s.authUnlocked(s.vaultCorrect))
+	mux.HandleFunc("POST /vault/{group}/{slug}/undo", s.authUnlocked(s.vaultUndo))
 	mux.HandleFunc("GET /vault/{path...}", s.authUnlocked(s.vaultLegacy))
 }
 
