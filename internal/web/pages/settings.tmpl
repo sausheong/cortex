@@ -57,6 +57,34 @@
     <p class="note save-help">We make one small test request to your provider first. If it fails, nothing is saved, and we show you why.</p>
   </div>
 </form>
+{{with .Vault}}
+<form method="post" action="/settings/vault" autocomplete="off" class="settings-form vault-settings" id="vault">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <fieldset>
+    <legend>Vault</legend>
+    <p class="note group-help">Vault turns what cortex knows about a person, project or topic into a short article. These choices decide which ones get an article and how long it is. Changing them never rewrites articles you already have.</p>
+    {{if .NotSaved}}<p class="error" role="alert"><strong>Not saved.</strong> Your previous Vault settings are unchanged.</p>{{end}}
+    {{if .Saved}}<p class="notice" role="status">Vault settings saved.</p>{{end}}
+    {{if .CannotWrite}}<p class="note" role="note">Your chat model cannot write articles. Choose another model above.</p>{{end}}
+    <label>Article threshold <input name="threshold" value="{{.Threshold}}" inputmode="numeric" aria-describedby="err-threshold h-threshold"{{if .Error}} aria-invalid="true"{{end}}></label>
+    <p class="field-error" id="err-threshold" role="alert">{{.Error}}</p>
+    <p class="note field-help" id="h-threshold">How many saved memories something needs before it gets an article. A higher number means fewer articles.</p>
+    <label><input type="checkbox" name="include_connected"{{if .IncludeConnected}} checked{{end}}> Include everything directly connected to me</label>
+    <p class="note field-help">Gives an article to anything linked straight to you, even with fewer memories than the threshold.</p>
+    <label>Article length
+      <select name="length" aria-describedby="h-length">
+        <option value="short" {{if eq .Length "short"}}selected{{end}}>Short</option>
+        <option value="standard" {{if eq .Length "standard"}}selected{{end}}>Standard</option>
+        <option value="long" {{if eq .Length "long"}}selected{{end}}>Long</option>
+      </select></label>
+    <p class="note field-help" id="h-length">Applies the next time an article is written.</p>
+    {{if .Usage}}<p class="note vault-usage" id="vault-usage">{{.Usage}}</p>{{end}}
+  </fieldset>
+  <div class="actions">
+    <button class="btn-secondary">Save Vault settings</button>
+  </div>
+</form>
+{{end}}
 {{if .Live}}<script nonce="{{$.Nonce}}">
 (function(){var el=document.getElementById('job');if(!el)return;
 function text(j){if(j.status==='queued')return 'Waiting to start.';

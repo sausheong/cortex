@@ -13,7 +13,69 @@ import (
 	"github.com/sausheong/cortex/internal/accounts"
 	"github.com/sausheong/cortex/internal/keys"
 	"github.com/sausheong/cortex/internal/model"
+	"github.com/sausheong/cortex/internal/vaultart"
 )
+
+// vaultView is the Vault section of the settings page. It has its own form
+// and POST so saving the provider settings never touches it.
+type vaultView struct {
+	Threshold        string
+	IncludeConnected bool
+	Length           string
+	Error            string // threshold error, shown next to the field
+	NotSaved         bool
+	Saved            bool
+	// Usage is the plain-words usage line, "" when nothing has been written.
+	Usage       string
+	CannotWrite bool
+}
+
+// vaultUsage words the usage line: the article count, and the tokens and
+// failures of the last 10 attempts when there are any.
+func vaultUsage(articles int, u vaultart.Usage) string {
+	if articles == 0 && u.Failed == 0 && u.Tokens == 0 {
+		return ""
+	}
+	noun := "articles"
+	if articles == 1 {
+		noun = "article"
+	}
+	out := fmt.Sprintf("%s %s written", fmtInt(articles), noun)
+	if u.Tokens > 0 {
+		out += fmt.Sprintf(", about %s tokens in the last 10 attempts", fmtInt(u.Tokens))
+	}
+	if u.Failed > 0 {
+		out += fmt.Sprintf(", %s failed", fmtInt(u.Failed))
+	}
+	return out + "."
+}
+
+// loadVaultView builds the section. A nil result hides it (no key to open the
+// settings with).
+func (s *server) loadVaultView(ctx context.Context, u SessionUser, form *vaultView) (*vaultView, error) {
+	cx, release := cxFor(ctx, s.root, s.st, u)
+	defer release()
+	h := cx.StoreHandle()
+	cur, err := vaultart.LoadSettings(ctx, h)
+	if errors.Is(err, model.ErrLocked) || errors.Is(err, model.ErrEnrollRequired) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	v := &vaultView{Threshold: strconv.Itoa(cur.Threshold), IncludeConnected: cur.IncludeConnected, Length: cur.Length}
+	if form != nil { // redisplay what was submitted
+		v.Threshold, v.IncludeConnected, v.Length = form.Threshold, form.IncludeConnected, form.Length
+		v.Error, v.NotSaved = form.Error, form.NotSaved
+	}
+	v.CannotWrite = !vaultart.CanWrite(cx)
+	if rows, err := h.ListArticleMeta(ctx); err == nil {
+		if us, err := s.art.RecentUsageLast(ctx, cx, 10); err == nil {
+			v.Usage = vaultUsage(len(rows), us)
+		}
+	}
+	return v, nil
+}
 
 // jobView is a background job as shown on the settings page.
 type jobView struct {
@@ -53,6 +115,7 @@ type settingsView struct {
 	Pending  bool // desired embedder differs from the active one
 	// MaintenanceError is the last nightly maintenance failure (fixed text), "" when clean.
 	MaintenanceError string
+	Vault            *vaultView
 }
 
 func (s *server) latestReembed(ctx context.Context, userID string) (*jobView, error) {
@@ -87,6 +150,10 @@ func (s *server) embedPending(ctx context.Context, userID string, uk *keys.UK) (
 }
 
 func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool, field ...string) {
+	s.settingsPageV(w, r, u, status, cur, msg, saved, nil, field...)
+}
+
+func (s *server) settingsPageV(w http.ResponseWriter, r *http.Request, u SessionUser, status int, cur *accounts.Settings, msg string, saved bool, vform *vaultView, field ...string) {
 	ctx := r.Context()
 	v := settingsView{Error: msg, Saved: saved, NotSaved: status == http.StatusBadRequest}
 	if len(field) > 0 {
@@ -123,7 +190,53 @@ func (s *server) settingsPage(w http.ResponseWriter, r *http.Request, u SessionU
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	vv, err := s.loadVaultView(ctx, u, vform)
+	if err != nil {
+		s.cfg.Logger.Error("settings vault", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if vv != nil {
+		vv.Saved = r.URL.Query().Get("vault") == "saved" && vform == nil
+	}
+	v.Vault = vv
 	s.render(w, r, status, "settings", v)
+}
+
+// settingsVaultPost saves the Vault section on its own, apart from the
+// provider form.
+func (s *server) settingsVaultPost(w http.ResponseWriter, r *http.Request, u SessionUser) {
+	ctx := r.Context()
+	form := &vaultView{
+		Threshold:        strings.TrimSpace(r.PostFormValue("threshold")),
+		IncludeConnected: r.PostFormValue("include_connected") != "",
+		Length:           r.PostFormValue("length"),
+		NotSaved:         true,
+	}
+	n, err := strconv.Atoi(form.Threshold)
+	if err != nil || n < vaultart.MinThreshold || n > vaultart.MaxThreshold {
+		form.Error = fmt.Sprintf("Enter a whole number from %d to %d.", vaultart.MinThreshold, vaultart.MaxThreshold)
+		s.settingsPageV(w, r, u, http.StatusBadRequest, nil, "", false, form)
+		return
+	}
+	switch form.Length {
+	case vaultart.LengthShort, vaultart.LengthStandard, vaultart.LengthLong:
+	default:
+		form.Length = vaultart.LengthStandard
+	}
+	cx, release := cxFor(ctx, s.root, s.st, u)
+	defer release()
+	err = vaultart.SaveSettings(ctx, cx.StoreHandle(), vaultart.Settings{Threshold: n, IncludeConnected: form.IncludeConnected, Length: form.Length})
+	if errors.Is(err, model.ErrLocked) || errors.Is(err, model.ErrEnrollRequired) {
+		s.settingsPage(w, r, u, http.StatusForbidden, nil, enrollRequiredMsg, false)
+		return
+	}
+	if err != nil {
+		s.cfg.Logger.Error("save vault settings", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/settings?vault=saved#vault", http.StatusSeeOther)
 }
 
 func (s *server) settingsGet(w http.ResponseWriter, r *http.Request, u SessionUser) {

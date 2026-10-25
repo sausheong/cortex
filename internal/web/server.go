@@ -149,6 +149,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /logout", s.auth(s.logout))
 	mux.HandleFunc("GET /settings", s.authUnlocked(s.settingsGet))
 	mux.HandleFunc("POST /settings", s.authUnlocked(s.settingsPost))
+	mux.HandleFunc("POST /settings/vault", s.authUnlocked(s.settingsVaultPost))
 	mux.HandleFunc("POST /settings/reembed", s.authUnlocked(s.settingsReembed))
 	mux.HandleFunc("GET /settings/job/{id}", s.authUnlocked(s.jobProgress))
 	s.mountPasskeys(mux)

@@ -206,7 +206,14 @@ type Usage struct {
 
 // RecentUsage totals the user's recent attempts (the log keeps the last 50).
 func (w *Writer) RecentUsage(ctx context.Context, cx *cortex.Cortex) (Usage, error) {
-	recs, err := cx.StoreHandle().RecentWrites(ctx, 50)
+	return w.RecentUsageLast(ctx, cx, 50)
+}
+
+// RecentUsageLast totals the user's last n attempts (newest first). The
+// attempt log, not the per-article tokens column, is the source: a rewrite
+// replaces an article's tokens but never erases an attempt.
+func (w *Writer) RecentUsageLast(ctx context.Context, cx *cortex.Cortex, n int) (Usage, error) {
+	recs, err := cx.StoreHandle().RecentWrites(ctx, n)
 	if err != nil {
 		return Usage{}, err
 	}
